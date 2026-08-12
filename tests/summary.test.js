@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSummary, deriveCheckState, publishSummary } from '../src/summary.js';
+import {
+  buildSummary,
+  candidateDigest,
+  deriveCheckState,
+  publishSummary,
+} from '../src/summary.js';
 import { createAuthorityState, publishCandidate } from '../src/publication.js';
 import { runAnalysis } from '../src/runner.js';
 
@@ -120,4 +125,104 @@ test('Summary 發布後內容被修改時回傳 FAILURE', () => {
     deriveCheckState({ candidate: current, summary, currentIdentity: identity }),
     { state: 'FAILURE', reason: 'SUMMARY_CANDIDATE_MISMATCH' },
   );
+});
+
+test('Summary payload 不完整時拒絕發布', () => {
+  assert.deepEqual(publishSummary(), {
+    published: false,
+    reason: 'SUMMARY_INVALID',
+  });
+  assert.deepEqual(publishSummary({ identity }), {
+    published: false,
+    reason: 'SUMMARY_INVALID',
+  });
+  assert.deepEqual(publishSummary({ identity, candidateDigest: 123 }), {
+    published: false,
+    reason: 'SUMMARY_INVALID',
+  });
+});
+
+test('非 authoritative candidate 不能通過 status check', () => {
+  const candidate = candidateFor();
+  const summary = publishSummary(buildSummary(candidate));
+
+  assert.deepEqual(
+    deriveCheckState({ candidate, summary, currentIdentity: identity }),
+    { state: 'FAILURE', reason: 'CANDIDATE_NOT_AUTHORITATIVE' },
+  );
+});
+
+test('invalid candidate 與不完整 Summary 都採 failure 且不拋例外', () => {
+  const current = authoritative(candidateFor());
+  const invalidCandidate = { ...current, analysisStatus: 'GARBAGE' };
+
+  assert.deepEqual(
+    deriveCheckState({
+      candidate: invalidCandidate,
+      summary: publishSummary(buildSummary(current)),
+      currentIdentity: identity,
+    }),
+    { state: 'FAILURE', reason: 'CANDIDATE_INVALID' },
+  );
+
+  assert.deepEqual(
+    deriveCheckState({
+      candidate: current,
+      summary: { published: true, identity, summary: null },
+      currentIdentity: identity,
+    }),
+    { state: 'FAILURE', reason: 'SUMMARY_CANDIDATE_MISMATCH' },
+  );
+});
+
+test('candidate digest 對 object key 順序不敏感，但保留內容差異', () => {
+  const candidate = candidateFor();
+  const reordered = {
+    decision: candidate.decision,
+    eligibility: candidate.eligibility,
+    coverage: candidate.coverage,
+    analysisStatus: candidate.analysisStatus,
+    identity: {
+      runnerVersion: candidate.identity.runnerVersion,
+      policyVersion: candidate.identity.policyVersion,
+      policyId: candidate.identity.policyId,
+      headSha: candidate.identity.headSha,
+      baseSha: candidate.identity.baseSha,
+      repository: candidate.identity.repository,
+    },
+  };
+
+  assert.equal(candidateDigest(candidate), candidateDigest(reordered));
+  assert.notEqual(
+    candidateDigest(candidate),
+    candidateDigest({ ...candidate, analysisStatus: 'ANALYSIS_FAILED' }),
+  );
+});
+
+test('Summary 的每個核心欄位被竄改時都會被 digest 偵測', () => {
+  const current = authoritative(candidateFor());
+  const published = publishSummary(buildSummary(current));
+  const mutations = {
+    analysisStatus: 'ANALYSIS_FAILED',
+    coverage: { status: 'INCOMPLETE', blockers: ['tampered:coverage'] },
+    eligibility: { status: 'NOT_ELIGIBLE', blockingSources: ['tampered:eligibility'] },
+    decision: {
+      status: 'HUMAN_REVIEW_REQUIRED',
+      fallback: 'FULL',
+      reasons: ['tampered:decision'],
+    },
+  };
+
+  for (const [field, value] of Object.entries(mutations)) {
+    const summary = {
+      ...published,
+      summary: { ...published.summary, [field]: value },
+    };
+
+    assert.deepEqual(
+      deriveCheckState({ candidate: current, summary, currentIdentity: identity }),
+      { state: 'FAILURE', reason: 'SUMMARY_CANDIDATE_MISMATCH' },
+      field,
+    );
+  }
 });

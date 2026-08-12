@@ -1,0 +1,33 @@
+{
+  "identity": {
+    "repository": "example/repo",
+    "baseSha": "base-001",
+    "headSha": "head-truncated-001",
+    "policyId": "policy-001",
+    "policyVersion": "1",
+    "runnerVersion": "1"
+  },
+  "coverage": {
+    "obligations": [
+      {
+        "id": "COV-LANG-001",
+        "required": true,
+        "status": "INCOMPLETE",
+        "reasonCode": "TRUNCATED",
+        "changedRegions": []
+      }
+    ]
+  },
+  "riskBlockers": [],
+  "policyRequirements": [],
+  "expected": {
+    "analysisStatus": "COMPLETE",
+    "eligibilityStatus": "NOT_ELIGIBLE",
+    "decisionStatus": "HUMAN_REVIEW_REQUIRED",
+    "fallback": "FULL",
+    "reasons": ["COV-LANG-001:TRUNCATED"],
+    "checkState": "PASS",
+    "checkReason": "CURRENT_AUTHORITATIVE_SUMMARY",
+    "headSha": "head-truncated-001"
+  }
+}

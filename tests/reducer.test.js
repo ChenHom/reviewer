@@ -36,6 +36,30 @@ test('evaluator 發生錯誤時回傳 ANALYSIS_FAILED', () => {
   );
 });
 
+test('缺少 coverage 時仍然必須產生 analysis failure blocker', () => {
+  assert.deepEqual(
+    evaluateEligibility({ coverage: undefined }),
+    {
+      status: ELIGIBILITY.ANALYSIS_FAILED,
+      blockingSources: ['COVERAGE_MISSING'],
+    },
+  );
+});
+
+test('coverage、risk 與 analysis error blocker 會去重並排序', () => {
+  assert.deepEqual(
+    evaluateEligibility({
+      coverage: { status: COVERAGE.INCOMPLETE, blockers: ['coverage:b', 'risk:z'] },
+      riskBlockers: ['risk:a', 'coverage:b'],
+      analysisError: 'ANALYZER_FAILED',
+    }),
+    {
+      status: ELIGIBILITY.ANALYSIS_FAILED,
+      blockingSources: ['ANALYZER_FAILED', 'coverage:b', 'risk:a', 'risk:z'],
+    },
+  );
+});
+
 test('被 blocker 阻擋的輸入不能 reduction 成 NOT_SELECTED', () => {
   const eligibility = {
     status: ELIGIBILITY.NOT_ELIGIBLE,
@@ -76,6 +100,67 @@ test('只有明確且 eligible 的結果才能選擇不進行 Human Review', () 
       reasons: ['NO_REDUCTION_BLOCKER'],
     },
   );
+});
+
+test('policy requirement 或 audit sample 會觸發 targeted Human Review', () => {
+  assert.deepEqual(
+    reduceReviewScope({
+      eligibility: { status: ELIGIBILITY.ELIGIBLE, blockingSources: [] },
+      policyRequirements: ['policy:z', 'policy:a'],
+      audit: true,
+    }),
+    {
+      status: DECISION.HUMAN_REVIEW_REQUIRED,
+      fallback: 'TARGETED',
+      reasons: ['AUDIT_SAMPLE', 'policy:a', 'policy:z'],
+    },
+  );
+});
+
+test('analysis failure、缺少 eligibility 與未知 eligibility 都採 full review', () => {
+  assert.deepEqual(
+    reduceReviewScope({
+      eligibility: { status: ELIGIBILITY.ANALYSIS_FAILED, blockingSources: ['ANALYZER_FAILED'] },
+    }),
+    {
+      status: DECISION.HUMAN_REVIEW_REQUIRED,
+      fallback: 'FULL',
+      reasons: ['ANALYZER_FAILED'],
+    },
+  );
+
+  assert.deepEqual(
+    reduceReviewScope({ eligibility: undefined }),
+    {
+      status: DECISION.HUMAN_REVIEW_REQUIRED,
+      fallback: 'FULL',
+      reasons: ['ELIGIBILITY_MISSING'],
+    },
+  );
+
+  assert.deepEqual(
+    reduceReviewScope({ eligibility: { status: 'UNKNOWN', blockingSources: [] } }),
+    {
+      status: DECISION.HUMAN_REVIEW_REQUIRED,
+      fallback: 'FULL',
+      reasons: ['ELIGIBILITY_MISSING'],
+    },
+  );
+});
+
+test('不完整 eligibility 不會被 policy requirement 蓋成 NOT_SELECTED', () => {
+  const decision = reduceReviewScope({
+    eligibility: {
+      status: ELIGIBILITY.NOT_ELIGIBLE,
+      blockingSources: ['risk:duplicate-charge'],
+    },
+    policyRequirements: [],
+    audit: true,
+  });
+
+  assert.equal(decision.status, DECISION.HUMAN_REVIEW_REQUIRED);
+  assert.equal(decision.fallback, 'TARGETED');
+  assert.deepEqual(decision.reasons, ['risk:duplicate-charge']);
 });
 
 test('增加不確定性時不能將 Human Review 改成 NOT_SELECTED', () => {

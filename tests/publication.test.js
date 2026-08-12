@@ -90,6 +90,22 @@ test('runner identity 不同時拒絕 candidate', () => {
   });
 });
 
+test('任一 AnalysisIdentity 欄位不同時都視為 stale run', () => {
+  const fields = ['repository', 'baseSha', 'headSha', 'policyId', 'policyVersion', 'runnerVersion'];
+
+  for (const field of fields) {
+    const state = createAuthorityState(identity);
+    const candidate = runAnalysis(inputFor({ ...identity, [field]: `${identity[field]}-next` }));
+
+    assert.deepEqual(
+      publishCandidate(state, candidate),
+      { accepted: false, reason: 'STALE_ANALYSIS_IDENTITY' },
+      field,
+    );
+    assert.equal(state.current, null, field);
+  }
+});
+
 test('analysis failure 只能以非成功結果發布', () => {
   const state = createAuthorityState(identity);
   const candidate = runAnalysis({ identity, coverage: { obligations: [] } });
@@ -162,4 +178,88 @@ test('COMPLETE candidate 含有 coverage blocker 時拒絕發布', () => {
     accepted: false,
     reason: 'CANDIDATE_INVALID',
   });
+});
+
+test('跨欄位矛盾的 candidate 一律不能成為 authoritative result', () => {
+  const cases = [
+    {
+      name: 'NOT_SELECTED 缺少 ELIGIBLE',
+      candidate: {
+        identity,
+        analysisStatus: 'COMPLETE',
+        coverage: { status: 'COMPLETE', blockers: [] },
+        eligibility: { status: 'NOT_ELIGIBLE', blockingSources: ['risk:one'] },
+        decision: { status: 'NOT_SELECTED_FOR_HUMAN_REVIEW', reasons: ['risk:one'] },
+      },
+    },
+    {
+      name: 'NOT_SELECTED 帶有 fallback',
+      candidate: {
+        identity,
+        analysisStatus: 'COMPLETE',
+        coverage: { status: 'COMPLETE', blockers: [] },
+        eligibility: { status: 'ELIGIBLE', blockingSources: [] },
+        decision: {
+          status: 'NOT_SELECTED_FOR_HUMAN_REVIEW',
+          fallback: 'TARGETED',
+          reasons: ['NO_REDUCTION_BLOCKER'],
+        },
+      },
+    },
+    {
+      name: 'analysis failure 使用 targeted fallback',
+      candidate: {
+        identity,
+        analysisStatus: 'ANALYSIS_FAILED',
+        coverage: { status: 'FAILED', blockers: ['ANALYZER_FAILED'] },
+        eligibility: { status: 'ANALYSIS_FAILED', blockingSources: ['ANALYZER_FAILED'] },
+        decision: {
+          status: 'HUMAN_REVIEW_REQUIRED',
+          fallback: 'TARGETED',
+          reasons: ['ANALYZER_FAILED'],
+        },
+      },
+    },
+    {
+      name: 'Human Review 使用未知 fallback',
+      candidate: {
+        identity,
+        analysisStatus: 'COMPLETE',
+        coverage: { status: 'INCOMPLETE', blockers: ['COV-1:TIMEOUT'] },
+        eligibility: { status: 'NOT_ELIGIBLE', blockingSources: ['COV-1:TIMEOUT'] },
+        decision: {
+          status: 'HUMAN_REVIEW_REQUIRED',
+          fallback: 'NONE',
+          reasons: ['COV-1:TIMEOUT'],
+        },
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    const state = createAuthorityState(identity);
+
+    assert.deepEqual(
+      publishCandidate(state, testCase.candidate),
+      { accepted: false, reason: 'CANDIDATE_INVALID' },
+      testCase.name,
+    );
+    assert.equal(state.current, null, testCase.name);
+  }
+});
+
+test('拒絕 invalid candidate 時不會覆蓋既有 authoritative result', () => {
+  const state = createAuthorityState(identity);
+  const validCandidate = runAnalysis(inputFor(identity));
+  assert.equal(publishCandidate(state, validCandidate).accepted, true);
+
+  const invalidCandidate = {
+    ...validCandidate,
+    analysisStatus: 'GARBAGE',
+  };
+  assert.deepEqual(publishCandidate(state, invalidCandidate), {
+    accepted: false,
+    reason: 'CANDIDATE_INVALID',
+  });
+  assert.equal(state.current.analysisStatus, 'COMPLETE');
 });

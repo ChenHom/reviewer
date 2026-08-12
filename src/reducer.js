@@ -7,10 +7,20 @@ import { COVERAGE, DECISION, ELIGIBILITY, stableStrings } from './contracts.js';
  * @returns {{status: string, blockingSources: string[]}} eligibility 結果。
  */
 export function evaluateEligibility({ coverage, riskBlockers = [], analysisError } = {}) {
-  const coverageBlockers = stableStrings(coverage?.blockers ?? []);
+  const coverageShapeBlockers = !coverage
+    ? ['COVERAGE_MISSING']
+    : !Array.isArray(coverage.blockers)
+      ? ['COVERAGE_BLOCKERS_INVALID']
+      : !Object.values(COVERAGE).includes(coverage.status)
+        ? ['COVERAGE_STATUS_INVALID']
+        : [];
+  const coverageBlockers = stableStrings([
+    ...coverageShapeBlockers,
+    ...(Array.isArray(coverage?.blockers) ? coverage.blockers : []),
+  ]);
   const blockers = stableStrings([...coverageBlockers, ...riskBlockers]);
 
-  if (analysisError || !coverage || coverage.status === COVERAGE.FAILED) {
+  if (analysisError || coverageShapeBlockers.length > 0 || coverage?.status === COVERAGE.FAILED) {
     return {
       status: ELIGIBILITY.ANALYSIS_FAILED,
       blockingSources: stableStrings([...blockers, analysisError].filter(Boolean)),

@@ -78,6 +78,24 @@ test('analyzer failure 維持在失敗 status path', () => {
   });
 });
 
+test('合法輸入但 analyzer error 仍然維持 ANALYSIS_FAILED', () => {
+  const state = createAuthorityState(identity);
+  const result = runSafetyMvp({ ...input, analysisError: 'ANALYZER_FAILED' }, state);
+
+  assert.equal(result.publication.accepted, true);
+  assert.equal(result.candidate.analysisStatus, 'ANALYSIS_FAILED');
+  assert.equal(result.candidate.eligibility.status, 'ANALYSIS_FAILED');
+  assert.deepEqual(result.candidate.decision, {
+    status: 'HUMAN_REVIEW_REQUIRED',
+    fallback: 'FULL',
+    reasons: ['ANALYZER_FAILED'],
+  });
+  assert.deepEqual(result.check, {
+    state: 'FAILURE',
+    reason: 'ANALYSIS_FAILED',
+  });
+});
+
 test('authoritative Summary 發布失敗時 status check 回傳 FAILURE', () => {
   const state = createAuthorityState(identity);
   const result = runSafetyMvp(input, state, { succeed: false });

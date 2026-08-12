@@ -32,12 +32,11 @@ function regionBlockers(obligation) {
     } else {
       if (region.startByte < previousStart) {
         blockers.push(`${obligation.id}:REGION_ORDER_INVALID`);
-      }
-      if (region.startByte < previousEnd) {
+      } else if (region.startByte < previousEnd) {
         blockers.push(`${obligation.id}:REGION_OVERLAP`);
       }
       previousStart = region.startByte;
-      previousEnd = Math.max(previousEnd, region.endByte);
+      previousEnd = region.endByte;
     }
 
     if (typeof region?.path !== 'string' || region.path.trim() === '') {
@@ -88,6 +87,12 @@ export function evaluateCoverage(report) {
   let failed = false;
 
   for (const obligation of required) {
+    if (!Object.values(COVERAGE).includes(obligation.status)) {
+      blockers.push(`${obligation.id}:STATUS_INVALID`);
+      failed = true;
+      continue;
+    }
+
     if (obligation.status !== COVERAGE.COMPLETE) {
       const reason = obligation.reasonCode ?? obligation.status ?? 'INCOMPLETE';
       blockers.push(`${obligation.id}:${reason}`);

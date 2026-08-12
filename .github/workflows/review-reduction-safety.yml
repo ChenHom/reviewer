@@ -26,3 +26,6 @@ jobs:
 
       - name: Run Safety MVP tests
         run: npm run test:safety
+
+      - name: Enforce source coverage
+        run: npm run test:coverage

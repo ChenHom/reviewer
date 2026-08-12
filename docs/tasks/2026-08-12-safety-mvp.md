@@ -6,6 +6,8 @@ Status: `IMPLEMENTED`
 
 Production entrypoint: `src/runner.js` → `runSafetyMvp()`. `runAnalysis()` remains the analysis-only stage used inside that pipeline.
 
+Testing strategy: [Safety MVP 測試策略](../testing/safety-mvp-test-strategy.md). Every new behavior must cover positive, negative, boundary, and integration cases; run `npm run lint`, `npm run test:safety`, and `npm run test:coverage`.
+
 The first baseline intentionally uses Node.js native ESM and `node:test` with no runtime dependencies. TypeScript/Vitest are deferred until the core needs a larger public API or external adapters.
 
 ## Scope decision
@@ -105,6 +107,14 @@ The implementation must fail closed. Any unsupported or incomplete analysis beco
 - [x] Verify the complete local suite.
 - [x] Commit: Safety MVP implementation committed in this branch.
 
+### S-11 — Harden test completeness and regression safety
+
+- [x] 記錄正向、反向、邊界、property/invariant 與 vertical/E2E 測試規範。
+- [x] 補齊 Contracts、Coverage、Reducer、Publication、Summary 的矩陣測試。
+- [x] 補齊 PARTIAL_PARSE、UNSUPPORTED、TIMEOUT、TRUNCATED 與 analysis failure fixtures。
+- [x] Coverage range 對負值、零長度、逆序、重疊、未排序與相鄰邊界 fail-closed。
+- [x] `npm run lint`、`npm run test:safety`、`npm run test:coverage` 全部通過。
+
 ## Completion criteria
 
 - [x] Coverage uncertainty cannot produce reduction authority.
@@ -114,6 +124,7 @@ The implementation must fail closed. Any unsupported or incomplete analysis beco
 - [x] Summary and status check are bound to the same identity.
 - [x] Failure and missing publication paths are fail-closed.
 - [x] `npm run test:safety` passes without network or LLM access.
+- [x] 後續測試必須遵守 [Safety MVP 測試策略](../testing/safety-mvp-test-strategy.md) 與 coverage gate。
 
 ## Deferred after Safety MVP
 

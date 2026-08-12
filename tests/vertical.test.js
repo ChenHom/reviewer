@@ -64,3 +64,23 @@ test('analysis 輸入無效時採 fail-closed', () => {
   assert.equal(result.check.state, 'FAILURE');
   assert.equal(result.check.reason, 'ANALYSIS_FAILED');
 });
+
+for (const fixtureName of ['coverage-timeout', 'coverage-unsupported', 'coverage-truncated']) {
+  test(`${fixtureName} fixture 不能被 reduction 成 NOT_SELECTED`, async () => {
+    const { input, result } = await runFixture(fixtureName);
+    const expected = input.expected;
+
+    assert.equal(result.candidate.analysisStatus, expected.analysisStatus);
+    assert.equal(result.candidate.coverage.status, 'INCOMPLETE');
+    assert.equal(result.candidate.eligibility.status, expected.eligibilityStatus);
+    assert.equal(result.candidate.decision.status, expected.decisionStatus);
+    assert.equal(result.candidate.decision.fallback, expected.fallback);
+    assert.deepEqual(result.candidate.decision.reasons, expected.reasons);
+    assert.equal(result.candidate.identity.headSha, expected.headSha);
+    assert.equal(result.summary.summary.identity.headSha, expected.headSha);
+    assert.deepEqual(result.check, {
+      state: expected.checkState,
+      reason: expected.checkReason,
+    });
+  });
+}
