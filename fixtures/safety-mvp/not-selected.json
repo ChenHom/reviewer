@@ -1,0 +1,31 @@
+{
+  "identity": {
+    "repository": "example/repo",
+    "baseSha": "base-001",
+    "headSha": "head-low-risk-001",
+    "policyId": "policy-001",
+    "policyVersion": "1",
+    "runnerVersion": "1"
+  },
+  "coverage": {
+    "obligations": [
+      {
+        "id": "COV-LANG-001",
+        "required": true,
+        "status": "COMPLETE",
+        "changedRegions": [
+          {
+            "path": "src/format.js",
+            "startByte": 0,
+            "endByte": 20,
+            "language": "javascript",
+            "adapterId": "javascript-v1",
+            "runtime": "server"
+          }
+        ]
+      }
+    ]
+  },
+  "riskBlockers": [],
+  "policyRequirements": []
+}

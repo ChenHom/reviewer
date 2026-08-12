@@ -1,0 +1,9 @@
+{
+  "name": "review-reduction-safety-mvp",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "test:safety": "node --test tests/*.test.js"
+  }
+}
