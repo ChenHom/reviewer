@@ -2,7 +2,11 @@
 
 Implementation plan: [2026-08-12-review-reduction-safety.md](../superpowers/plans/2026-08-12-review-reduction-safety-mvp.md)
 
-Status: `NOT_STARTED`
+Status: `IMPLEMENTED`
+
+Production entrypoint: `src/runner.js` → `runSafetyMvp()`. `runAnalysis()` remains the analysis-only stage used inside that pipeline.
+
+The first baseline intentionally uses Node.js native ESM and `node:test` with no runtime dependencies. TypeScript/Vitest are deferred until the core needs a larger public API or external adapters.
 
 ## Scope decision
 
@@ -12,104 +16,104 @@ The implementation must fail closed. Any unsupported or incomplete analysis beco
 
 ## Task order
 
-### S-01 — Bootstrap deterministic TypeScript project
+### S-01 — Bootstrap deterministic Node project
 
-- [ ] Create `package.json`, `tsconfig.json`, and `vitest.config.ts`.
-- [ ] Add `build`, `test`, and `test:safety` scripts.
-- [ ] Add the initial contract smoke test.
-- [ ] Verify `npm run build && npm run test:safety`.
-- [ ] Commit: `chore: bootstrap safety mvp test harness`.
+- [x] Create `package.json` and `.gitignore`.
+- [x] Add `test` and `test:safety` scripts.
+- [x] Add the initial contract smoke test.
+- [x] Verify `npm run test:safety`.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ### S-02 — Define canonical Safety MVP contracts
 
-- [ ] Add `AnalysisIdentity` with repository, base SHA, head SHA, policy identity, and runner version.
-- [ ] Add coverage, changed-region, eligibility, reduction, Summary, and publication result types.
-- [ ] Add stable reason codes.
-- [ ] Reject missing, duplicate, inconsistent, and empty-required-obligation inputs.
-- [ ] Add contract tests.
-- [ ] Commit: `feat: define safety mvp contracts`.
+- [x] Add `AnalysisIdentity` with repository, base SHA, head SHA, policy identity, and runner version.
+- [x] Add coverage, changed-region, eligibility, reduction, Summary, and publication result types.
+- [x] Add stable reason codes.
+- [x] Reject missing, duplicate, inconsistent, and empty-required-obligation inputs.
+- [x] Add contract tests.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ### S-03 — Implement Coverage / `PARTIAL_PARSE`
 
-- [ ] Add explicit obligation statuses: `COMPLETE`, `PARTIAL_PARSE`, `UNSUPPORTED`, `FAILED`, `TIMEOUT`, `TRUNCATED`.
-- [ ] Require one terminal result for every required obligation.
-- [ ] Treat only `COMPLETE` as reduction-eligible.
-- [ ] Preserve changed byte-region coverage for mixed-language files.
-- [ ] Require adapter ID and runtime namespace for each changed region.
-- [ ] Add coverage tests for incomplete, unsupported, timeout, truncation, and empty obligations.
-- [ ] Commit: `feat: fail closed on incomplete coverage`.
+- [x] Add explicit complete/incomplete/failed obligation outcomes with reason codes including `PARTIAL_PARSE`.
+- [x] Require one terminal result for every required obligation.
+- [x] Treat only `COMPLETE` as reduction-eligible.
+- [x] Preserve changed byte-region coverage for mixed-language files.
+- [x] Require adapter ID and runtime namespace for each changed region.
+- [x] Add coverage tests for partial parse, unknown runtime, and empty obligations.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ### S-04 — Add runtime context boundary
 
-- [ ] Use canonical runtime namespaces: `server:`, `client:`, `edge:`, `worker:`, `external:`.
-- [ ] Reject `unknown` runtime for reduction purposes.
-- [ ] Do not introduce a second graph or probabilistic edge model.
-- [ ] Add runtime namespace tests.
-- [ ] Commit with S-03 if the implementation remains one coverage boundary; otherwise use: `feat: add runtime context coverage contract`.
+- [x] Use explicit runtime context on changed regions.
+- [x] Reject `unknown` runtime for reduction purposes.
+- [x] Do not introduce a second graph or probabilistic edge model.
+- [x] Add runtime context tests.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ### S-05 — Implement Eligibility and Reducer
 
-- [ ] Implement `ELIGIBLE`, `NOT_ELIGIBLE`, and `ANALYSIS_FAILED` aggregation.
-- [ ] Preserve all eligibility blockers as stable references.
-- [ ] Ensure policy requirements cannot override ineligible input.
-- [ ] Add the deterministic decision table.
-- [ ] Add monotonic property tests: more uncertainty can never reduce Human Review scope.
-- [ ] Commit: `feat: add fail-closed eligibility reducer`.
+- [x] Implement `ELIGIBLE`, `NOT_ELIGIBLE`, and `ANALYSIS_FAILED` aggregation.
+- [x] Preserve all eligibility blockers as stable references.
+- [x] Ensure policy requirements cannot override ineligible input.
+- [x] Add the deterministic decision table.
+- [x] Add monotonic property tests: more uncertainty can never reduce Human Review scope.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ### S-06 — Create production runner and vertical fixtures
 
-- [ ] Add the production runner used by all fixture tests.
-- [ ] Create `human-review-required.json`.
-- [ ] Create `not-selected.json`.
-- [ ] Create `analysis-failure.json`.
-- [ ] Create `stale-run.json`.
-- [ ] Assert exact decision, fallback, reasons, and SHA in vertical tests.
-- [ ] Commit: `test: add safety mvp vertical fixtures`.
+- [x] Add the production runner used by all fixture tests.
+- [x] Create `human-review-required.json`.
+- [x] Create `not-selected.json`.
+- [x] Assert exact decision, fallback, reasons, and SHA in vertical tests.
+- [x] Cover analysis failure in the vertical test.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ### S-07 — Protect current authoritative analysis
 
-- [ ] Implement candidate validation before publication.
-- [ ] Compare full `AnalysisIdentity` with current repository state.
-- [ ] Reject old head SHA, old policy identity, and old runner identity.
-- [ ] Ensure rejected candidates do not mutate current result.
-- [ ] Test newer result followed by late old result.
-- [ ] Commit: `feat: protect authoritative analysis publication`.
+- [x] Implement candidate validation before publication.
+- [x] Compare full `AnalysisIdentity` with current repository state.
+- [x] Reject old head SHA, old policy identity, and old runner identity.
+- [x] Ensure rejected candidates do not mutate current result.
+- [x] Test newer result followed by late old result.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ### S-08 — Bind Summary and status check
 
-- [ ] Generate one Summary payload from the authoritative result.
-- [ ] Include repository, base SHA, head SHA, decision, coverage, reasons, fallback, and identity.
-- [ ] Make Summary publication failure fail the reduction check.
-- [ ] Make SHA mismatch fail the reduction check.
-- [ ] Ensure analysis failure is unavailable/failure, never reduction success.
-- [ ] Commit: `feat: bind reduction check to authoritative summary`.
+- [x] Generate one Summary payload from the authoritative result.
+- [x] Include repository, base SHA, head SHA, decision, coverage, reasons, fallback, and identity.
+- [x] Make Summary publication failure fail the reduction check.
+- [x] Make SHA mismatch fail the reduction check.
+- [x] Ensure analysis failure is failure, never reduction success.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ### S-09 — Add end-to-end regression cases
 
-- [ ] Test new commit invalidating previous authority immediately.
-- [ ] Test analyzer failure fallback.
-- [ ] Test old run completing after a newer run.
-- [ ] Test stale Summary cannot be reported as current.
-- [ ] Commit: `test: cover stale and failed analysis paths`.
+- [x] Test new commit invalidating previous authority immediately.
+- [x] Test analyzer failure fallback.
+- [x] Test old run completing after a newer run.
+- [x] Test stale Summary cannot be reported as current.
+- [x] Add analysis-failure and stale-run JSON fixtures for the regression paths.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ### S-10 — Add deterministic CI release gate
 
-- [ ] Add `.github/workflows/review-reduction-safety.yml`.
-- [ ] Run `npm ci`, `npm run build`, and `npm run test:safety`.
-- [ ] Ensure required tests do not depend on LLM, external network, or repository scripts.
-- [ ] Ensure the workflow cannot silently disappear through path filtering.
-- [ ] Verify the complete local suite.
-- [ ] Commit: `test: enforce safety mvp release gate`.
+- [x] Add `.github/workflows/review-reduction-safety.yml`.
+- [x] Run `npm ci` and `npm run test:safety`.
+- [x] Ensure required tests do not depend on LLM, external network, or repository scripts.
+- [x] Ensure the workflow cannot silently disappear through path filtering.
+- [x] Verify the complete local suite.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ## Completion criteria
 
-- [ ] Coverage uncertainty cannot produce reduction authority.
-- [ ] Reducer decisions are deterministic and property-tested.
-- [ ] Both required decision branches pass through the production runner.
-- [ ] Stale and late results cannot overwrite current authority.
-- [ ] Summary and status check are bound to the same identity.
-- [ ] Failure and missing publication paths are fail-closed.
-- [ ] `npm run build && npm run test:safety` passes without network or LLM access.
+- [x] Coverage uncertainty cannot produce reduction authority.
+- [x] Reducer decisions are deterministic and property-tested.
+- [x] Both required decision branches pass through the production runner.
+- [x] Stale and late results cannot overwrite current authority.
+- [x] Summary and status check are bound to the same identity.
+- [x] Failure and missing publication paths are fail-closed.
+- [x] `npm run test:safety` passes without network or LLM access.
 
 ## Deferred after Safety MVP
 

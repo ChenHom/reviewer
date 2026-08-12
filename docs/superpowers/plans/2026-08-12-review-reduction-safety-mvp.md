@@ -4,9 +4,9 @@
 
 **Goal:** Build a conservative, deterministic Safety MVP that can only reduce Human Review when analysis coverage, eligibility, current SHA identity, and publication state are authoritative.
 
-**Architecture:** Keep the first implementation independent from language parsers, LLMs, and GitHub APIs. A small TypeScript core consumes normalized coverage and risk inputs, evaluates fail-closed eligibility, produces a candidate result, validates its `AnalysisIdentity`, and publishes one authoritative result only after the Summary contract is satisfied. Fixture and property tests exercise the same production runner used by later CI integration.
+**Architecture:** Keep the first implementation independent from language parsers, LLMs, and GitHub APIs. A small Node.js core consumes normalized coverage and risk inputs, evaluates fail-closed eligibility, produces a candidate result, validates its `AnalysisIdentity`, and publishes one authoritative result only after the Summary contract is satisfied. Fixture and property tests exercise the same production runner used by later CI integration.
 
-**Tech Stack:** Node.js, TypeScript, npm, Vitest, JSON fixtures, and GitHub Actions. Required tests are deterministic and do not use an LLM, network, repository scripts, or external analyzer processes.
+**Tech Stack:** Node.js native ESM, `node:test`, npm, JSON fixtures, and GitHub Actions. Required tests are deterministic and do not use an LLM, network, repository scripts, or external analyzer processes.
 
 ---
 
@@ -32,21 +32,18 @@ Unsupported language regions, runtime contexts, or analyzer capabilities must pr
 Create the following files:
 
 - `package.json` — scripts and minimal development dependencies.
-- `tsconfig.json` — strict TypeScript compilation settings.
-- `vitest.config.ts` — deterministic test configuration.
-- `src/contracts.ts` — canonical Safety MVP types and stable reason codes.
-- `src/coverage.ts` — coverage obligation evaluation and changed-region language validation.
-- `src/reducer.ts` — eligibility aggregation and deterministic reduction decision.
-- `src/publication.ts` — `AnalysisIdentity`, current-head validation, stale-run rejection, and atomic publication boundary.
-- `src/summary.ts` — authoritative Summary payload and status-check state derivation.
-- `src/runner.ts` — production runner that executes the complete deterministic pipeline for normalized inputs.
-- `src/index.ts` — public exports for the core runner.
-- `tests/contracts.test.ts` — contract validation and invalid-state tests.
-- `tests/coverage.test.ts` — coverage, partial-parse, unsupported-language, and runtime-namespace tests.
-- `tests/reducer.test.ts` — eligibility/reducer decision table and monotonic property tests.
-- `tests/publication.test.ts` — identity, stale-run, atomic publication, and failure tests.
-- `tests/summary.test.ts` — Summary/check binding tests.
-- `tests/vertical.test.ts` — end-to-end fixture assertions.
+- `src/contracts.js` — canonical Safety MVP contracts and stable reason codes.
+- `src/coverage.js` — coverage obligation evaluation and changed-region language validation.
+- `src/reducer.js` — eligibility aggregation and deterministic reduction decision.
+- `src/publication.js` — `AnalysisIdentity`, current-head validation, stale-run rejection, and atomic publication boundary.
+- `src/summary.js` — authoritative Summary payload and status-check state derivation.
+- `src/runner.js` — production runner that executes the complete deterministic pipeline for normalized inputs.
+- `tests/contracts.test.js` — contract validation and invalid-state tests.
+- `tests/coverage.test.js` — coverage, partial-parse, unsupported-language, and runtime-namespace tests.
+- `tests/reducer.test.js` — eligibility/reducer decision table and monotonic property tests.
+- `tests/publication.test.js` — identity, stale-run, atomic publication, and failure tests.
+- `tests/summary.test.js` — Summary/check binding tests.
+- `tests/vertical.test.js` — end-to-end fixture assertions.
 - `fixtures/safety-mvp/human-review-required.json` — complete analysis with a blocking risk or incomplete required coverage.
 - `fixtures/safety-mvp/not-selected.json` — complete analysis with no applicable blockers.
 - `fixtures/safety-mvp/analysis-failure.json` — evaluator failure that cannot produce an authoritative result.
@@ -55,7 +52,7 @@ Create the following files:
 
 ## Canonical Contracts
 
-`src/contracts.ts` must define these shapes before pipeline behavior is implemented:
+`src/contracts.js` must define these shapes before pipeline behavior is implemented:
 
 ```ts
 export type CoverageStatus =
@@ -124,14 +121,12 @@ The implementation must validate these invariants:
 - Unknown, missing, duplicate, or inconsistent inputs fail closed.
 - Blocker order is semantic-set order; serializers canonicalize it before comparison.
 
-### Task 1: Bootstrap the deterministic TypeScript project
+### Task 1: Bootstrap the deterministic Node project
 
 **Files:**
 - Create: `package.json`
-- Create: `tsconfig.json`
-- Create: `vitest.config.ts`
-- Create: `src/index.ts`
-- Create: `tests/contracts.test.ts`
+- Create: `.gitignore`
+- Create: `tests/contracts.test.js`
 
 - [ ] **Step 1: Add package metadata and scripts**
 
@@ -140,43 +135,40 @@ Use these scripts:
 ```json
 {
   "scripts": {
-    "build": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:safety": "vitest run tests/contracts.test.ts tests/coverage.test.ts tests/reducer.test.ts tests/publication.test.ts tests/summary.test.ts tests/vertical.test.ts"
+    "test": "node --test",
+    "test:safety": "node --test tests/*.test.js"
   }
 }
 ```
 
-- [ ] **Step 2: Configure strict compilation and deterministic Vitest execution**
+- [ ] **Step 2: Configure native ESM and ignore generated dependencies**
 
-`tsconfig.json` must enable `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, and `noEmit`.
+Set `"type": "module"` in `package.json` and ignore `node_modules/` in `.gitignore`.
 
 - [ ] **Step 3: Add the first contract test and run it**
 
-Run: `npm test -- tests/contracts.test.ts`
+Run: `npm test -- tests/contracts.test.js`
 
 Expected: the test runner starts and the initial contract test passes.
 
 - [ ] **Step 4: Run the baseline checks**
 
-Run: `npm run build && npm run test:safety`
+Run: `npm run test:safety`
 
-Expected: PASS with no source implementation beyond the contract smoke test.
+Expected: PASS with no external dependencies.
 
 - [ ] **Step 5: Commit the project bootstrap**
 
 ```bash
-git add package.json tsconfig.json vitest.config.ts src/index.ts tests/contracts.test.ts
+git add package.json .gitignore tests/contracts.test.js
 git commit -m "chore: bootstrap safety mvp test harness"
 ```
 
 ### Task 2: Implement canonical contracts and validation
 
 **Files:**
-- Create: `src/contracts.ts`
-- Modify: `src/index.ts`
-- Modify: `tests/contracts.test.ts`
+- Create: `src/contracts.js`
+- Modify: `tests/contracts.test.js`
 
 - [ ] **Step 1: Write invalid-state tests**
 
@@ -184,7 +176,7 @@ Cover missing required obligations, duplicate obligation IDs, `ELIGIBLE` with bl
 
 - [ ] **Step 2: Run the contract tests and verify failure**
 
-Run: `npm test -- tests/contracts.test.ts`
+Run: `npm test -- tests/contracts.test.js`
 
 Expected: FAIL because the contract validator does not exist.
 
@@ -194,23 +186,22 @@ Expose a pure `validateAnalysisInput(input)` function. It must return structured
 
 - [ ] **Step 4: Run contract tests and compilation**
 
-Run: `npm test -- tests/contracts.test.ts && npm run build`
+Run: `npm test -- tests/contracts.test.js`
 
 Expected: PASS.
 
 - [ ] **Step 5: Commit the canonical contracts**
 
 ```bash
-git add src/contracts.ts src/index.ts tests/contracts.test.ts
+git add src/contracts.js tests/contracts.test.js
 git commit -m "feat: define safety mvp contracts"
 ```
 
 ### Task 3: Implement coverage and mixed-language fail-closed behavior
 
 **Files:**
-- Create: `src/coverage.ts`
-- Modify: `tests/coverage.test.ts`
-- Modify: `src/index.ts`
+- Create: `src/coverage.js`
+- Modify: `tests/coverage.test.js`
 
 - [ ] **Step 1: Write coverage tests**
 
@@ -227,7 +218,7 @@ unknown runtime namespace                   -> explicit blocker
 
 - [ ] **Step 2: Run the coverage tests and verify failure**
 
-Run: `npm test -- tests/coverage.test.ts`
+Run: `npm test -- tests/coverage.test.js`
 
 Expected: FAIL because coverage evaluation is not implemented.
 
@@ -248,23 +239,22 @@ Use the existing opaque entity ID convention for semantic entities and require r
 
 - [ ] **Step 5: Run coverage tests and compilation**
 
-Run: `npm test -- tests/coverage.test.ts && npm run build`
+Run: `npm test -- tests/coverage.test.js`
 
 Expected: PASS.
 
 - [ ] **Step 6: Commit coverage safety behavior**
 
 ```bash
-git add src/coverage.ts src/index.ts tests/coverage.test.ts
+git add src/coverage.js tests/coverage.test.js
 git commit -m "feat: fail closed on incomplete coverage"
 ```
 
 ### Task 4: Implement Eligibility and Reducer decision logic
 
 **Files:**
-- Create: `src/reducer.ts`
-- Modify: `tests/reducer.test.ts`
-- Modify: `src/index.ts`
+- Create: `src/reducer.js`
+- Modify: `tests/reducer.test.js`
 
 - [ ] **Step 1: Write the decision table tests**
 
@@ -286,7 +276,7 @@ For every valid input, adding an unresolved blocker, changing `COMPLETE` to a no
 
 - [ ] **Step 3: Run reducer tests and verify failure**
 
-Run: `npm test -- tests/reducer.test.ts`
+Run: `npm test -- tests/reducer.test.js`
 
 Expected: FAIL because the decision functions do not exist.
 
@@ -296,27 +286,26 @@ Keep both functions deterministic and side-effect free. The reducer must consume
 
 - [ ] **Step 5: Run reducer tests and build**
 
-Run: `npm test -- tests/reducer.test.ts && npm run build`
+Run: `npm test -- tests/reducer.test.js`
 
 Expected: PASS.
 
 - [ ] **Step 6: Commit the reducer**
 
 ```bash
-git add src/reducer.ts src/index.ts tests/reducer.test.ts
+git add src/reducer.js tests/reducer.test.js
 git commit -m "feat: add fail-closed eligibility reducer"
 ```
 
 ### Task 5: Add production runner and vertical fixtures
 
 **Files:**
-- Create: `src/runner.ts`
+- Create: `src/runner.js`
 - Create: `fixtures/safety-mvp/human-review-required.json`
 - Create: `fixtures/safety-mvp/not-selected.json`
 - Create: `fixtures/safety-mvp/analysis-failure.json`
 - Create: `fixtures/safety-mvp/stale-run.json`
-- Modify: `tests/vertical.test.ts`
-- Modify: `src/index.ts`
+- Modify: `tests/vertical.test.js`
 
 - [ ] **Step 1: Define fixture input and expected output schemas**
 
@@ -340,24 +329,23 @@ The runner must execute validation, coverage evaluation, eligibility, reduction,
 
 - [ ] **Step 6: Run the vertical tests**
 
-Run: `npm test -- tests/vertical.test.ts`
+Run: `npm test -- tests/vertical.test.js`
 
 Expected: PASS for both decision branches, analysis failure fallback, and stale-run rejection.
 
 - [ ] **Step 7: Commit the fixtures and runner**
 
 ```bash
-git add src/runner.ts src/index.ts fixtures/safety-mvp tests/vertical.test.ts
+git add src/runner.js fixtures/safety-mvp tests/vertical.test.js
 git commit -m "test: add safety mvp vertical fixtures"
 ```
 
 ### Task 6: Implement current authority and atomic publication
 
 **Files:**
-- Create: `src/publication.ts`
-- Modify: `tests/publication.test.ts`
-- Modify: `src/runner.ts`
-- Modify: `src/index.ts`
+- Create: `src/publication.js`
+- Modify: `tests/publication.test.js`
+- Modify: `src/runner.js`
 
 - [ ] **Step 1: Write publication tests**
 
@@ -374,7 +362,7 @@ analysis failure                                 -> no reduction-success publica
 
 - [ ] **Step 2: Run publication tests and verify failure**
 
-Run: `npm test -- tests/publication.test.ts`
+Run: `npm test -- tests/publication.test.js`
 
 Expected: FAIL because the authority boundary does not exist.
 
@@ -388,24 +376,23 @@ Run the sequence `publish(A)`, update current head to `B`, attempt `publish(A)`,
 
 - [ ] **Step 5: Run publication tests and build**
 
-Run: `npm test -- tests/publication.test.ts && npm run build`
+Run: `npm test -- tests/publication.test.js`
 
 Expected: PASS.
 
 - [ ] **Step 6: Commit the authority boundary**
 
 ```bash
-git add src/publication.ts src/runner.ts src/index.ts tests/publication.test.ts
+git add src/publication.js src/runner.js tests/publication.test.js
 git commit -m "feat: protect authoritative analysis publication"
 ```
 
 ### Task 7: Bind Summary publication to the status check
 
 **Files:**
-- Create: `src/summary.ts`
-- Modify: `tests/summary.test.ts`
-- Modify: `src/publication.ts`
-- Modify: `src/index.ts`
+- Create: `src/summary.js`
+- Modify: `tests/summary.test.js`
+- Modify: `src/publication.js`
 
 - [ ] **Step 1: Write Summary/check tests**
 
@@ -430,21 +417,21 @@ The payload must include current repository, base SHA, head SHA, decision status
 
 - [ ] **Step 4: Run Summary tests and build**
 
-Run: `npm test -- tests/summary.test.ts && npm run build`
+Run: `npm test -- tests/summary.test.js`
 
 Expected: PASS.
 
 - [ ] **Step 5: Commit Summary/check binding**
 
 ```bash
-git add src/summary.ts src/publication.ts src/index.ts tests/summary.test.ts
+git add src/summary.js src/publication.js tests/summary.test.js
 git commit -m "feat: bind reduction check to authoritative summary"
 ```
 
 ### Task 8: Add end-to-end safety regression coverage and CI
 
 **Files:**
-- Modify: `tests/vertical.test.ts`
+- Modify: `tests/vertical.test.js`
 - Create: `.github/workflows/review-reduction-safety.yml`
 - Modify: `package.json`
 
@@ -462,18 +449,18 @@ Run a newer candidate to publication before an older candidate and assert that t
 
 - [ ] **Step 4: Add deterministic CI workflow**
 
-The workflow must run `npm ci`, `npm run build`, and `npm run test:safety`. It must not have path conditions that silently remove the required check, and it must not require LLM or external network access.
+The workflow must run `npm ci` and `npm run test:safety`. It must not have path conditions that silently remove the required check, and it must not require LLM or external network access.
 
 - [ ] **Step 5: Run the complete verification suite**
 
-Run: `npm run build && npm run test:safety`
+Run: `npm run test:safety`
 
 Expected: PASS with both vertical branches and all stale/failure regressions.
 
 - [ ] **Step 6: Commit the release gate**
 
 ```bash
-git add tests/vertical.test.ts .github/workflows/review-reduction-safety.yml package.json
+git add tests/vertical.test.js .github/workflows/review-reduction-safety.yml package.json
 git commit -m "test: enforce safety mvp release gate"
 ```
 
@@ -488,5 +475,4 @@ The Safety MVP is complete only when all of the following are true:
 - An old SHA, old policy, old runner, or late run cannot publish over the current authoritative result.
 - Summary publication and status check use the same AnalysisIdentity.
 - Analysis failure and missing Summary produce failure/unavailable, not a green reduction check.
-- `npm run build && npm run test:safety` passes without network or LLM dependencies.
-
+- `npm run test:safety` passes without network or LLM dependencies.

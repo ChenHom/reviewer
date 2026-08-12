@@ -1,0 +1,39 @@
+{
+  "identity": {
+    "repository": "example/repo",
+    "baseSha": "base-001",
+    "headSha": "head-risk-001",
+    "policyId": "policy-001",
+    "policyVersion": "1",
+    "runnerVersion": "1"
+  },
+  "coverage": {
+    "obligations": [
+      {
+        "id": "COV-LANG-001",
+        "required": true,
+        "status": "COMPLETE",
+        "changedRegions": [
+          {
+            "path": "src/payment.js",
+            "startByte": 0,
+            "endByte": 120,
+            "language": "javascript",
+            "adapterId": "javascript-v1",
+            "runtime": "server"
+          }
+        ]
+      }
+    ]
+  },
+  "riskBlockers": ["risk:duplicate-charge"],
+  "policyRequirements": [],
+  "expected": {
+    "analysisStatus": "COMPLETE",
+    "eligibilityStatus": "NOT_ELIGIBLE",
+    "decisionStatus": "HUMAN_REVIEW_REQUIRED",
+    "fallback": "TARGETED",
+    "reasons": ["risk:duplicate-charge"],
+    "headSha": "head-risk-001"
+  }
+}
