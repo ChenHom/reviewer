@@ -1,4 +1,4 @@
-import { sameIdentity } from './contracts.js';
+import { sameIdentity, validateCandidate } from './contracts.js';
 
 export function createAuthorityState(currentHead) {
   return {
@@ -13,7 +13,7 @@ export function setCurrentHead(state, currentHead) {
   return state;
 }
 
-function isCompleteCandidate(candidate) {
+function hasCandidateEnvelope(candidate) {
   return Boolean(
     candidate
     && candidate.identity
@@ -25,8 +25,12 @@ function isCompleteCandidate(candidate) {
 }
 
 export function publishCandidate(state, candidate) {
-  if (!isCompleteCandidate(candidate)) {
+  if (!hasCandidateEnvelope(candidate)) {
     return { accepted: false, reason: 'CANDIDATE_INCOMPLETE' };
+  }
+
+  if (!validateCandidate(candidate).valid) {
+    return { accepted: false, reason: 'CANDIDATE_INVALID' };
   }
 
   if (!sameIdentity(candidate.identity, state.currentHead)) {

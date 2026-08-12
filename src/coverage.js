@@ -8,14 +8,38 @@ function regionBlockers(obligation) {
     return [`${obligation.id}:CHANGED_REGIONS_MISSING`];
   }
 
+  if (regions.length === 0) {
+    return [`${obligation.id}:NO_CHANGED_REGIONS`];
+  }
+
+  let previousStart = -1;
+  let previousEnd = -1;
+
   for (const region of regions) {
     if (
       !Number.isInteger(region?.startByte)
       || !Number.isInteger(region?.endByte)
       || region.startByte < 0
-      || region.endByte < region.startByte
+      || region.endByte <= region.startByte
     ) {
       blockers.push(`${obligation.id}:INVALID_REGION`);
+    } else {
+      if (region.startByte < previousStart) {
+        blockers.push(`${obligation.id}:REGION_ORDER_INVALID`);
+      }
+      if (region.startByte < previousEnd) {
+        blockers.push(`${obligation.id}:REGION_OVERLAP`);
+      }
+      previousStart = region.startByte;
+      previousEnd = Math.max(previousEnd, region.endByte);
+    }
+
+    if (typeof region?.path !== 'string' || region.path.trim() === '') {
+      blockers.push(`${obligation.id}:PATH_MISSING`);
+    }
+
+    if (typeof region?.language !== 'string' || region.language.trim() === '') {
+      blockers.push(`${obligation.id}:LANGUAGE_MISSING`);
     }
 
     if (typeof region?.adapterId !== 'string' || region.adapterId.trim() === '') {

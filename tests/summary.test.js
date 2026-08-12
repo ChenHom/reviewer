@@ -93,3 +93,31 @@ test('does not pass an analysis failure', () => {
     { state: 'FAILURE', reason: 'ANALYSIS_FAILED' },
   );
 });
+
+test('fails when Summary content does not match the authoritative candidate', () => {
+  const current = authoritative(candidateFor());
+  const summary = publishSummary({
+    identity,
+    candidateDigest: 'wrong-digest',
+    analysisStatus: 'COMPLETE',
+    coverage: { status: 'FAILED', blockers: ['tampered'] },
+    eligibility: { status: 'ANALYSIS_FAILED', blockingSources: ['tampered'] },
+    decision: { status: 'HUMAN_REVIEW_REQUIRED', fallback: 'FULL', reasons: ['tampered'] },
+  });
+
+  assert.deepEqual(
+    deriveCheckState({ candidate: current, summary, currentIdentity: identity }),
+    { state: 'FAILURE', reason: 'SUMMARY_CANDIDATE_MISMATCH' },
+  );
+});
+
+test('fails when Summary content is mutated after publication', () => {
+  const current = authoritative(candidateFor());
+  const summary = publishSummary(buildSummary(current));
+  summary.summary.coverage = { status: 'FAILED', blockers: ['tampered'] };
+
+  assert.deepEqual(
+    deriveCheckState({ candidate: current, summary, currentIdentity: identity }),
+    { state: 'FAILURE', reason: 'SUMMARY_CANDIDATE_MISMATCH' },
+  );
+});

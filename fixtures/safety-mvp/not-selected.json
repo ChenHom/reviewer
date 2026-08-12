@@ -27,5 +27,13 @@
     ]
   },
   "riskBlockers": [],
-  "policyRequirements": []
+  "policyRequirements": [],
+  "expected": {
+    "analysisStatus": "COMPLETE",
+    "eligibilityStatus": "ELIGIBLE",
+    "decisionStatus": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "fallback": null,
+    "reasons": ["NO_REDUCTION_BLOCKER"],
+    "headSha": "head-low-risk-001"
+  }
 }

@@ -61,3 +61,35 @@ test('fails closed when no required obligation exists', () => {
     blockers: ['COVERAGE_NO_REQUIRED_OBLIGATIONS'],
   });
 });
+
+test('fails closed when a complete obligation has no changed regions', () => {
+  const result = evaluateCoverage({
+    obligations: [{
+      id: 'COV-LANG-001',
+      required: true,
+      status: 'COMPLETE',
+      changedRegions: [],
+    }],
+  });
+
+  assert.deepEqual(result, {
+    status: COVERAGE.INCOMPLETE,
+    blockers: ['COV-LANG-001:NO_CHANGED_REGIONS'],
+  });
+});
+
+test('fails closed when a changed region is missing its source identity', () => {
+  const result = evaluateCoverage({
+    obligations: [{
+      id: 'COV-LANG-001',
+      required: true,
+      status: 'COMPLETE',
+      changedRegions: [{ ...region, path: '', language: '' }],
+    }],
+  });
+
+  assert.deepEqual(result, {
+    status: COVERAGE.INCOMPLETE,
+    blockers: ['COV-LANG-001:LANGUAGE_MISSING', 'COV-LANG-001:PATH_MISSING'],
+  });
+});

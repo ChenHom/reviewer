@@ -1,0 +1,20 @@
+{
+  "identity": {
+    "repository": "example/repo",
+    "baseSha": "base-001",
+    "headSha": "head-analysis-failure-001",
+    "policyId": "policy-001",
+    "policyVersion": "1",
+    "runnerVersion": "1"
+  },
+  "coverage": {
+    "obligations": []
+  },
+  "expected": {
+    "analysisStatus": "ANALYSIS_FAILED",
+    "decisionStatus": "HUMAN_REVIEW_REQUIRED",
+    "fallback": "FULL",
+    "checkState": "FAILURE",
+    "checkReason": "ANALYSIS_FAILED"
+  }
+}

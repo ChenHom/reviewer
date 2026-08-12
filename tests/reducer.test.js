@@ -79,16 +79,47 @@ test('selects no Human Review only for a clear eligible result', () => {
 });
 
 test('adding uncertainty never changes a Human Review result into NOT_SELECTED', () => {
-  const decisions = [
-    reduceReviewScope({
-      eligibility: { status: ELIGIBILITY.NOT_ELIGIBLE, blockingSources: ['risk:one'] },
-      policyRequirements: [],
-    }),
-    reduceReviewScope({
-      eligibility: { status: ELIGIBILITY.NOT_ELIGIBLE, blockingSources: ['risk:one', 'risk:two'] },
-      policyRequirements: [],
-    }),
+  const blockerPool = [
+    'risk:one',
+    'risk:two',
+    'COV-LANG-001:PARTIAL_PARSE',
+    'runtime:unknown',
   ];
 
-  assert.ok(decisions.every((decision) => decision.status === DECISION.HUMAN_REVIEW_REQUIRED));
+  for (let mask = 1; mask < 2 ** blockerPool.length; mask += 1) {
+    const blockers = blockerPool.filter((_, index) => (mask & (1 << index)) !== 0);
+    const decision = reduceReviewScope({
+      eligibility: { status: ELIGIBILITY.NOT_ELIGIBLE, blockingSources: blockers },
+      policyRequirements: [],
+    });
+
+    assert.equal(decision.status, DECISION.HUMAN_REVIEW_REQUIRED, `blockers=${blockers.join(',')}`);
+    assert.deepEqual(decision.reasons, [...blockers].sort(), `blockers=${blockers.join(',')}`);
+  }
+});
+
+test('fails closed when eligibility blockers are inconsistent', () => {
+  assert.deepEqual(
+    reduceReviewScope({
+      eligibility: { status: ELIGIBILITY.ELIGIBLE, blockingSources: ['risk:unexpected'] },
+      policyRequirements: [],
+    }),
+    {
+      status: DECISION.HUMAN_REVIEW_REQUIRED,
+      fallback: 'FULL',
+      reasons: ['ELIGIBLE_WITH_BLOCKERS', 'risk:unexpected'],
+    },
+  );
+
+  assert.deepEqual(
+    reduceReviewScope({
+      eligibility: { status: ELIGIBILITY.NOT_ELIGIBLE, blockingSources: [] },
+      policyRequirements: [],
+    }),
+    {
+      status: DECISION.HUMAN_REVIEW_REQUIRED,
+      fallback: 'FULL',
+      reasons: ['ELIGIBILITY_BLOCKER_MISSING'],
+    },
+  );
 });

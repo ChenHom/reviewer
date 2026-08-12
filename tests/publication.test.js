@@ -80,6 +80,16 @@ test('rejects a candidate with a different policy identity', () => {
   });
 });
 
+test('rejects a candidate with a different runner identity', () => {
+  const state = createAuthorityState(identity);
+  const candidate = runAnalysis(inputFor({ ...identity, runnerVersion: '2' }));
+
+  assert.deepEqual(publishCandidate(state, candidate), {
+    accepted: false,
+    reason: 'STALE_ANALYSIS_IDENTITY',
+  });
+});
+
 test('publishes analysis failure only as a non-success result', () => {
   const state = createAuthorityState(identity);
   const candidate = runAnalysis({ identity, coverage: { obligations: [] } });
@@ -99,4 +109,57 @@ test('rejects an incomplete candidate without mutating authority', () => {
     reason: 'CANDIDATE_INCOMPLETE',
   });
   assert.equal(state.current, null);
+});
+
+test('rejects a candidate with an invalid analysis status', () => {
+  const state = createAuthorityState(identity);
+  const candidate = {
+    identity,
+    analysisStatus: 'GARBAGE',
+    coverage: { status: 'COMPLETE', blockers: [] },
+    eligibility: { status: 'ELIGIBLE', blockingSources: [] },
+    decision: { status: 'NOT_SELECTED_FOR_HUMAN_REVIEW', reasons: ['NO_REDUCTION_BLOCKER'] },
+  };
+
+  assert.deepEqual(publishCandidate(state, candidate), {
+    accepted: false,
+    reason: 'CANDIDATE_INVALID',
+  });
+  assert.equal(state.current, null);
+});
+
+test('rejects an eligible candidate that contains a blocker', () => {
+  const state = createAuthorityState(identity);
+  const candidate = {
+    identity,
+    analysisStatus: 'COMPLETE',
+    coverage: { status: 'COMPLETE', blockers: [] },
+    eligibility: { status: 'ELIGIBLE', blockingSources: ['risk:unexpected'] },
+    decision: { status: 'NOT_SELECTED_FOR_HUMAN_REVIEW', reasons: ['NO_REDUCTION_BLOCKER'] },
+  };
+
+  assert.deepEqual(publishCandidate(state, candidate), {
+    accepted: false,
+    reason: 'CANDIDATE_INVALID',
+  });
+});
+
+test('rejects a complete candidate that contains coverage blockers', () => {
+  const state = createAuthorityState(identity);
+  const candidate = {
+    identity,
+    analysisStatus: 'COMPLETE',
+    coverage: { status: 'COMPLETE', blockers: ['COV-LANG-001:PARTIAL_PARSE'] },
+    eligibility: { status: 'NOT_ELIGIBLE', blockingSources: ['COV-LANG-001:PARTIAL_PARSE'] },
+    decision: {
+      status: 'HUMAN_REVIEW_REQUIRED',
+      fallback: 'FULL',
+      reasons: ['COV-LANG-001:PARTIAL_PARSE'],
+    },
+  };
+
+  assert.deepEqual(publishCandidate(state, candidate), {
+    accepted: false,
+    reason: 'CANDIDATE_INVALID',
+  });
 });

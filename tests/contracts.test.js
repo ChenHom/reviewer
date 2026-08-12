@@ -33,3 +33,27 @@ test('rejects an eligible result that claims blockers', () => {
   assert.deepEqual(result.valid, false);
   assert.ok(result.errors.includes('ELIGIBLE_WITH_BLOCKERS'));
 });
+
+test('rejects inconsistent risk, policy, and eligibility inputs', () => {
+  const result = validateAnalysisInput({
+    identity,
+    coverage: {
+      obligations: [{
+        id: 'COV-1',
+        required: true,
+        status: 'COMPLETE',
+        changedRegions: [],
+      }],
+    },
+    riskBlockers: 'risk-1',
+    policyRequirements: [null],
+    audit: 'yes',
+    eligibility: { status: 'UNKNOWN', blockingSources: [] },
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.includes('RISK_BLOCKERS_INVALID'));
+  assert.ok(result.errors.includes('POLICY_REQUIREMENTS_INVALID'));
+  assert.ok(result.errors.includes('AUDIT_INVALID'));
+  assert.ok(result.errors.includes('ELIGIBILITY_STATUS_INVALID'));
+});

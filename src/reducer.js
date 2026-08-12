@@ -32,6 +32,25 @@ export function reduceReviewScope({ eligibility, policyRequirements = [], audit 
 
   const reasons = stableStrings(eligibility.blockingSources ?? []);
 
+  if (eligibility.status === ELIGIBILITY.ELIGIBLE && reasons.length > 0) {
+    return {
+      status: DECISION.HUMAN_REVIEW_REQUIRED,
+      fallback: 'FULL',
+      reasons: stableStrings(['ELIGIBLE_WITH_BLOCKERS', ...reasons]),
+    };
+  }
+
+  if (
+    [ELIGIBILITY.NOT_ELIGIBLE, ELIGIBILITY.ANALYSIS_FAILED].includes(eligibility.status)
+    && reasons.length === 0
+  ) {
+    return {
+      status: DECISION.HUMAN_REVIEW_REQUIRED,
+      fallback: 'FULL',
+      reasons: ['ELIGIBILITY_BLOCKER_MISSING'],
+    };
+  }
+
   if (eligibility.status === ELIGIBILITY.ANALYSIS_FAILED) {
     return {
       status: DECISION.HUMAN_REVIEW_REQUIRED,

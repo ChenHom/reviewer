@@ -27,5 +27,13 @@
     ]
   },
   "riskBlockers": ["risk:duplicate-charge"],
-  "policyRequirements": []
+  "policyRequirements": [],
+  "expected": {
+    "analysisStatus": "COMPLETE",
+    "eligibilityStatus": "NOT_ELIGIBLE",
+    "decisionStatus": "HUMAN_REVIEW_REQUIRED",
+    "fallback": "TARGETED",
+    "reasons": ["risk:duplicate-charge"],
+    "headSha": "head-risk-001"
+  }
 }

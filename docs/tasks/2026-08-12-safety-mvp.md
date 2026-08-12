@@ -2,7 +2,9 @@
 
 Implementation plan: [2026-08-12-review-reduction-safety.md](../superpowers/plans/2026-08-12-review-reduction-safety-mvp.md)
 
-Status: `IMPLEMENTED_UNCOMMITTED`
+Status: `IMPLEMENTED`
+
+Production entrypoint: `src/runner.js` → `runSafetyMvp()`. `runAnalysis()` remains the analysis-only stage used inside that pipeline.
 
 The first baseline intentionally uses Node.js native ESM and `node:test` with no runtime dependencies. TypeScript/Vitest are deferred until the core needs a larger public API or external adapters.
 
@@ -20,7 +22,7 @@ The implementation must fail closed. Any unsupported or incomplete analysis beco
 - [x] Add `test` and `test:safety` scripts.
 - [x] Add the initial contract smoke test.
 - [x] Verify `npm run test:safety`.
-- [ ] Commit: consolidated first implementation commit.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ### S-02 — Define canonical Safety MVP contracts
 
@@ -29,7 +31,7 @@ The implementation must fail closed. Any unsupported or incomplete analysis beco
 - [x] Add stable reason codes.
 - [x] Reject missing, duplicate, inconsistent, and empty-required-obligation inputs.
 - [x] Add contract tests.
-- [ ] Commit: consolidated first implementation commit.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ### S-03 — Implement Coverage / `PARTIAL_PARSE`
 
@@ -39,7 +41,7 @@ The implementation must fail closed. Any unsupported or incomplete analysis beco
 - [x] Preserve changed byte-region coverage for mixed-language files.
 - [x] Require adapter ID and runtime namespace for each changed region.
 - [x] Add coverage tests for partial parse, unknown runtime, and empty obligations.
-- [ ] Commit: consolidated first implementation commit.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ### S-04 — Add runtime context boundary
 
@@ -47,7 +49,7 @@ The implementation must fail closed. Any unsupported or incomplete analysis beco
 - [x] Reject `unknown` runtime for reduction purposes.
 - [x] Do not introduce a second graph or probabilistic edge model.
 - [x] Add runtime context tests.
-- [ ] Commit: consolidated first implementation commit.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ### S-05 — Implement Eligibility and Reducer
 
@@ -56,7 +58,7 @@ The implementation must fail closed. Any unsupported or incomplete analysis beco
 - [x] Ensure policy requirements cannot override ineligible input.
 - [x] Add the deterministic decision table.
 - [x] Add monotonic property tests: more uncertainty can never reduce Human Review scope.
-- [ ] Commit: consolidated first implementation commit.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ### S-06 — Create production runner and vertical fixtures
 
@@ -65,7 +67,7 @@ The implementation must fail closed. Any unsupported or incomplete analysis beco
 - [x] Create `not-selected.json`.
 - [x] Assert exact decision, fallback, reasons, and SHA in vertical tests.
 - [x] Cover analysis failure in the vertical test.
-- [ ] Commit: consolidated first implementation commit.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ### S-07 — Protect current authoritative analysis
 
@@ -74,7 +76,7 @@ The implementation must fail closed. Any unsupported or incomplete analysis beco
 - [x] Reject old head SHA, old policy identity, and old runner identity.
 - [x] Ensure rejected candidates do not mutate current result.
 - [x] Test newer result followed by late old result.
-- [ ] Commit: consolidated first implementation commit.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ### S-08 — Bind Summary and status check
 
@@ -83,7 +85,7 @@ The implementation must fail closed. Any unsupported or incomplete analysis beco
 - [x] Make Summary publication failure fail the reduction check.
 - [x] Make SHA mismatch fail the reduction check.
 - [x] Ensure analysis failure is failure, never reduction success.
-- [ ] Commit: consolidated first implementation commit.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ### S-09 — Add end-to-end regression cases
 
@@ -91,7 +93,8 @@ The implementation must fail closed. Any unsupported or incomplete analysis beco
 - [x] Test analyzer failure fallback.
 - [x] Test old run completing after a newer run.
 - [x] Test stale Summary cannot be reported as current.
-- [ ] Commit: consolidated first implementation commit.
+- [x] Add analysis-failure and stale-run JSON fixtures for the regression paths.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ### S-10 — Add deterministic CI release gate
 
@@ -100,7 +103,7 @@ The implementation must fail closed. Any unsupported or incomplete analysis beco
 - [x] Ensure required tests do not depend on LLM, external network, or repository scripts.
 - [x] Ensure the workflow cannot silently disappear through path filtering.
 - [x] Verify the complete local suite.
-- [ ] Commit: consolidated first implementation commit.
+- [x] Commit: Safety MVP implementation committed in this branch.
 
 ## Completion criteria
 

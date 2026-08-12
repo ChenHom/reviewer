@@ -1,6 +1,8 @@
 import { DECISION, ELIGIBILITY, COVERAGE, validateAnalysisInput } from './contracts.js';
 import { evaluateCoverage } from './coverage.js';
 import { evaluateEligibility, reduceReviewScope } from './reducer.js';
+import { createAuthorityState, publishCandidate } from './publication.js';
+import { buildSummary, deriveCheckState, publishSummary } from './summary.js';
 
 export function runAnalysis(input = {}) {
   const inputValidation = validateAnalysisInput(input);
@@ -42,5 +44,33 @@ export function runAnalysis(input = {}) {
     eligibility,
     decision,
     errors: [],
+  };
+}
+
+export function runSafetyMvp(input = {}, authorityState = createAuthorityState(input.identity), summaryOptions = {}) {
+  const candidate = runAnalysis(input);
+  const publication = publishCandidate(authorityState, candidate);
+
+  if (!publication.accepted) {
+    return {
+      candidate,
+      publication,
+      summary: null,
+      check: { state: 'FAILURE', reason: publication.reason },
+    };
+  }
+
+  const summary = publishSummary(buildSummary(publication.current), summaryOptions);
+  const check = deriveCheckState({
+    candidate: publication.current,
+    summary,
+    currentIdentity: authorityState.currentHead,
+  });
+
+  return {
+    candidate: publication.current,
+    publication,
+    summary,
+    check,
   };
 }
