@@ -41,7 +41,7 @@ function authoritative(candidate) {
   return state.current;
 }
 
-test('passes only when authoritative result and Summary share identity', () => {
+test('只有 authoritative result 與 Summary 共用 identity 時才通過', () => {
   const current = authoritative(candidateFor());
   const summary = publishSummary(buildSummary(current));
 
@@ -51,7 +51,7 @@ test('passes only when authoritative result and Summary share identity', () => {
   );
 });
 
-test('fails when Summary publication fails', () => {
+test('Summary 發布失敗時回傳 FAILURE', () => {
   const current = authoritative(candidateFor());
   const summary = publishSummary(buildSummary(current), { succeed: false });
 
@@ -61,7 +61,7 @@ test('fails when Summary publication fails', () => {
   );
 });
 
-test('fails when Summary is missing', () => {
+test('缺少 Summary 時回傳 FAILURE', () => {
   const current = authoritative(candidateFor());
 
   assert.deepEqual(
@@ -70,7 +70,7 @@ test('fails when Summary is missing', () => {
   );
 });
 
-test('fails when Summary identity does not match current head', () => {
+test('Summary identity 與 current head 不一致時回傳 FAILURE', () => {
   const current = authoritative(candidateFor());
   const summary = publishSummary(buildSummary(current));
 
@@ -84,7 +84,7 @@ test('fails when Summary identity does not match current head', () => {
   );
 });
 
-test('does not pass an analysis failure', () => {
+test('analysis failure 不能通過 status check', () => {
   const current = authoritative(runAnalysis({ identity, coverage: { obligations: [] } }));
   const summary = publishSummary(buildSummary(current));
 
@@ -94,7 +94,7 @@ test('does not pass an analysis failure', () => {
   );
 });
 
-test('fails when Summary content does not match the authoritative candidate', () => {
+test('Summary 內容與 authoritative candidate 不一致時回傳 FAILURE', () => {
   const current = authoritative(candidateFor());
   const summary = publishSummary({
     identity,
@@ -111,7 +111,7 @@ test('fails when Summary content does not match the authoritative candidate', ()
   );
 });
 
-test('fails when Summary content is mutated after publication', () => {
+test('Summary 發布後內容被修改時回傳 FAILURE', () => {
   const current = authoritative(candidateFor());
   const summary = publishSummary(buildSummary(current));
   summary.summary.coverage = { status: 'FAILED', blockers: ['tampered'] };

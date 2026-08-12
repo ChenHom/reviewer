@@ -39,7 +39,7 @@ async function fixture(name) {
   return JSON.parse(source);
 }
 
-test('runs analysis, publication, Summary, and status check as one pipeline', () => {
+test('以單一 pipeline 串接 analysis、publication、Summary 與 status check', () => {
   const state = createAuthorityState(identity);
   const result = runSafetyMvp(input, state);
 
@@ -51,7 +51,7 @@ test('runs analysis, publication, Summary, and status check as one pipeline', ()
   });
 });
 
-test('does not publish a Summary for a stale candidate', () => {
+test('stale candidate 不發布 Summary', () => {
   const state = createAuthorityState({ ...identity, headSha: 'head-002' });
   const result = runSafetyMvp(input, state);
 
@@ -66,7 +66,7 @@ test('does not publish a Summary for a stale candidate', () => {
   });
 });
 
-test('keeps analyzer failure on the failing status path', () => {
+test('analyzer failure 維持在失敗 status path', () => {
   const state = createAuthorityState(identity);
   const result = runSafetyMvp({ identity, coverage: { obligations: [] } }, state);
 
@@ -78,7 +78,7 @@ test('keeps analyzer failure on the failing status path', () => {
   });
 });
 
-test('fails the status check when authoritative Summary publication fails', () => {
+test('authoritative Summary 發布失敗時 status check 回傳 FAILURE', () => {
   const state = createAuthorityState(identity);
   const result = runSafetyMvp(input, state, { succeed: false });
 
@@ -93,7 +93,7 @@ test('fails the status check when authoritative Summary publication fails', () =
   });
 });
 
-test('invalidates the old authority as soon as a new head arrives', () => {
+test('新 head 到達時立即使舊 authority 失效', () => {
   const state = createAuthorityState(identity);
   const oldResult = runSafetyMvp(input, state);
   const nextIdentity = { ...identity, headSha: 'head-002' };
@@ -112,7 +112,7 @@ test('invalidates the old authority as soon as a new head arrives', () => {
   );
 });
 
-test('runs the analysis-failure fixture through the failure check path', async () => {
+test('analysis-failure fixture 走 failure check path', async () => {
   const inputFixture = await fixture('analysis-failure');
   const result = runSafetyMvp(inputFixture, createAuthorityState(inputFixture.identity));
 
@@ -124,7 +124,7 @@ test('runs the analysis-failure fixture through the failure check path', async (
   assert.equal(result.check.reason, inputFixture.expected.checkReason);
 });
 
-test('rejects the stale-run fixture without changing authority', async () => {
+test('拒絕 stale-run fixture 且不修改 authority', async () => {
   const inputFixture = await fixture('stale-run');
   const state = createAuthorityState(inputFixture.currentIdentity);
   const result = runSafetyMvp(inputFixture.input, state);

@@ -11,7 +11,7 @@ const identity = {
   runnerVersion: '1',
 };
 
-test('rejects an analysis with no required coverage obligations', () => {
+test('拒絕沒有必要 coverage obligation 的分析', () => {
   const result = validateAnalysisInput({
     identity,
     coverage: { obligations: [] },
@@ -21,7 +21,7 @@ test('rejects an analysis with no required coverage obligations', () => {
   assert.ok(result.errors.includes('COVERAGE_NO_REQUIRED_OBLIGATIONS'));
 });
 
-test('rejects an eligible result that claims blockers', () => {
+test('拒絕宣稱有 blocker 的 ELIGIBLE 結果', () => {
   const result = validateAnalysisInput({
     identity,
     coverage: {
@@ -34,7 +34,7 @@ test('rejects an eligible result that claims blockers', () => {
   assert.ok(result.errors.includes('ELIGIBLE_WITH_BLOCKERS'));
 });
 
-test('rejects inconsistent risk, policy, and eligibility inputs', () => {
+test('拒絕不一致的 risk、policy 與 eligibility 輸入', () => {
   const result = validateAnalysisInput({
     identity,
     coverage: {

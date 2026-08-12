@@ -5,14 +5,14 @@ import { evaluateEligibility, reduceReviewScope } from '../src/reducer.js';
 
 const complete = { status: COVERAGE.COMPLETE, blockers: [] };
 
-test('returns ELIGIBLE only when coverage and risk inputs are clear', () => {
+test('只有 coverage 與 risk 輸入都清楚時才回傳 ELIGIBLE', () => {
   assert.deepEqual(
     evaluateEligibility({ coverage: complete, riskBlockers: [] }),
     { status: ELIGIBILITY.ELIGIBLE, blockingSources: [] },
   );
 });
 
-test('preserves coverage blockers as NOT_ELIGIBLE', () => {
+test('將 coverage blocker 保留為 NOT_ELIGIBLE', () => {
   assert.deepEqual(
     evaluateEligibility({
       coverage: { status: COVERAGE.INCOMPLETE, blockers: ['COV-LANG-001:PARTIAL_PARSE'] },
@@ -25,7 +25,7 @@ test('preserves coverage blockers as NOT_ELIGIBLE', () => {
   );
 });
 
-test('returns ANALYSIS_FAILED for evaluator errors', () => {
+test('evaluator 發生錯誤時回傳 ANALYSIS_FAILED', () => {
   assert.deepEqual(
     evaluateEligibility({
       coverage: { status: COVERAGE.FAILED, blockers: ['ANALYZER_FAILED'] },
@@ -36,7 +36,7 @@ test('returns ANALYSIS_FAILED for evaluator errors', () => {
   );
 });
 
-test('cannot reduce a blocked input to NOT_SELECTED', () => {
+test('被 blocker 阻擋的輸入不能 reduction 成 NOT_SELECTED', () => {
   const eligibility = {
     status: ELIGIBILITY.NOT_ELIGIBLE,
     blockingSources: ['risk:duplicate-charge'],
@@ -49,7 +49,7 @@ test('cannot reduce a blocked input to NOT_SELECTED', () => {
   assert.deepEqual(decision.reasons, ['risk:duplicate-charge']);
 });
 
-test('uses full fallback for coverage or analysis failures', () => {
+test('coverage 或 analysis failure 使用 FULL fallback', () => {
   const eligibility = {
     status: ELIGIBILITY.NOT_ELIGIBLE,
     blockingSources: ['COV-LANG-001:PARTIAL_PARSE'],
@@ -65,7 +65,7 @@ test('uses full fallback for coverage or analysis failures', () => {
   );
 });
 
-test('selects no Human Review only for a clear eligible result', () => {
+test('只有明確且 eligible 的結果才能選擇不進行 Human Review', () => {
   assert.deepEqual(
     reduceReviewScope({
       eligibility: { status: ELIGIBILITY.ELIGIBLE, blockingSources: [] },
@@ -78,7 +78,7 @@ test('selects no Human Review only for a clear eligible result', () => {
   );
 });
 
-test('adding uncertainty never changes a Human Review result into NOT_SELECTED', () => {
+test('增加不確定性時不能將 Human Review 改成 NOT_SELECTED', () => {
   const blockerPool = [
     'risk:one',
     'risk:two',
@@ -98,7 +98,7 @@ test('adding uncertainty never changes a Human Review result into NOT_SELECTED',
   }
 });
 
-test('fails closed when eligibility blockers are inconsistent', () => {
+test('eligibility blocker 不一致時採 fail-closed', () => {
   assert.deepEqual(
     reduceReviewScope({
       eligibility: { status: ELIGIBILITY.ELIGIBLE, blockingSources: ['risk:unexpected'] },

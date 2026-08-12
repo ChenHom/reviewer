@@ -35,7 +35,7 @@ function inputFor(nextIdentity, overrides = {}) {
   };
 }
 
-test('publishes a complete candidate for the current identity', () => {
+test('目前 identity 的完整 candidate 可以發布', () => {
   const state = createAuthorityState(identity);
   const candidate = runAnalysis(inputFor(identity));
 
@@ -45,7 +45,7 @@ test('publishes a complete candidate for the current identity', () => {
   assert.equal(state.current.identity.headSha, 'head-001');
 });
 
-test('rejects a candidate when the current head changed', () => {
+test('current head 改變時拒絕 candidate', () => {
   const state = createAuthorityState(identity);
   const oldCandidate = runAnalysis(inputFor(identity));
   const nextIdentity = { ...identity, headSha: 'head-002' };
@@ -57,7 +57,7 @@ test('rejects a candidate when the current head changed', () => {
   assert.equal(state.current, null);
 });
 
-test('a late old run cannot replace the newer authoritative result', () => {
+test('較晚完成的舊 run 不能取代較新的 authoritative result', () => {
   const state = createAuthorityState(identity);
   const oldCandidate = runAnalysis(inputFor(identity));
   const nextIdentity = { ...identity, headSha: 'head-002' };
@@ -70,7 +70,7 @@ test('a late old run cannot replace the newer authoritative result', () => {
   assert.deepEqual(state.current.decision.reasons, ['risk:new']);
 });
 
-test('rejects a candidate with a different policy identity', () => {
+test('policy identity 不同時拒絕 candidate', () => {
   const state = createAuthorityState(identity);
   const candidate = runAnalysis(inputFor({ ...identity, policyVersion: '2' }));
 
@@ -80,7 +80,7 @@ test('rejects a candidate with a different policy identity', () => {
   });
 });
 
-test('rejects a candidate with a different runner identity', () => {
+test('runner identity 不同時拒絕 candidate', () => {
   const state = createAuthorityState(identity);
   const candidate = runAnalysis(inputFor({ ...identity, runnerVersion: '2' }));
 
@@ -90,7 +90,7 @@ test('rejects a candidate with a different runner identity', () => {
   });
 });
 
-test('publishes analysis failure only as a non-success result', () => {
+test('analysis failure 只能以非成功結果發布', () => {
   const state = createAuthorityState(identity);
   const candidate = runAnalysis({ identity, coverage: { obligations: [] } });
 
@@ -101,7 +101,7 @@ test('publishes analysis failure only as a non-success result', () => {
   assert.equal(state.current.decision.fallback, 'FULL');
 });
 
-test('rejects an incomplete candidate without mutating authority', () => {
+test('拒絕不完整 candidate 且不修改 authority', () => {
   const state = createAuthorityState(identity);
 
   assert.deepEqual(publishCandidate(state, { identity }), {
@@ -111,7 +111,7 @@ test('rejects an incomplete candidate without mutating authority', () => {
   assert.equal(state.current, null);
 });
 
-test('rejects a candidate with an invalid analysis status', () => {
+test('analysis status 無效時拒絕 candidate', () => {
   const state = createAuthorityState(identity);
   const candidate = {
     identity,
@@ -128,7 +128,7 @@ test('rejects a candidate with an invalid analysis status', () => {
   assert.equal(state.current, null);
 });
 
-test('rejects an eligible candidate that contains a blocker', () => {
+test('ELIGIBLE candidate 含有 blocker 時拒絕發布', () => {
   const state = createAuthorityState(identity);
   const candidate = {
     identity,
@@ -144,7 +144,7 @@ test('rejects an eligible candidate that contains a blocker', () => {
   });
 });
 
-test('rejects a complete candidate that contains coverage blockers', () => {
+test('COMPLETE candidate 含有 coverage blocker 時拒絕發布', () => {
   const state = createAuthorityState(identity);
   const candidate = {
     identity,

@@ -16,7 +16,7 @@ async function runFixture(name) {
   return { input, result };
 }
 
-test('runs the Human Review vertical branch through the production runner', async () => {
+test('Human Review vertical branch 透過 production runner 執行', async () => {
   const { input, result } = await runFixture('human-review-required');
   const expected = input.expected;
 
@@ -30,7 +30,7 @@ test('runs the Human Review vertical branch through the production runner', asyn
   assert.equal(result.check.state, 'PASS');
 });
 
-test('runs the natural NOT_SELECTED branch through the production runner', async () => {
+test('自然 NOT_SELECTED branch 透過 production runner 執行', async () => {
   const { input, result } = await runFixture('not-selected');
   const expected = input.expected;
 
@@ -44,7 +44,7 @@ test('runs the natural NOT_SELECTED branch through the production runner', async
   assert.equal(result.check.state, 'PASS');
 });
 
-test('fails closed when an analysis input is invalid', () => {
+test('analysis 輸入無效時採 fail-closed', () => {
   const identity = {
     repository: 'example/repo',
     baseSha: 'base-001',

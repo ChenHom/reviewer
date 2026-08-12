@@ -12,7 +12,7 @@ const region = {
   runtime: 'server',
 };
 
-test('returns COMPLETE when every required obligation is complete', () => {
+test('所有必要 obligation 完成時回傳 COMPLETE', () => {
   const result = evaluateCoverage({
     obligations: [{ id: 'COV-LANG-001', required: true, status: 'COMPLETE', changedRegions: [region] }],
   });
@@ -20,7 +20,7 @@ test('returns COMPLETE when every required obligation is complete', () => {
   assert.deepEqual(result, { status: COVERAGE.COMPLETE, blockers: [] });
 });
 
-test('keeps PARTIAL_PARSE as a reduction blocker', () => {
+test('將 PARTIAL_PARSE 保留為 reduction blocker', () => {
   const result = evaluateCoverage({
     obligations: [{
       id: 'COV-LANG-001',
@@ -37,7 +37,7 @@ test('keeps PARTIAL_PARSE as a reduction blocker', () => {
   });
 });
 
-test('blocks an unknown runtime in a changed region', () => {
+test('changed region 使用未知 runtime 時阻止 reduction', () => {
   const result = evaluateCoverage({
     obligations: [{
       id: 'COV-LANG-001',
@@ -53,7 +53,7 @@ test('blocks an unknown runtime in a changed region', () => {
   });
 });
 
-test('fails closed when no required obligation exists', () => {
+test('沒有必要 obligation 時採 fail-closed', () => {
   const result = evaluateCoverage({ obligations: [] });
 
   assert.deepEqual(result, {
@@ -62,7 +62,7 @@ test('fails closed when no required obligation exists', () => {
   });
 });
 
-test('fails closed when a complete obligation has no changed regions', () => {
+test('COMPLETE obligation 沒有 changed region 時採 fail-closed', () => {
   const result = evaluateCoverage({
     obligations: [{
       id: 'COV-LANG-001',
@@ -78,7 +78,7 @@ test('fails closed when a complete obligation has no changed regions', () => {
   });
 });
 
-test('fails closed when a changed region is missing its source identity', () => {
+test('changed region 缺少來源 identity 時採 fail-closed', () => {
   const result = evaluateCoverage({
     obligations: [{
       id: 'COV-LANG-001',
