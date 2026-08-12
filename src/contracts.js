@@ -35,14 +35,33 @@ const identityFields = [
   'runnerVersion',
 ];
 
+/**
+ * 將字串集合去重並排序，產生穩定的 blocker 順序。
+ *
+ * @param {string[]} [values=[]] - 要正規化的字串集合。
+ * @returns {string[]} 去重且排序後的字串集合。
+ */
 export function stableStrings(values = []) {
   return [...new Set(values)].sort();
 }
 
+/**
+ * 比較兩個 AnalysisIdentity 是否完全一致。
+ *
+ * @param {object|undefined} left - 第一個 identity。
+ * @param {object|undefined} right - 第二個 identity。
+ * @returns {boolean} 兩個 identity 是否完全一致。
+ */
 export function sameIdentity(left, right) {
   return identityFields.every((field) => left?.[field] === right?.[field]);
 }
 
+/**
+ * 驗證分析 identity 的必要欄位。
+ *
+ * @param {object|undefined} identity - 要驗證的 identity。
+ * @param {string[]} errors - 累積驗證錯誤的陣列。
+ */
 function validateIdentity(identity, errors) {
   if (!identity || typeof identity !== 'object') {
     errors.push('IDENTITY_MISSING');
@@ -56,6 +75,12 @@ function validateIdentity(identity, errors) {
   }
 }
 
+/**
+ * 驗證 coverage report 的 obligation 結構與狀態。
+ *
+ * @param {object|undefined} coverage - 要驗證的 coverage report。
+ * @param {string[]} errors - 累積驗證錯誤的陣列。
+ */
 function validateCoverage(coverage, errors) {
   if (!coverage || !Array.isArray(coverage.obligations)) {
     errors.push('COVERAGE_MISSING');
@@ -83,6 +108,12 @@ function validateCoverage(coverage, errors) {
   }
 }
 
+/**
+ * 驗證 eligibility 的 blocker 一致性。
+ *
+ * @param {object|undefined} eligibility - 要驗證的 eligibility 結果。
+ * @param {string[]} errors - 累積驗證錯誤的陣列。
+ */
 function validateEligibility(eligibility, errors) {
   if (!eligibility) return;
 
@@ -111,6 +142,13 @@ function validateEligibility(eligibility, errors) {
   }
 }
 
+/**
+ * 驗證可選的字串陣列欄位。
+ *
+ * @param {unknown} value - 要驗證的欄位值。
+ * @param {string} errorCode - 驗證失敗時使用的錯誤碼。
+ * @param {string[]} errors - 累積驗證錯誤的陣列。
+ */
 function validateStringList(value, errorCode, errors) {
   if (value === undefined) return;
 
@@ -122,6 +160,12 @@ function validateStringList(value, errorCode, errors) {
   }
 }
 
+/**
+ * 驗證進入 Safety MVP 的 normalized analysis input。
+ *
+ * @param {object} [input={}] - 要驗證的分析輸入。
+ * @returns {{valid: boolean, errors: string[]}} 驗證結果與穩定錯誤碼。
+ */
 export function validateAnalysisInput(input) {
   const errors = [];
   validateIdentity(input?.identity, errors);
@@ -147,6 +191,12 @@ export function validateAnalysisInput(input) {
   };
 }
 
+/**
+ * 驗證可進入 authoritative publication 的 candidate。
+ *
+ * @param {object|undefined} candidate - 要驗證的分析 candidate。
+ * @returns {{valid: boolean, errors: string[]}} 驗證結果與穩定錯誤碼。
+ */
 export function validateCandidate(candidate) {
   const errors = [];
   validateIdentity(candidate?.identity, errors);

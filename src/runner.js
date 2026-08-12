@@ -4,6 +4,12 @@ import { evaluateEligibility, reduceReviewScope } from './reducer.js';
 import { createAuthorityState, publishCandidate } from './publication.js';
 import { buildSummary, deriveCheckState, publishSummary } from './summary.js';
 
+/**
+ * 執行 normalized input 的 deterministic analysis、coverage、eligibility 與 reduction。
+ *
+ * @param {object} [input={}] - normalized analysis input。
+ * @returns {object} 可供 publication 驗證的 analysis candidate。
+ */
 export function runAnalysis(input = {}) {
   const inputValidation = validateAnalysisInput(input);
   if (!inputValidation.valid) {
@@ -47,6 +53,14 @@ export function runAnalysis(input = {}) {
   };
 }
 
+/**
+ * 執行完整 Safety MVP pipeline，直到 authoritative Summary 與 status check。
+ *
+ * @param {object} [input={}] - normalized analysis input。
+ * @param {{currentHead: object, current: object|null}} [authorityState] - authority state。
+ * @param {{succeed?: boolean}} [summaryOptions={}] - Summary publication 選項。
+ * @returns {{candidate: object, publication: object, summary: object|null, check: object}} pipeline 結果。
+ */
 export function runSafetyMvp(input = {}, authorityState = createAuthorityState(input.identity), summaryOptions = {}) {
   const candidate = runAnalysis(input);
   const publication = publishCandidate(authorityState, candidate);

@@ -1,5 +1,11 @@
 import { COVERAGE, RUNTIMES, stableStrings } from './contracts.js';
 
+/**
+ * 驗證單一 obligation 的 changed region 並回傳所有 coverage blocker。
+ *
+ * @param {object} obligation - 要檢查的 coverage obligation。
+ * @returns {string[]} changed region 的穩定 blocker 清單。
+ */
 function regionBlockers(obligation) {
   const blockers = [];
   const regions = obligation.changedRegions;
@@ -56,6 +62,12 @@ function regionBlockers(obligation) {
   return blockers;
 }
 
+/**
+ * 評估所有必要 coverage obligation 是否足以進入 reduction。
+ *
+ * @param {object|undefined} report - normalized coverage report。
+ * @returns {{status: string, blockers: string[]}} coverage 狀態與 blocker 清單。
+ */
 export function evaluateCoverage(report) {
   if (!report || !Array.isArray(report.obligations)) {
     return { status: COVERAGE.FAILED, blockers: ['COVERAGE_MISSING'] };

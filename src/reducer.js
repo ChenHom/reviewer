@@ -1,5 +1,11 @@
 import { COVERAGE, DECISION, ELIGIBILITY, stableStrings } from './contracts.js';
 
+/**
+ * 聚合 coverage、risk 與 analyzer 狀態，產生 fail-closed eligibility。
+ *
+ * @param {object} [options={}] - eligibility 評估輸入。
+ * @returns {{status: string, blockingSources: string[]}} eligibility 結果。
+ */
 export function evaluateEligibility({ coverage, riskBlockers = [], analysisError } = {}) {
   const coverageBlockers = stableStrings(coverage?.blockers ?? []);
   const blockers = stableStrings([...coverageBlockers, ...riskBlockers]);
@@ -21,6 +27,12 @@ export function evaluateEligibility({ coverage, riskBlockers = [], analysisError
   return { status: ELIGIBILITY.ELIGIBLE, blockingSources: [] };
 }
 
+/**
+ * 根據 eligibility 與政策條件決定 Human Review scope。
+ *
+ * @param {object} [options={}] - reduction decision 輸入。
+ * @returns {{status: string, fallback?: string, reasons: string[]}} reduction decision。
+ */
 export function reduceReviewScope({ eligibility, policyRequirements = [], audit = false } = {}) {
   if (!eligibility || !Object.values(ELIGIBILITY).includes(eligibility.status)) {
     return {
