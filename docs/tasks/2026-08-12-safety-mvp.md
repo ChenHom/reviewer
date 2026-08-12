@@ -8,6 +8,8 @@ Production entrypoint: `src/runner.js` → `runSafetyMvp()`. `runAnalysis()` rem
 
 Testing strategy: [Safety MVP 測試策略](../testing/safety-mvp-test-strategy.md). Every new behavior must cover positive, negative, boundary, and integration cases; run `npm run lint`, `npm run test:safety`, and `npm run test:coverage`.
 
+Next phase roadmap: [Review Reduction Next Phase Tasks](./2026-08-12-review-reduction-next-phase.md).
+
 The first baseline intentionally uses Node.js native ESM and `node:test` with no runtime dependencies. TypeScript/Vitest are deferred until the core needs a larger public API or external adapters.
 
 ## Scope decision
