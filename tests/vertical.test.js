@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { createAuthorityState } from '../src/publication.js';
 import { runSafetyMvp } from '../src/runner.js';
 import { DECISION } from '../src/contracts.js';
+import { createAnalysisContextBinding, validateAdapterResult } from '../src/adapters/contracts.js';
 
 async function fixture(name) {
   const source = await readFile(new URL(`../fixtures/safety-mvp/${name}.json`, import.meta.url), 'utf8');
@@ -12,9 +13,35 @@ async function fixture(name) {
 
 async function runFixture(name) {
   const input = await fixture(name);
-  const result = runSafetyMvp(input, createAuthorityState(input.identity));
+  const contextBinding = createAnalysisContextBinding(input.adapterResult);
+  const result = runSafetyMvp(
+    { ...input, contextBinding },
+    createAuthorityState(input.identity, contextBinding),
+  );
   return { input, result };
 }
+
+test('所有 Safety MVP fixtures 都攜帶可驗證的 AdapterSet 與 region runtime context', async () => {
+  const fixtureNames = [
+    'analysis-failure',
+    'coverage-timeout',
+    'coverage-truncated',
+    'coverage-unsupported',
+    'human-review-required',
+    'not-selected',
+    'stale-run',
+  ];
+
+  for (const fixtureName of fixtureNames) {
+    const input = await fixture(fixtureName);
+    const adapterResult = fixtureName === 'stale-run' ? input.input.adapterResult : input.adapterResult;
+    assert.deepEqual(
+      validateAdapterResult(adapterResult),
+      { valid: true, errors: [] },
+      fixtureName,
+    );
+  }
+});
 
 test('Human Review vertical branch 透過 production runner 執行', async () => {
   const { input, result } = await runFixture('human-review-required');

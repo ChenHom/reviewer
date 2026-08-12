@@ -300,3 +300,28 @@ test('candidate 的必要區塊、blocker 與 decision reasons 不得缺失或�
     assert.ok(result.errors.includes(testCase.error), testCase.name);
   }
 });
+
+test('analysis input 宣告 context binding 時必須具備完整 envelope', () => {
+  const result = validateAnalysisInput({
+    identity,
+    coverage: completeCoverage,
+    contextBinding: { adapterSetDigest: 'digest-only' },
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.includes('ANALYSIS_CONTEXT_BINDING_INVALID'));
+});
+
+test('candidate 宣告 context binding 時必須具備完整 envelope', () => {
+  const result = validateCandidate({
+    identity,
+    contextBinding: { malformed: true },
+    analysisStatus: 'COMPLETE',
+    coverage: { status: 'COMPLETE', blockers: [] },
+    eligibility: { status: 'ELIGIBLE', blockingSources: [] },
+    decision: { status: 'NOT_SELECTED_FOR_HUMAN_REVIEW', reasons: ['NO_REDUCTION_BLOCKER'] },
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.includes('CANDIDATE_CONTEXT_BINDING_INVALID'));
+});

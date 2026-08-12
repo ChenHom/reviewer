@@ -1,6 +1,6 @@
 # Review Reduction Next Phase Tasks
 
-Status: `PLANNED`
+Status: `IN_PROGRESS`
 
 Design spec: [Review Reduction Next Phase Design](../superpowers/specs/2026-08-12-review-reduction-next-phase-design.md)
 
@@ -31,12 +31,12 @@ Predecessor: [Safety MVP Tasks](./2026-08-12-safety-mvp.md)
 
 ### N-01 — Adapter / Runtime Context / Identity Contract
 
-Status: `PLANNED`
+Status: `IMPLEMENTED`
 
-- [ ] 建立 AdapterSet、AdapterResult、region-level runtime context 與 execution context contract。
-- [ ] 以 `adapterSetDigest` 與 `executionContextDigest` 建立 AnalysisContextBinding；不把單一 adapter 塞進既有六欄 AnalysisIdentity。
-- [ ] 補齊合法 context、缺欄位、未知 runtime、錯型別與 identity mismatch tests。
-- [ ] 更新既有 fixtures，保持 candidate、Summary、status check 使用相同 AnalysisIdentity 與 AnalysisContextBinding。
+- [x] 建立 AdapterSet、AdapterResult、region-level runtime context 與 execution context contract。
+- [x] 以 `adapterSetDigest` 與 `executionContextDigest` 建立 AnalysisContextBinding；不把單一 adapter 塞進既有六欄 AnalysisIdentity。
+- [x] 補齊合法 context、缺欄位、未知 runtime、錯型別與 identity mismatch tests。
+- [x] 更新既有 fixtures，保持 candidate、Summary、status check 使用相同 AnalysisIdentity 與 AnalysisContextBinding。
 
 Exit criteria: AdapterSet 與 region runtime contract 可驗證；任何 context binding mismatch 都回傳明確 contract failure，任何 repository/policy/runner 或 context identity mismatch 都回傳 `STALE_ANALYSIS_IDENTITY`。
 

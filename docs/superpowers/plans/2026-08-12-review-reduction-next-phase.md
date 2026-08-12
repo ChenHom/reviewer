@@ -22,7 +22,7 @@
 - Modify: `tests/contracts.test.js`, `tests/summary.test.js`, `tests/publication.test.js`
 - Modify: `fixtures/safety-mvp/*.json`
 
-- [ ] **Step 1: Write failing contract tests**
+- [x] **Step 1: Write failing contract tests**
 
 在 `tests/contracts.test.js` 加入 table-driven cases，使用 AdapterSet、region-level runtime context、obligation、changed region 與 diagnostics。拒絕缺 adapter id/version、空 language list、缺 runtime context、空 runtime id、非法 namespace、缺 changed-region language/adapter、未知 obligation status；合法 `server`、`client`、`edge`、`worker`、`external` context 必須通過。測試也要確認同一 analysis 可包含多個 adapter。
 
@@ -37,13 +37,13 @@
 }
 ```
 
-- [ ] **Step 2: Run tests to confirm the contract is missing**
+- [x] **Step 2: Run tests to confirm the contract is missing**
 
 Run: `node --test tests/contracts.test.js`
 
 Expected: 新增 Adapter contract cases FAIL，因為 `src/adapters/contracts.js` 與 runtime context validation 尚未存在。
 
-- [ ] **Step 3: Implement the contract boundary**
+- [x] **Step 3: Implement the contract boundary**
 
 在 `src/adapters/contracts.js` export：
 
@@ -83,15 +83,17 @@ export function validateAdapterResult(result) {
 
 `validateAdapterSet()`、`validateRegions()` 與 `validateTerminalStatuses()` 必須對缺欄位、錯型別、重複 id、region range、runtime context、未知 status 產生 stable reason code；預期 invalid input 不得 throw。Adapter terminal status 在 N-02 才映射成既有 `COVERAGE` status。Adapter 宣告的 `TIMEOUT` 與 execution deadline timeout 不得在 contract 中混為一談。
 
-- [ ] **Step 4: Bind context identity without changing the six-field AnalysisIdentity**
+AdapterResult 也必須驗證 `capabilities`、`diagnostics`、`evidenceReferences`、`complete` 與 `reasonCode`。第一版 capability allowlist 固定為 `changed-regions`、`runtime-context`、`coverage-obligations`、`evidence-references`；evidence references 在 N-01 僅驗證為不重複的 stable string ids。`complete: false` 必須帶 reason code；`complete: true` 時所有 required obligation 都必須 `COMPLETE`，且 required COMPLETE obligation 不得沒有 changed region。
 
-保留既有六欄 `AnalysisIdentity`，另在 candidate/summary binding 增加：`adapterSetDigest`、`executionContextDigest`。`adapterSetDigest` 包含所有 adapter id/version；`executionContextDigest` 包含所有 region path、byte range、language 與 runtime context。兩個 digest 都由 canonical data 計算，不接受 adapter 自行宣稱。更新 candidate digest、Summary 與 publication 的 binding 比較。
+- [x] **Step 4: Bind context identity without changing the six-field AnalysisIdentity**
 
-- [ ] **Step 5: Update fixtures and identity matrix**
+保留既有六欄 `AnalysisIdentity`，另在 candidate/summary binding 增加 canonical `adapterSet`、canonical `regions`、`adapterSetDigest` 與 `executionContextDigest`，以便每個 publication boundary 重算。`adapterSetDigest` 包含所有 adapter id/version；`executionContextDigest` 包含所有 region path、byte range、language、adapter id 與 runtime context。兩個 digest 都由 canonical data 計算，不接受 adapter 自行宣稱。更新 candidate digest、Summary 與 publication 的 binding 比較。legacy candidate 與 legacy authority 只有在雙方都沒有 binding 時才相容；任一側有 binding 時，另一側也必須存在、有效且 digest 完全相同。
+
+- [x] **Step 5: Update fixtures and identity matrix**
 
 所有 `fixtures/safety-mvp/*.json` 補上 AdapterSet 與固定 region runtime context。identity mismatch table 保持六欄；另增加 context binding mismatch cases，context binding 不同時必須拒絕 publication，不可誤當成相同 run。
 
-- [ ] **Step 6: Verify**
+- [x] **Step 6: Verify**
 
 Run:
 

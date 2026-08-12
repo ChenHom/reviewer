@@ -7,6 +7,28 @@
     "policyVersion": "1",
     "runnerVersion": "1"
   },
+  "adapterResult": {
+    "adapterSet": [
+      {
+        "id": "javascript-v1",
+        "version": "1",
+        "languages": ["javascript"],
+        "capabilities": ["changed-regions", "runtime-context"]
+      }
+    ],
+    "obligations": [
+      {
+        "id": "COV-LANG-001",
+        "required": true,
+        "status": "UNSUPPORTED",
+        "changedRegions": []
+      }
+    ],
+    "diagnostics": ["UNSUPPORTED"],
+    "evidenceReferences": [],
+    "complete": false,
+    "reasonCode": "UNSUPPORTED"
+  },
   "coverage": {
     "obligations": [
       {

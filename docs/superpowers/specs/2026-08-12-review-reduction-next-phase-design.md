@@ -59,6 +59,33 @@ flowchart LR
 
 Adapter 不得回傳 `ELIGIBLE`、`NOT_ELIGIBLE` 或 reduction decision。
 
+N-01 的可執行 contract 固定為：
+
+```js
+{
+  adapterSet: [{
+    id,
+    version,
+    languages: [],
+    capabilities: []
+  }],
+  obligations: [{
+    id,
+    required,
+    status,
+    changedRegions: []
+  }],
+  diagnostics: [],
+  evidenceReferences: [],
+  complete,
+  reasonCode
+}
+```
+
+`languages`、`capabilities`、`diagnostics` 與 `evidenceReferences` 的元素都必須是非空且不重複的字串；其中 diagnostics 與 evidence references 可以是空集合。第一版 capability 只允許 `changed-regions`、`runtime-context`、`coverage-obligations`、`evidence-references`，未知 capability 必須拒絕。N-01 只把 evidence reference 視為 opaque stable id，evidence item schema 仍由 N-04 負責。
+
+`complete: false` 必須帶 stable `reasonCode`；`complete: true` 不得帶 incomplete reason，且所有 required obligation 都必須是 `COMPLETE`。required `COMPLETE` obligation 至少要有一個合法 changed region。Adapter 宣告的 region language 必須包含在對應 Adapter descriptor 的 `languages` 中。
+
 Adapter 自己回報的 obligation `TIMEOUT` 與 runner 執行 deadline timeout 是兩種不同事件：前者是合法但不完整的 coverage terminal status；後者代表 adapter execution 沒有在 deadline 內交付可信 result，必須進入 `ANALYSIS_FAILED`。
 
 ### Boundary B：Runtime context 與 context binding
@@ -80,12 +107,14 @@ Adapter 自己回報的 obligation `TIMEOUT` 與 runner 執行 deadline timeout 
 
 ```js
 {
+  adapterSet: '<canonical adapter descriptors>',
   adapterSetDigest: '<canonical adapter set digest>',
-  executionContextDigest: '<canonical region context digest>'
+  executionContextDigest: '<canonical region context digest>',
+  regions: '<canonical changed regions>'
 }
 ```
 
-兩個 digest 都由 runner 對 canonical data 計算，不接受 Adapter 自行宣稱。`adapterSetDigest` 必須包含所有 adapter id/version，`executionContextDigest` 必須包含所有 region path、byte range、language 與 runtime context。
+canonical source data 隨 binding 保留，讓 candidate、authority 與 Summary 都能重算 digest，不接受 Adapter 自行宣稱。`adapterSetDigest` 固定包含所有 adapter id/version；`executionContextDigest` 固定包含所有 region path、byte range、language、adapter id 與 runtime context。排序使用與 locale 無關的 deterministic bytewise string order。合法 incomplete result 可以沒有 regions，此時 execution context 是 canonical 空集合。
 
 ### Boundary C：Evidence / impact / invariant
 

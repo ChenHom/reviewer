@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { sameIdentity, validateCandidate } from './contracts.js';
+import { sameAnalysisContextBinding, validateAnalysisContextBinding } from './adapters/contracts.js';
 
 /**
  * 將可雜湊的資料遞迴轉為 key 穩定排序的 canonical value。
@@ -29,6 +30,7 @@ export function candidateDigest(candidate) {
     identity: candidate.identity,
     analysisStatus: candidate.analysisStatus,
     coverage: candidate.coverage,
+    contextBinding: candidate.contextBinding,
     eligibility: candidate.eligibility,
     decision: candidate.decision,
   };
@@ -49,6 +51,7 @@ export function buildSummary(candidate) {
     identity: candidate.identity,
     analysisStatus: candidate.analysisStatus,
     coverage: candidate.coverage,
+    contextBinding: candidate.contextBinding,
     eligibility: candidate.eligibility,
     decision: candidate.decision,
     candidateDigest: candidateDigest(candidate),
@@ -110,6 +113,16 @@ export function deriveCheckState({ candidate, summary, currentIdentity } = {}) {
 
   if (candidate.analysisStatus === 'ANALYSIS_FAILED') {
     return { state: 'FAILURE', reason: 'ANALYSIS_FAILED' };
+  }
+
+  if (
+    candidate.contextBinding
+    && (
+      !validateAnalysisContextBinding(candidate.contextBinding).valid
+      || !sameAnalysisContextBinding(candidate.contextBinding, summary.summary?.contextBinding)
+    )
+  ) {
+    return { state: 'FAILURE', reason: 'SUMMARY_CANDIDATE_MISMATCH' };
   }
 
   if (

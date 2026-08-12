@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { createAuthorityState, setCurrentHead } from '../src/publication.js';
 import { runSafetyMvp } from '../src/runner.js';
 import { deriveCheckState } from '../src/summary.js';
+import { createAnalysisContextBinding } from '../src/adapters/contracts.js';
 
 const identity = {
   repository: 'example/repo',
@@ -49,6 +50,63 @@ test('以單一 pipeline 串接 analysis、publication、Summary 與 status chec
     state: 'PASS',
     reason: 'CURRENT_AUTHORITATIVE_SUMMARY',
   });
+});
+
+test('有效 context binding 必須從 input 綁定到 candidate 與 Summary', () => {
+  const contextBinding = createAnalysisContextBinding({
+    adapterSet: [{
+      id: 'javascript-v1',
+      version: '1',
+      languages: ['javascript'],
+      capabilities: ['changed-regions', 'runtime-context'],
+    }],
+    obligations: [{
+      id: 'COV-1',
+      required: true,
+      status: 'COMPLETE',
+      changedRegions: [{
+        path: 'src/example.js', startByte: 0, endByte: 1, language: 'javascript', adapterId: 'javascript-v1',
+        runtimeContext: { namespace: 'server', id: 'server:api', source: 'adapter', version: 'node-24' },
+      }],
+    }],
+    diagnostics: [],
+    evidenceReferences: [],
+    complete: true,
+  });
+  const state = createAuthorityState(identity, contextBinding);
+  const result = runSafetyMvp({ ...input, contextBinding }, state);
+
+  assert.deepEqual(result.candidate.contextBinding, contextBinding);
+  assert.deepEqual(result.summary.summary.contextBinding, contextBinding);
+  assert.equal(result.check.state, 'PASS');
+});
+
+test('預設 authority 必須使用 input context binding', () => {
+  const contextBinding = createAnalysisContextBinding({
+    adapterSet: [{
+      id: 'javascript-v1',
+      version: '1',
+      languages: ['javascript'],
+      capabilities: ['changed-regions', 'runtime-context'],
+    }],
+    obligations: [{
+      id: 'COV-1',
+      required: true,
+      status: 'COMPLETE',
+      changedRegions: [{
+        path: 'src/example.js', startByte: 0, endByte: 1, language: 'javascript', adapterId: 'javascript-v1',
+        runtimeContext: { namespace: 'server', id: 'server:api', source: 'adapter', version: 'node-24' },
+      }],
+    }],
+    diagnostics: [],
+    evidenceReferences: [],
+    complete: true,
+  });
+
+  const result = runSafetyMvp({ ...input, contextBinding });
+
+  assert.equal(result.publication.accepted, true);
+  assert.equal(result.check.state, 'PASS');
 });
 
 test('stale candidate 不發布 Summary', () => {
@@ -132,7 +190,11 @@ test('新 head 到達時立即使舊 authority 失效', () => {
 
 test('analysis-failure fixture 走 failure check path', async () => {
   const inputFixture = await fixture('analysis-failure');
-  const result = runSafetyMvp(inputFixture, createAuthorityState(inputFixture.identity));
+  const contextBinding = createAnalysisContextBinding(inputFixture.adapterResult);
+  const result = runSafetyMvp(
+    { ...inputFixture, contextBinding },
+    createAuthorityState(inputFixture.identity, contextBinding),
+  );
 
   assert.equal(result.publication.accepted, true);
   assert.equal(result.candidate.analysisStatus, inputFixture.expected.analysisStatus);
@@ -144,8 +206,9 @@ test('analysis-failure fixture 走 failure check path', async () => {
 
 test('拒絕 stale-run fixture 且不修改 authority', async () => {
   const inputFixture = await fixture('stale-run');
-  const state = createAuthorityState(inputFixture.currentIdentity);
-  const result = runSafetyMvp(inputFixture.input, state);
+  const contextBinding = createAnalysisContextBinding(inputFixture.input.adapterResult);
+  const state = createAuthorityState(inputFixture.currentIdentity, contextBinding);
+  const result = runSafetyMvp({ ...inputFixture.input, contextBinding }, state);
 
   assert.deepEqual(result.publication, {
     accepted: false,

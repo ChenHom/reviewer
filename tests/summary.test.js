@@ -8,6 +8,7 @@ import {
 } from '../src/summary.js';
 import { createAuthorityState, publishCandidate } from '../src/publication.js';
 import { runAnalysis } from '../src/runner.js';
+import { createAnalysisContextBinding } from '../src/adapters/contracts.js';
 
 const identity = {
   repository: 'example/repo',
@@ -41,7 +42,7 @@ function candidateFor(nextIdentity = identity, overrides = {}) {
 }
 
 function authoritative(candidate) {
-  const state = createAuthorityState(identity);
+  const state = createAuthorityState(identity, candidate.contextBinding);
   publishCandidate(state, candidate);
   return state.current;
 }
@@ -225,4 +226,40 @@ test('Summary 的每個核心欄位被竄改時都會被 digest 偵測', () => {
       field,
     );
   }
+});
+
+test('Summary 必須保留 candidate 的 context binding，竄改時拒絕通過', () => {
+  const contextBinding = createAnalysisContextBinding({
+    adapterSet: [{
+      id: 'javascript-v1',
+      version: '1',
+      languages: ['javascript'],
+      capabilities: ['changed-regions', 'runtime-context'],
+    }],
+    obligations: [{
+      id: 'COV-1',
+      required: true,
+      status: 'COMPLETE',
+      changedRegions: [{
+        path: 'src/example.js',
+        startByte: 0,
+        endByte: 1,
+        language: 'javascript',
+        adapterId: 'javascript-v1',
+        runtimeContext: { namespace: 'server', id: 'server:api', source: 'adapter', version: 'node-24' },
+      }],
+    }],
+    diagnostics: [],
+    evidenceReferences: [],
+    complete: true,
+  });
+  const current = authoritative({ ...candidateFor(), contextBinding });
+  const summary = publishSummary(buildSummary(current));
+
+  assert.deepEqual(summary.summary.contextBinding, contextBinding);
+  summary.summary.contextBinding = { ...contextBinding, executionContextDigest: '0'.repeat(64) };
+  assert.deepEqual(
+    deriveCheckState({ candidate: current, summary, currentIdentity: identity }),
+    { state: 'FAILURE', reason: 'SUMMARY_CANDIDATE_MISMATCH' },
+  );
 });

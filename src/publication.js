@@ -1,14 +1,20 @@
 import { sameIdentity, validateCandidate } from './contracts.js';
+import {
+  sameAnalysisContextBinding,
+  validateAnalysisContextBinding,
+} from './adapters/contracts.js';
 
 /**
  * 建立目前 head 與 authoritative candidate 的記憶體 authority state。
  *
  * @param {object} currentHead - 目前 repository head 的 AnalysisIdentity。
- * @returns {{currentHead: object, current: object|null}} 初始 authority state。
+ * @param {object|undefined} [currentContextBinding] - 目前 head 的 adapter/runtime binding。
+ * @returns {{currentHead: object, currentContextBinding: object|undefined, current: object|null}} 初始 authority state。
  */
-export function createAuthorityState(currentHead) {
+export function createAuthorityState(currentHead, currentContextBinding) {
   return {
     currentHead,
+    currentContextBinding,
     current: null,
   };
 }
@@ -16,12 +22,14 @@ export function createAuthorityState(currentHead) {
 /**
  * 切換目前 repository head，並立即清除舊 authoritative result。
  *
- * @param {{currentHead: object, current: object|null}} state - authority state。
+ * @param {{currentHead: object, currentContextBinding: object|undefined, current: object|null}} state - authority state。
  * @param {object} currentHead - 新的 AnalysisIdentity。
- * @returns {{currentHead: object, current: object|null}} 更新後的 authority state。
+ * @param {object|undefined} [currentContextBinding] - 新 head 的 adapter/runtime binding。
+ * @returns {{currentHead: object, currentContextBinding: object|undefined, current: object|null}} 更新後的 authority state。
  */
-export function setCurrentHead(state, currentHead) {
+export function setCurrentHead(state, currentHead, currentContextBinding) {
   state.currentHead = currentHead;
+  state.currentContextBinding = currentContextBinding;
   state.current = null;
   return state;
 }
@@ -55,11 +63,33 @@ export function publishCandidate(state, candidate) {
     return { accepted: false, reason: 'CANDIDATE_INCOMPLETE' };
   }
 
+  if (
+    candidate.contextBinding !== undefined
+    && !validateAnalysisContextBinding(candidate.contextBinding).valid
+  ) {
+    return { accepted: false, reason: 'CANDIDATE_CONTEXT_BINDING_INVALID' };
+  }
+
   if (!validateCandidate(candidate).valid) {
     return { accepted: false, reason: 'CANDIDATE_INVALID' };
   }
 
   if (!sameIdentity(candidate.identity, state.currentHead)) {
+    return { accepted: false, reason: 'STALE_ANALYSIS_IDENTITY' };
+  }
+
+  const candidateHasContext = candidate.contextBinding !== undefined;
+  const authorityHasContext = state.currentContextBinding !== undefined;
+  if (authorityHasContext && !validateAnalysisContextBinding(state.currentContextBinding).valid) {
+    return { accepted: false, reason: 'AUTHORITY_CONTEXT_BINDING_INVALID' };
+  }
+  if (candidateHasContext !== authorityHasContext) {
+    return { accepted: false, reason: 'STALE_ANALYSIS_IDENTITY' };
+  }
+  if (
+    candidateHasContext
+    && !sameAnalysisContextBinding(candidate.contextBinding, state.currentContextBinding)
+  ) {
     return { accepted: false, reason: 'STALE_ANALYSIS_IDENTITY' };
   }
 

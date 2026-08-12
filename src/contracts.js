@@ -161,6 +161,25 @@ function validateStringList(value, errorCode, errors) {
 }
 
 /**
+ * 檢查 AnalysisContextBinding 是否具備可進一步驗證的完整 envelope。
+ *
+ * @param {unknown} binding - context binding。
+ * @returns {boolean} 是否具有必要欄位與型別。
+ */
+function hasContextBindingEnvelope(binding) {
+  return Boolean(
+    binding
+    && typeof binding === 'object'
+    && Array.isArray(binding.adapterSet)
+    && Array.isArray(binding.regions)
+    && typeof binding.adapterSetDigest === 'string'
+    && binding.adapterSetDigest.trim() !== ''
+    && typeof binding.executionContextDigest === 'string'
+    && binding.executionContextDigest.trim() !== '',
+  );
+}
+
+/**
  * 驗證進入 Safety MVP 的 normalized analysis input。
  *
  * @param {object} [input={}] - 要驗證的分析輸入。
@@ -173,6 +192,10 @@ export function validateAnalysisInput(input) {
   validateEligibility(input?.eligibility, errors);
   validateStringList(input?.riskBlockers, 'RISK_BLOCKERS_INVALID', errors);
   validateStringList(input?.policyRequirements, 'POLICY_REQUIREMENTS_INVALID', errors);
+
+  if (input?.contextBinding !== undefined && !hasContextBindingEnvelope(input.contextBinding)) {
+    errors.push('ANALYSIS_CONTEXT_BINDING_INVALID');
+  }
 
   if (input?.audit !== undefined && typeof input.audit !== 'boolean') {
     errors.push('AUDIT_INVALID');
@@ -200,6 +223,10 @@ export function validateAnalysisInput(input) {
 export function validateCandidate(candidate) {
   const errors = [];
   validateIdentity(candidate?.identity, errors);
+
+  if (candidate?.contextBinding !== undefined && !hasContextBindingEnvelope(candidate.contextBinding)) {
+    errors.push('CANDIDATE_CONTEXT_BINDING_INVALID');
+  }
 
   if (!analysisStatuses.includes(candidate?.analysisStatus)) {
     errors.push('ANALYSIS_STATUS_INVALID');

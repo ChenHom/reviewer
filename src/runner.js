@@ -3,6 +3,7 @@ import { evaluateCoverage } from './coverage.js';
 import { evaluateEligibility, reduceReviewScope } from './reducer.js';
 import { createAuthorityState, publishCandidate } from './publication.js';
 import { buildSummary, deriveCheckState, publishSummary } from './summary.js';
+import { validateAnalysisContextBinding } from './adapters/contracts.js';
 
 /**
  * 執行 normalized input 的 deterministic analysis、coverage、eligibility 與 reduction。
@@ -12,22 +13,27 @@ import { buildSummary, deriveCheckState, publishSummary } from './summary.js';
  */
 export function runAnalysis(input = {}) {
   const inputValidation = validateAnalysisInput(input);
-  if (!inputValidation.valid) {
+  const contextValidation = input.contextBinding
+    ? validateAnalysisContextBinding(input.contextBinding)
+    : { valid: true, errors: [] };
+  const errors = [...new Set([...inputValidation.errors, ...contextValidation.errors])].sort();
+  if (errors.length > 0) {
     const eligibility = {
       status: ELIGIBILITY.ANALYSIS_FAILED,
-      blockingSources: inputValidation.errors,
+      blockingSources: errors,
     };
     return {
       identity: input.identity ?? null,
+      contextBinding: input.contextBinding,
       analysisStatus: 'ANALYSIS_FAILED',
-      coverage: { status: COVERAGE.FAILED, blockers: inputValidation.errors },
+      coverage: { status: COVERAGE.FAILED, blockers: errors },
       eligibility,
       decision: {
         status: DECISION.HUMAN_REVIEW_REQUIRED,
         fallback: 'FULL',
-        reasons: inputValidation.errors,
+        reasons: errors,
       },
-      errors: inputValidation.errors,
+      errors,
     };
   }
 
@@ -45,6 +51,7 @@ export function runAnalysis(input = {}) {
 
   return {
     identity: input.identity,
+    contextBinding: input.contextBinding,
     analysisStatus: eligibility.status === ELIGIBILITY.ANALYSIS_FAILED ? 'ANALYSIS_FAILED' : 'COMPLETE',
     coverage,
     eligibility,
@@ -61,7 +68,11 @@ export function runAnalysis(input = {}) {
  * @param {{succeed?: boolean}} [summaryOptions={}] - Summary publication 選項。
  * @returns {{candidate: object, publication: object, summary: object|null, check: object}} pipeline 結果。
  */
-export function runSafetyMvp(input = {}, authorityState = createAuthorityState(input.identity), summaryOptions = {}) {
+export function runSafetyMvp(
+  input = {},
+  authorityState = createAuthorityState(input.identity, input.contextBinding),
+  summaryOptions = {},
+) {
   const candidate = runAnalysis(input);
   const publication = publishCandidate(authorityState, candidate);
 
