@@ -2,7 +2,7 @@
 
 本文記錄目前第一版 Safety MVP 的模組架構、分析流程與安全邊界。
 
-目前實作採 Node.js native ESM 與 `node:test`，不依賴 LLM、外部 Analyzer、Language Adapter 或 GitHub API。
+目前實作採 Node.js native ESM 與 `node:test`。N-01 已建立 Adapter ingress contract、runtime context 與 authority binding；尚未接入可執行的 Language/Framework Adapter、外部 Analyzer、LLM 或 GitHub API。
 
 ## 1. 系統架構
 
@@ -13,9 +13,11 @@ flowchart LR
         I2["AnalysisIdentity<br/>repository / base SHA / head SHA"]
         I3["Coverage Obligations"]
         I4["Risk Blockers<br/>Policy Requirements / Audit"]
+        I5["AdapterResult + AnalysisContextBinding<br/>adapter set / runtime / digests"]
     end
 
     subgraph CORE["Safety MVP Deterministic Core"]
+        C0["adapters/contracts.js<br/>Adapter Contract + Context Binding"]
         C1["contracts.js<br/>Contract Validation"]
         C2["coverage.js<br/>Coverage Evaluation"]
         C3["reducer.js<br/>Eligibility + Reduction"]
@@ -43,8 +45,8 @@ flowchart LR
     end
 
     subgraph FUTURE["後續擴充，目前尚未接入"]
-        F1["Language Adapter"]
-        F2["Framework Adapter"]
+        F1["Executable Language Adapter"]
+        F2["Executable Framework Adapter"]
         F3["Impact Graph"]
         F4["Invariant Mapper"]
         F5["Analyzer / Evidence"]
@@ -56,8 +58,11 @@ flowchart LR
     I2 --> C1
     I3 --> C2
     I4 --> C3
+    I5 --> C0
 
     C4 --> C1
+    C0 --> C1
+    C0 --> C5
     C1 --> C2
     C2 --> R1
     R1 --> C3
@@ -88,7 +93,7 @@ flowchart LR
     F7 -.-> C6
 ```
 
-目前已實作的是中間的 `Safety MVP Deterministic Core`。Parser、Impact Graph、LLM、GitHub API 屬於後續擴充，不是目前的 reduction authority 來源。
+目前已實作的是中間的 `Safety MVP Deterministic Core`，以及 N-01 的 Adapter ingress contract、runtime context、`AnalysisIdentity` 與 authority binding。可執行的 parser/Language/Framework Adapter、Impact Graph、LLM、GitHub API 屬於後續擴充，不是目前的 reduction authority 來源。
 
 ## 2. 執行流程
 
@@ -130,8 +135,8 @@ flowchart TD
     P --> S
     R --> S
 
-    S --> T["比對 AnalysisIdentity"]
-    T --> U{"Repository / SHA / Policy / Runner<br/>是否仍為 Current?"}
+    S --> T["比對 AnalysisIdentity + AnalysisContextBinding"]
+    T --> U{"Repository / SHA / Policy / Runner / Adapter / Runtime<br/>是否仍為 Current?"}
 
     U -->|否| V["Reject：STALE_ANALYSIS_IDENTITY"]
     V --> W["不得覆寫 Current Result"]
@@ -176,26 +181,30 @@ flowchart LR
 5. Eligibility blocker 只能增加或保留，Reducer 不得刪除或覆蓋 blocker。
 6. 新 head SHA 會立即使舊 authoritative result 失效。
 7. 舊 run 即使晚完成，也不得覆寫較新的 current result。
-8. Candidate、Summary、Status Check 必須使用同一份 `AnalysisIdentity`。
+8. Candidate、Summary、Status Check 必須使用同一份 `AnalysisIdentity`，以及存在時的 `AnalysisContextBinding`。
 9. Summary 發布失敗、遺失或 SHA 不一致時，Status Check 必須失敗。
+10. AdapterResult 或 authority context 缺漏、格式錯誤、digest 不一致或 runtime/adapter 不一致時，必須 fail-closed，不得發布候選結果。
 
 ## 5. 目前實作對照
 
 | 模組 | 檔案 | 責任 |
 |---|---|---|
 | Contract | `src/contracts.js` | Identity、coverage、eligibility、decision validation |
+| Adapter Contract | `src/adapters/contracts.js` | AdapterSet、AdapterResult、runtime context、canonical digest、AnalysisContextBinding |
 | Coverage | `src/coverage.js` | Required obligation 與 changed-region fail-closed 判斷 |
 | Reducer | `src/reducer.js` | Eligibility 聚合與 Human Review scope 決策 |
 | Runner | `src/runner.js` | 串接完整 deterministic pipeline |
 | Publication | `src/publication.js` | Current head、stale-run、atomic authority |
-| Summary | `src/summary.js` | Summary payload 與 status check state |
-| Fixtures | `fixtures/safety-mvp/` | Human Review / NOT_SELECTED 情境 |
-| Tests | `tests/` | Contract、coverage、property、publication、vertical validation |
+| Summary | `src/summary.js` | Summary payload 與 status check state 的 identity/context binding |
+| Fixtures | `fixtures/safety-mvp/` | AdapterResult、Human Review / NOT_SELECTED 情境 |
+| Tests | `tests/` | Adapter/binding、contract、coverage、property、publication、vertical validation |
 
 ## 6. 後續接入方向
 
 ```text
-Language / Framework Adapter
+Executable Language / Framework Adapter
+        ↓
+AdapterResult + AnalysisContextBinding
         ↓
 Normalized Facts / Changed Regions
         ↓
@@ -206,4 +215,4 @@ Safety MVP Reducer
 ReviewUnit / GitHub Summary / Merge Gate
 ```
 
-後續 Adapter 必須遵守目前的安全邊界：只要不能完整描述 changed region 或 execution context，就輸出 incomplete / unknown，讓既有 Reducer 保留 Human Review，而不是自行宣告安全。
+後續可執行 Adapter 必須遵守 N-01 contract 與目前的安全邊界：只要不能完整描述 changed region 或 execution context，就輸出 incomplete / unknown，讓既有 Reducer 保留 Human Review，而不是自行宣告安全。

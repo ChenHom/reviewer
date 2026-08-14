@@ -18,8 +18,9 @@
 
 **Files:**
 - Create: `src/adapters/contracts.js`
-- Modify: `src/contracts.js`, `src/summary.js`, `src/publication.js`
-- Modify: `tests/contracts.test.js`, `tests/summary.test.js`, `tests/publication.test.js`
+- Create: `tests/adapters-contracts.test.js`, `tests/context-binding.test.js`
+- Modify: `src/contracts.js`, `src/summary.js`, `src/publication.js`, `src/runner.js`
+- Modify: `tests/contracts.test.js`, `tests/summary.test.js`, `tests/publication.test.js`, `tests/pipeline.test.js`, `tests/vertical.test.js`
 - Modify: `fixtures/safety-mvp/*.json`
 
 - [x] **Step 1: Write failing contract tests**

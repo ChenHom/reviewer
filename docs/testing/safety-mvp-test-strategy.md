@@ -4,7 +4,7 @@
 
 這份文件是 Safety MVP 後續測試的強制規範。測試不只確認正常結果，還必須證明任何證據缺失、資料矛盾、結果過期或發布失敗，都不能產生 reduction success。
 
-目前測試使用 Node.js native ESM、`node:test`、table-driven cases 與 deterministic exhaustive cases；不依賴 LLM、外部 Analyzer、網路或隨機資料。
+目前測試使用 Node.js native ESM、`node:test`、table-driven cases 與 deterministic exhaustive cases；不依賴 LLM、外部 Analyzer、網路或隨機資料。N-01 的 AdapterResult ingress 與 context binding contract tests 在範圍內，但可執行的外部 Adapter 不在範圍內。
 
 ## 測試分層
 
@@ -35,10 +35,10 @@
 - Required coverage 只要有一筆不是 `COMPLETE`，就不能產生 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
 - 空 coverage、空 changed region、缺 path/language/adapter/runtime 都不能被視為安全證據。
 - `unknown` 或非法 runtime 必須保留 blocker。
-- 負值、零長度、逆序、重疊或未排序 byte range 必須 fail-closed。
+- Normalized core input 的負值、零長度、逆序、重疊或未排序 byte range 必須 fail-closed；raw `AdapterResult` 可以未排序，但不可重疊，並由 N-02 normalization 排序後才進入 core。
 - `ELIGIBLE` 不得含 blocker；`NOT_ELIGIBLE` 與 `ANALYSIS_FAILED` 必須有 blocker。
 - 增加 blocker、移除 evidence 或降低 coverage，不得把 Human Review 變成 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
-- Candidate、Summary、Status Check 必須共用完整 `AnalysisIdentity` 與相同 candidate digest。
+- Candidate、Summary、Status Check 必須共用完整 `AnalysisIdentity`、相同 candidate digest，以及存在時的 `AnalysisContextBinding`。
 - 舊 head、舊 policy、舊 runner 或晚完成舊 run 不得覆蓋 current authority。
 - Analysis failure、Summary 缺失或 Summary 發布失敗不能回傳 status success。
 - `PASS` 只代表 authoritative Summary 綁定正確，不代表不需要 Human Review；Review decision 必須另外檢查。
@@ -52,6 +52,15 @@
 - risk blockers、policy requirements、audit、analysis error 的型別錯誤。
 - eligibility 狀態未知、blocker 缺失、`ELIGIBLE` 含 blocker。
 - candidate status、coverage、eligibility、decision 的矛盾組合。
+
+### Adapter Contract / Context Binding
+
+- 合法的多 Adapter `AdapterSet`、capability allowlist，以及 adapter 順序的 canonical digest。
+- 缺少、重複、錯誤型別或未知 capability；`diagnostics`、`evidenceReferences`、`complete` 與 `reasonCode` 的契約完整性。
+- runtime namespace/id/source/version、未知 runtime blocker、language ownership，以及未宣告 adapter 的拒絕行為。
+- range 邊界、raw 未排序但不重疊的接受行為，以及 raw 重疊的拒絕行為。
+- `adapterSetDigest`、`executionContextDigest` 的 deterministic serialization、adapter/language 順序與 runtime tampering。
+- authority context 缺漏、格式錯誤、legacy mismatch、binding mismatch、head transition 與失敗時不得改變 authoritative state。
 
 ### Coverage
 
@@ -77,6 +86,7 @@
 - 新結果先發布後，舊結果晚完成不得覆蓋。
 - Summary 缺失、發布失敗、identity 不同、digest 不同、內容竄改。
 - Candidate 與 Summary 的 decision、coverage、eligibility 任一欄位變更都必須被偵測。
+- Summary 與 Status Check 在 adapter ingress 存在時必須綁定同一 context binding；valid、malformed、缺一側、stale mismatch 與 head transition 都要覆蓋。
 
 ### Pipeline / Fixtures
 
@@ -86,6 +96,7 @@
 - analysis failure。
 - partial / unsupported / timeout / truncated coverage。
 - stale head 與 stale Summary。
+- `AdapterResult → AnalysisContextBinding → runner → authority → Summary/Status Check` 的 binding 必須一路保留且可驗證。
 
 ## Fixture 規範
 
@@ -94,6 +105,13 @@
 ```json
 {
   "identity": {},
+  "adapterResult": {
+    "adapterSet": [],
+    "obligations": [],
+    "diagnostics": [],
+    "evidenceReferences": [],
+    "complete": true
+  },
   "coverage": { "obligations": [] },
   "riskBlockers": [],
   "policyRequirements": [],
@@ -108,6 +126,8 @@
   }
 }
 ```
+
+N-01 fixture 必須提供 `AdapterResult`；stale-run fixture 也要把它放在被分析的 input context 內。測試會由該結果計算 binding，並將同一份 binding 傳給 runner 與 authority，驗證 context 被竄改或遺漏時 fail-closed。
 
 Stale fixture 可以另外使用 `input` 與 `currentIdentity`，但必須明確寫出 publication reason 與 check reason。
 
@@ -127,7 +147,7 @@ Pull request 與 pre-commit 不得只執行單一 test file。若新增 producti
 
 以下需要獨立的 integration test suite，不由 deterministic Safety MVP tests 假裝涵蓋：
 
-- 真實 parser、Language Adapter、Framework Adapter。
+- 真實 parser、可執行的 Language Adapter、Framework Adapter（N-01 contract tests 在範圍內）。
 - 真實 GitHub API、database transaction、CAS 或跨 process locking。
 - 外部 analyzer process 的 OS timeout 與網路失敗。
 - 大型 repository 的效能、資源限制與負載測試。

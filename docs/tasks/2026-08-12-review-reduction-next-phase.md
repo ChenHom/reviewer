@@ -48,6 +48,7 @@ Status: `PLANNED`
 - [ ] 建立 PHP/HTML/JavaScript mixed-language reference fixture。
 - [ ] 將 `PARTIAL_PARSE` 等 adapter terminal status 映射到既有 coverage contract。
 - [ ] 保留 `runSafetyMvp()` direct normalized input 相容性。
+- [ ] 將 `test:safety` 改為遞迴 `node --test tests`，在加入 `tests/adapters/` nested suites 前完成。
 
 Exit criteria: mixed-language COMPLETE 可進入 core；任一 partial region 都保留 Human Review。
 
@@ -101,7 +102,7 @@ Status: `PLANNED`
 
 - [ ] 建立 adapter → normalization → core → CAS → GitHub sink 的 E2E fixtures。
 - [ ] 覆蓋 mixed-language、partial parse、unknown runtime、timeout、restart stale、GitHub failure。
-- [ ] 將 `test:safety` 改為遞迴 `node --test tests`，再建立 `test:e2e` 與 `test:all` release gate；禁止只用 `tests/*.test.js`。
+- [ ] 確認 `test:safety` 已由 N-02 固定為遞迴 `node --test tests`，並建立 `test:e2e` 與 `test:all` release gate；禁止只用 `tests/*.test.js`。
 - [ ] 更新 architecture、operations 與 failure/retry 文件。
 
 Exit criteria: lint、unit、coverage、adapter、storage、sink、E2E 全部通過，且無網路、LLM 或真實 token 依賴；head transition、CAS、Summary 與 sink retry 的 race cases 都有測試。
