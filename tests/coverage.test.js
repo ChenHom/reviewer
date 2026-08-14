@@ -189,6 +189,22 @@ test('相鄰但不重疊的 changed region 是合法邊界', () => {
   assert.deepEqual(result, { status: COVERAGE.COMPLETE, blockers: [] });
 });
 
+test('不同 path 的相同 byte range 不應互相判定為 overlap 或未排序', () => {
+  const result = evaluateCoverage({
+    obligations: [{
+      id: 'COV-LANG-001',
+      required: true,
+      status: 'COMPLETE',
+      changedRegions: [
+        { ...region, path: 'resources/views/page.blade.php' },
+        { ...region, path: 'resources/views/layout.blade.php' },
+      ],
+    }],
+  });
+
+  assert.deepEqual(result, { status: COVERAGE.COMPLETE, blockers: [] });
+});
+
 test('必要 obligation 的 PARTIAL_PARSE、UNSUPPORTED、TIMEOUT 與 TRUNCATED 都保留 blocker', () => {
   const statuses = ['PARTIAL_PARSE', 'UNSUPPORTED', 'TIMEOUT', 'TRUNCATED'];
 

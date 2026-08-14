@@ -1,0 +1,76 @@
+{
+  "identity": {
+    "repository": "example/repo",
+    "baseSha": "base-001",
+    "headSha": "head-mixed-001",
+    "policyId": "policy-001",
+    "policyVersion": "1",
+    "runnerVersion": "1"
+  },
+  "adapterResult": {
+    "adapterSet": [
+      {
+        "id": "blade-reference-v1",
+        "version": "1.0.0",
+        "languages": ["php", "html", "javascript"],
+        "capabilities": ["changed-regions", "runtime-context", "coverage-obligations"]
+      }
+    ],
+    "obligations": [
+      {
+        "id": "COV-MIXED-001",
+        "required": true,
+        "status": "COMPLETE",
+        "changedRegions": [
+          {
+            "path": "resources/views/page.blade.php",
+            "startByte": 80,
+            "endByte": 120,
+            "language": "javascript",
+            "adapterId": "blade-reference-v1",
+            "runtimeContext": {
+              "namespace": "client",
+              "id": "client:browser",
+              "version": "browser-1",
+              "source": "reference-adapter"
+            }
+          },
+          {
+            "path": "resources/views/page.blade.php",
+            "startByte": 40,
+            "endByte": 80,
+            "language": "html",
+            "adapterId": "blade-reference-v1",
+            "runtimeContext": {
+              "namespace": "client",
+              "id": "client:browser",
+              "version": "browser-1",
+              "source": "reference-adapter"
+            }
+          },
+          {
+            "path": "resources/views/page.blade.php",
+            "startByte": 0,
+            "endByte": 40,
+            "language": "php",
+            "adapterId": "blade-reference-v1",
+            "runtimeContext": {
+              "namespace": "server",
+              "id": "server:php",
+              "version": "php-8.3",
+              "source": "reference-adapter"
+            }
+          }
+        ]
+      }
+    ],
+    "diagnostics": [],
+    "evidenceReferences": [],
+    "complete": true
+  },
+  "expected": {
+    "analysisStatus": "COMPLETE",
+    "decisionStatus": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "headSha": "head-mixed-001"
+  }
+}

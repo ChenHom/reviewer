@@ -177,7 +177,7 @@ GitHub publisher 只接受已驗證的 authoritative Summary 與 check state。�
 | N-06 | provider-neutral publication port 與 GitHub adapter | N-05 |
 | N-07 | full E2E、observability、CI release gate、操作文件 | N-03、N-05、N-06 |
 
-第一批只執行 N-01～N-03。N-04～N-07 是後續 gated tasks，每個階段都必須先寫 failing tests，再寫最小實作，並通過 `npm run lint`、遞迴 `npm run test:safety` 與 `npm run test:coverage`。遞迴 test discovery 的正式命令固定為 `node --test tests`，在 N-07 前不得以 glob 只執行 root-level test files。
+第一批只執行 N-01～N-03。N-04～N-07 是後續 gated tasks，每個階段都必須先寫 failing tests，再寫最小實作，並通過 `npm run lint`、遞迴 `npm run test:safety` 與 `npm run test:coverage`。遞迴 test discovery 的正式命令固定為 `node --test`；Node.js 24.3.0 不接受 `tests` 目錄作為輸入，在 N-07 前不得以 glob 只執行 root-level test files。
 
 ## 測試策略
 

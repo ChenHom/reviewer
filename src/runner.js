@@ -3,7 +3,8 @@ import { evaluateCoverage } from './coverage.js';
 import { evaluateEligibility, reduceReviewScope } from './reducer.js';
 import { createAuthorityState, publishCandidate } from './publication.js';
 import { buildSummary, deriveCheckState, publishSummary } from './summary.js';
-import { validateAnalysisContextBinding } from './adapters/contracts.js';
+import { validateAdapterResult, validateAnalysisContextBinding } from './adapters/contracts.js';
+import { normalizeAdapterResult } from './adapters/normalize.js';
 
 /**
  * 執行 normalized input 的 deterministic analysis、coverage、eligibility 與 reduction。
@@ -98,4 +99,22 @@ export function runSafetyMvp(
     summary,
     check,
   };
+}
+
+/**
+ * 驗證 AdapterResult、正規化 facts，並交由既有 Safety MVP runner 決定。
+ *
+ * @param {object} result - 含 identity 與 AdapterResult 的輸入，或 raw AdapterResult。
+ * @param {{currentHead: object, currentContextBinding?: object, current: object|null}} [authorityState] - authority state。
+ * @param {{succeed?: boolean}} [summaryOptions={}] - Summary publication 選項。
+ * @returns {{candidate: object, publication: object, summary: object|null, check: object}} pipeline 結果。
+ */
+export function runNormalizedAdapterResult(result, authorityState, summaryOptions = {}) {
+  const adapterResult = result?.adapterResult ?? result;
+  const validation = validateAdapterResult(adapterResult);
+  return runSafetyMvp(
+    normalizeAdapterResult(result, validation),
+    authorityState,
+    summaryOptions,
+  );
 }

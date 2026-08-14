@@ -116,25 +116,26 @@ Expected: 既有安全測試與 Adapter contract 測試通過，coverage gate �
 - Create: `fixtures/adapters/mixed-language-blade.json`
 - Create: `fixtures/adapters/mixed-language-partial.json`
 - Create: `tests/adapters/normalize.test.js`, `tests/adapters/reference-adapter.test.js`
-- Modify: `src/runner.js`, `tests/vertical.test.js`, `package.json`
+- Modify: `src/runner.js`, `src/coverage.js`, `tests/coverage.test.js`, `tests/vertical.test.js`, `package.json`
 
-- [ ] **Step 1: Write failing normalization tests**
+- [x] **Step 1: Write failing normalization tests**
 
 對同一 `page.blade.php` 的 PHP、HTML、JavaScript 三段 changed regions 驗證：每段保留 language ownership、adapter id、runtime context；regions 必須已排序且不重疊。另測試零長度、重疊、不同 path、缺 language、`PARTIAL_PARSE` 與非必要 unsupported。
 
-- [ ] **Step 2: Run targeted tests**
+- [x] **Step 2: Run targeted tests**
 
 Run: `node --test tests/adapters/normalize.test.js tests/adapters/reference-adapter.test.js`
 
 Expected: FAIL，因為 adapter modules 與 fixtures 尚未建立。
 
-- [ ] **Step 3: Implement normalizeAdapterResult**
+- [x] **Step 3: Implement normalizeAdapterResult**
 
 只做 schema normalization，不做 risk 推論，輸出既有 core 可接受的：
 
 ```js
 {
   identity,
+  contextBinding,
   coverage: { obligations: [] },
   riskBlockers: [],
   policyRequirements: [],
@@ -145,25 +146,25 @@ Expected: FAIL，因為 adapter modules 與 fixtures 尚未建立。
 
 固定映射：`COMPLETE → COMPLETE`；`PARTIAL_PARSE`、`UNSUPPORTED`、`TIMEOUT`、`TRUNCATED → INCOMPLETE + reasonCode`；`FAILED → FAILED + reasonCode`。這裡的 `TIMEOUT` 僅指 Adapter 已交付的 obligation terminal status。Normalize failure 回傳 analysis failure input，不得製造空 coverage 或 `ELIGIBLE`。
 
-- [ ] **Step 4: Implement the deterministic reference adapter**
+- [x] **Step 4: Implement the deterministic reference adapter**
 
 `createReferenceAdapter(fixture)` 只讀 fixture，回傳 descriptor 與 `analyze(request, { signal })`。signal 已 aborted 時回傳 `TIMEOUT` diagnostic；正常時 deep-clone fixture result。它只用於 deterministic tests，不實作 parser。
 
-- [ ] **Step 5: Connect normalized adapter results to the runner**
+- [x] **Step 5: Connect normalized adapter results to the runner**
 
 新增 `runNormalizedAdapterResult(result, authorityState, options)`，順序固定為 validate → normalize → `runSafetyMvp()`。保留既有 `runSafetyMvp()` signature。
 
-- [ ] **Step 6: Make test discovery recursive before adding nested suites**
+- [x] **Step 6: Make test discovery recursive before adding nested suites**
 
-將 `package.json` 的 `test:safety` 固定為：
+將 `package.json` 的 `test:safety` 固定為 Node.js test runner 的遞迴 discovery：
 
 ```json
-"test:safety": "node --test tests"
+"test:safety": "node --test"
 ```
 
-這一步必須在 `tests/adapters/` 測試加入前完成，避免 nested tests 未被 CI 或 local gate 執行。
+Node.js 24.3.0 不接受 `tests` 目錄作為 `--test` 的輸入；不帶路徑時會遞迴發現 root 與 nested test files。這一步必須在 `tests/adapters/` 測試加入前完成，避免 nested tests 未被 CI 或 local gate 執行。
 
-- [ ] **Step 7: Verify**
+- [x] **Step 7: Verify**
 
 Run:
 

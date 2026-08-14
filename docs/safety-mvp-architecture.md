@@ -93,7 +93,7 @@ flowchart LR
     F7 -.-> C6
 ```
 
-目前已實作的是中間的 `Safety MVP Deterministic Core`，以及 N-01 的 Adapter ingress contract、runtime context、`AnalysisIdentity` 與 authority binding。可執行的 parser/Language/Framework Adapter、Impact Graph、LLM、GitHub API 屬於後續擴充，不是目前的 reduction authority 來源。
+目前已實作的是中間的 `Safety MVP Deterministic Core`，以及 N-01 的 Adapter ingress contract、runtime context、`AnalysisIdentity` 與 authority binding，N-02 的 changed-region normalization 與 deterministic reference adapter。可執行的 parser/Language/Framework Adapter、Impact Graph、LLM、GitHub API 屬於後續擴充，不是目前的 reduction authority 來源。
 
 ## 2. 執行流程
 
@@ -191,6 +191,8 @@ flowchart LR
 |---|---|---|
 | Contract | `src/contracts.js` | Identity、coverage、eligibility、decision validation |
 | Adapter Contract | `src/adapters/contracts.js` | AdapterSet、AdapterResult、runtime context、canonical digest、AnalysisContextBinding |
+| Adapter Normalization | `src/adapters/normalize.js` | Changed-region sorting、terminal status mapping、AdapterResult ingress |
+| Reference Adapter | `src/adapters/reference-adapter.js` | Deterministic fixture adapter；不實作 parser |
 | Coverage | `src/coverage.js` | Required obligation 與 changed-region fail-closed 判斷 |
 | Reducer | `src/reducer.js` | Eligibility 聚合與 Human Review scope 決策 |
 | Runner | `src/runner.js` | 串接完整 deterministic pipeline |

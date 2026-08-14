@@ -18,25 +18,17 @@ function regionBlockers(obligation) {
     return [`${obligation.id}:NO_CHANGED_REGIONS`];
   }
 
-  let previousStart = -1;
-  let previousEnd = -1;
+  const rangesByPath = new Map();
 
   for (const region of regions) {
-    if (
+    const invalidRange = (
       !Number.isInteger(region?.startByte)
       || !Number.isInteger(region?.endByte)
       || region.startByte < 0
       || region.endByte <= region.startByte
-    ) {
+    );
+    if (invalidRange) {
       blockers.push(`${obligation.id}:INVALID_REGION`);
-    } else {
-      if (region.startByte < previousStart) {
-        blockers.push(`${obligation.id}:REGION_ORDER_INVALID`);
-      } else if (region.startByte < previousEnd) {
-        blockers.push(`${obligation.id}:REGION_OVERLAP`);
-      }
-      previousStart = region.startByte;
-      previousEnd = region.endByte;
     }
 
     if (typeof region?.path !== 'string' || region.path.trim() === '') {
@@ -55,6 +47,26 @@ function regionBlockers(obligation) {
       blockers.push(`${obligation.id}:RUNTIME_INVALID`);
     } else if (region.runtime === 'unknown') {
       blockers.push(`${obligation.id}:UNKNOWN_RUNTIME`);
+    }
+
+    if (!invalidRange && typeof region?.path === 'string' && region.path.trim() !== '') {
+      const pathRanges = rangesByPath.get(region.path) ?? [];
+      pathRanges.push({ startByte: region.startByte, endByte: region.endByte });
+      rangesByPath.set(region.path, pathRanges);
+    }
+  }
+
+  for (const pathRanges of rangesByPath.values()) {
+    let previousStart = -1;
+    let previousEnd = -1;
+    for (const range of pathRanges) {
+      if (range.startByte < previousStart) {
+        blockers.push(`${obligation.id}:REGION_ORDER_INVALID`);
+      } else if (range.startByte < previousEnd) {
+        blockers.push(`${obligation.id}:REGION_OVERLAP`);
+      }
+      previousStart = range.startByte;
+      previousEnd = range.endByte;
     }
   }
 

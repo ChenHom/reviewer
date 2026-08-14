@@ -62,6 +62,14 @@
 - `adapterSetDigest`、`executionContextDigest` 的 deterministic serialization、adapter/language 順序與 runtime tampering。
 - authority context 缺漏、格式錯誤、legacy mismatch、binding mismatch、head transition 與失敗時不得改變 authoritative state。
 
+### Normalization / Reference Adapter
+
+- mixed-language regions 必須保留 path、byte range、language、adapter 與 runtime ownership，並按 path/range deterministic 排序。
+- 同一 path 的零長度、逆序或重疊 region 必須拒絕；不同 path 的相同 byte range 不得互相誤判。
+- `COMPLETE`、`PARTIAL_PARSE`、`UNSUPPORTED`、`TIMEOUT`、`TRUNCATED`、`FAILED` 的 mapping 必須可重現。
+- reference adapter 只能 deep-clone fixture；aborted signal 必須回傳合法的 Adapter-declared `TIMEOUT` result。
+- normalized runner 必須按 validation → normalization → `runSafetyMvp()` 順序執行，malformed result 必須進入 analysis failure。
+
 ### Coverage
 
 - 合法單一與多筆 obligation。
@@ -147,7 +155,7 @@ Pull request 與 pre-commit 不得只執行單一 test file。若新增 producti
 
 以下需要獨立的 integration test suite，不由 deterministic Safety MVP tests 假裝涵蓋：
 
-- 真實 parser、可執行的 Language Adapter、Framework Adapter（N-01 contract tests 在範圍內）。
+- 真實 parser、可執行的外部 Language Adapter、Framework Adapter（N-01/N-02 contract、normalization 與 reference adapter tests 在範圍內）。
 - 真實 GitHub API、database transaction、CAS 或跨 process locking。
 - 外部 analyzer process 的 OS timeout 與網路失敗。
 - 大型 repository 的效能、資源限制與負載測試。
