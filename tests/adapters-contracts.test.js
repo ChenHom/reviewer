@@ -93,6 +93,15 @@ test('runtime context 可 canonicalize 已知 namespace，unknown 則由 contrac
     }
   }
 
+  const unknownInput = changed((result) => {
+    result.obligations[0].changedRegions[0].runtimeContext = {
+      ...runtimeContext,
+      namespace: 'unknown',
+      id: 'unknown:runtime',
+    };
+  });
+  assert.deepEqual(validateAdapterResult(unknownInput), { valid: true, errors: [] }, 'unknown');
+
   assert.deepEqual(canonicalRuntimeContext({ ...runtimeContext, version: undefined }), {
     id: 'server:api',
     namespace: 'server',
@@ -146,7 +155,6 @@ test('AdapterResult 缺欄位、錯型別、矛盾或未知值一律 fail-closed
     ['adapter 不支援 region language', changed((result) => { result.obligations[0].changedRegions[0].language = 'ruby'; }), 'REGION_LANGUAGE_UNSUPPORTED:blade-v1:ruby'],
     ['region 缺 runtime context', changed((result) => { delete result.obligations[0].changedRegions[0].runtimeContext; }), 'REGION_RUNTIME_CONTEXT_INVALID:COV-BLADE-001'],
     ['非法 runtime namespace', changed((result) => { result.obligations[0].changedRegions[0].runtimeContext.namespace = 'desktop'; }), 'REGION_RUNTIME_CONTEXT_INVALID:COV-BLADE-001'],
-    ['unknown runtime', changed((result) => { result.obligations[0].changedRegions[0].runtimeContext = { ...runtimeContext, namespace: 'unknown', id: 'unknown:runtime' }; }), 'REGION_RUNTIME_UNKNOWN:COV-BLADE-001'],
     ['runtime namespace 與 id 不符', changed((result) => { result.obligations[0].changedRegions[0].runtimeContext.id = 'client:browser'; }), 'REGION_RUNTIME_NAMESPACE_MISMATCH:COV-BLADE-001'],
     ['重疊 region', changed((result) => { result.obligations[0].changedRegions[1] = { ...result.obligations[0].changedRegions[0], startByte: 5, endByte: 15 }; }), 'REGION_OVERLAP:COV-BLADE-001'],
     ['缺少 diagnostics', changed((result) => { delete result.diagnostics; }), 'ADAPTER_DIAGNOSTICS_MISSING'],

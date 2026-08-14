@@ -33,6 +33,7 @@ export function candidateDigest(candidate) {
     contextBinding: candidate.contextBinding,
     eligibility: candidate.eligibility,
     decision: candidate.decision,
+    factLayers: candidate.factLayers,
   };
 
   return createHash('sha256')
@@ -54,6 +55,7 @@ export function buildSummary(candidate) {
     contextBinding: candidate.contextBinding,
     eligibility: candidate.eligibility,
     decision: candidate.decision,
+    factLayers: candidate.factLayers,
     candidateDigest: candidateDigest(candidate),
   };
 }

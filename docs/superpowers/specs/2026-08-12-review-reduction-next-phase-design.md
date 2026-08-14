@@ -4,7 +4,7 @@
 
 將目前已完成的 deterministic Safety MVP，先安全接上 Adapter ingress；後續再以 gated follow-up 接入 evidence/impact、持久化 authority 與 GitHub sink。任何新邊界都必須維持目前的 fail-closed 語意，不能因為接入真實來源而讓不完整輸入變成 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
 
-本文件是分階段 roadmap，不是一次開發全部 subsystem 的 release scope。第一批只包含 N-01～N-03；N-04～N-07 必須等前一批的 contract、fixtures、coverage 與 adapter-to-core acceptance 完成後，才可個別開工。
+本文件是分階段 roadmap；本次實作依相依性完成 N-04～N-07。N-04～N-07 必須分別在前置 contract、fixtures、coverage 與 adapter-to-core acceptance 完成後個別開工。
 
 ## 現況與問題邊界
 
@@ -177,7 +177,7 @@ GitHub publisher 只接受已驗證的 authoritative Summary 與 check state。�
 | N-06 | provider-neutral publication port 與 GitHub adapter | N-05 |
 | N-07 | full E2E、observability、CI release gate、操作文件 | N-03、N-05、N-06 |
 
-第一批只執行 N-01～N-03。N-04～N-07 是後續 gated tasks，每個階段都必須先寫 failing tests，再寫最小實作，並通過 `npm run lint`、遞迴 `npm run test:safety` 與 `npm run test:coverage`。遞迴 test discovery 的正式命令固定為 `node --test`；Node.js 24.3.0 不接受 `tests` 目錄作為輸入，在 N-07 前不得以 glob 只執行 root-level test files。
+N-04～N-07 是依相依性 gated tasks，每個階段都必須先寫 failing tests，再寫最小實作，並通過 `npm run lint`、遞迴 `npm run test:safety` 與 `npm run test:coverage`。遞迴 test discovery 的正式命令固定為 `node --test`；Node.js 24.3.0 不接受 `tests` 目錄作為輸入，不得以 glob 只執行 root-level test files。
 
 ## 測試策略
 
@@ -197,7 +197,7 @@ GitHub publisher 只接受已驗證的 authoritative Summary 與 check state。�
 - Cross-repository assurance 與 merge queue。
 - 分散式 lock service 或高負載效能優化。
 - 允許 external sink 反向決定 reduction eligibility。
-- Evidence/impact/invariant、SQLite、GitHub API 與完整 E2E 不列入 N-01～N-03 第一批；它們只保留在後續 gated roadmap。
+- 真實 parser、GitHub API、production database credential 與 external process 不列入 deterministic MVP；N-04～N-07 使用純函式、SQLite temporary database 與 injected fake transport 完成可驗證的安全邊界。
 - Adapter execution boundary 是 trusted in-process boundary，不是 sandbox；不在 N-01～N-03 宣稱已隔離任意不受信任程式碼。
 
 ## Stable failure codes

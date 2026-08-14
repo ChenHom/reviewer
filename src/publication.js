@@ -100,3 +100,25 @@ export function publishCandidate(state, candidate) {
 
   return { accepted: true, current: state.current };
 }
+
+/**
+ * 透過 authority store 的 CAS 發布 candidate。
+ *
+ * @param {{compareAndSwapCurrent: function}} store - storage-backed authority store。
+ * @param {object|undefined} candidate - 要發布的 candidate。
+ * @returns {{accepted: boolean, idempotent?: boolean, reason?: string, current?: object}} CAS publication 結果。
+ */
+export function publishCandidateToStore(store, candidate) {
+  if (!store || typeof store.compareAndSwapCurrent !== 'function') {
+    return { accepted: false, reason: 'AUTHORITY_STORE_INVALID' };
+  }
+  if (!hasCandidateEnvelope(candidate) || !validateCandidate(candidate).valid) {
+    return { accepted: false, reason: 'CANDIDATE_INVALID' };
+  }
+
+  return store.compareAndSwapCurrent({
+    repository: candidate.identity.repository,
+    expectedHead: candidate.identity,
+    candidate,
+  });
+}

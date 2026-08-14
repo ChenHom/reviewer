@@ -1,6 +1,6 @@
 # Review Reduction Next Phase Tasks
 
-Status: `IN_PROGRESS`
+Status: `IMPLEMENTED`
 
 Design spec: [Review Reduction Next Phase Design](../superpowers/specs/2026-08-12-review-reduction-next-phase-design.md)
 
@@ -10,7 +10,7 @@ Predecessor: [Safety MVP Tasks](./2026-08-12-safety-mvp.md)
 
 ## Goal
 
-先完成 Adapter ingress 的安全邊界，再以 gated follow-up 逐步接入 evidence/impact/invariant facts、持久化 authority 與 GitHub publication sink。第一批只執行 N-01～N-03，不把所有後續 subsystem 視為同一次 release。
+完成 Adapter ingress、evidence/impact/invariant facts、持久化 authority、GitHub publication sink 與 full E2E release gate，並維持所有不完整、過期或發布失敗結果 fail-closed。
 
 ## Non-negotiable safety rules
 
@@ -54,56 +54,56 @@ Exit criteria: mixed-language COMPLETE 可進入 core；任一 partial region �
 
 ### N-03 — Adapter Execution Boundary
 
-Status: `PLANNED`
+Status: `IMPLEMENTED`
 
-- [ ] 實作 adapter-declared terminal timeout、execution deadline timeout、AbortSignal、exception、malformed output 與 late-result protection。
-- [ ] 建立 injected fake adapter tests。
-- [ ] 將 execution deadline、exception、malformed output 接到 `ANALYSIS_FAILED` / FULL / check `FAILURE`；adapter 宣告的 obligation timeout 維持 `INCOMPLETE` / Human Review。
+- [x] 實作 adapter-declared terminal timeout、execution deadline timeout、AbortSignal、exception、malformed output 與 late-result protection。
+- [x] 建立 injected fake adapter tests。
+- [x] 將 execution deadline、exception、malformed output 接到 `ANALYSIS_FAILED` / FULL / check `FAILURE`；adapter 宣告的 obligation timeout 維持 `INCOMPLETE` / Human Review。
 
 Exit criteria: adapter-declared timeout 只能產生不完整 coverage；execution deadline、throw、malformed、late completion 都不能修改 authority 或產生 reduction success。
 
 ### N-04 — Evidence / Impact / Invariant Facts
 
-Status: `PLANNED`
+Status: `IMPLEMENTED`
 
-- [ ] 建立 evidence item 與 provenance contract。
-- [ ] 建立 impact unresolved edge 與 required subject checks。
-- [ ] 建立 invariant mapping missing/provenance mismatch checks。
-- [ ] 將所有 unresolved facts 聚合為 reducer blockers。
+- [x] 建立 evidence item 與 provenance contract。
+- [x] 建立 impact unresolved edge 與 required subject checks。
+- [x] 建立 invariant mapping missing/provenance mismatch checks。
+- [x] 將所有 unresolved facts 聚合為 reducer blockers。
 
 Exit criteria: unresolved evidence/impact/invariant 只能增加 Human Review blocker，不能導向 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
 
 ### N-05 — Persistent Authority / CAS Publication
 
-Status: `PLANNED`
+Status: `IMPLEMENTED`
 
-- [ ] 定義 storage port 與 memory implementation。
-- [ ] 使用 Node.js 24 `node:sqlite` 建立 authority schema 與 transaction。
-- [ ] 以 `advanceCurrentHead({ expectedHead, nextHead })` 在同一 transaction 更新 head 並清除舊 candidate。
-- [ ] 實作 expected identity CAS、same-digest idempotency 與 same-head conflict rejection。
-- [ ] 補齊 restart、new head、late old run 與 no-mutation tests。
+- [x] 定義 storage port 與 memory implementation。
+- [x] 使用 Node.js 24 `node:sqlite` 建立 authority schema 與 transaction。
+- [x] 以 `advanceCurrentHead({ expectedHead, nextHead })` 在同一 transaction 更新 head 並清除舊 candidate。
+- [x] 實作 expected identity CAS、same-digest idempotency 與 same-head conflict rejection。
+- [x] 補齊 restart、new head、late old run 與 no-mutation tests。
 
 Exit criteria: process restart 後仍能辨識 current authority；stale/conflict candidate 不會覆蓋 authoritative result。
 
 ### N-06 — GitHub Summary / Status Check Sink
 
-Status: `PLANNED`
+Status: `IMPLEMENTED`
 
-- [ ] 先定義 provider-neutral `upsertSummary` / `upsertCheck` port，再定義 GitHub adapter transport contract。
-- [ ] 驗證 Summary、candidate digest、head SHA 與 check state 綁定。
-- [ ] 使用 head SHA、candidate digest 與固定 marker 實作 retry-safe upsert；不假設 GitHub 原生支援任意 idempotency key。
-- [ ] 將 transport failure 保持為 delivery failure，不改寫 authority。
+- [x] 先定義 provider-neutral `upsertSummary` / `upsertCheck` port，再定義 GitHub adapter transport contract。
+- [x] 驗證 Summary、candidate digest、head SHA 與 check state 綁定。
+- [x] 使用 head SHA、candidate digest 與固定 marker 實作 retry-safe upsert；不假設 GitHub 原生支援任意 idempotency key。
+- [x] 將 transport failure 保持為 delivery failure，不改寫 authority。
 
 Exit criteria: fake transport 的 success、非 2xx、timeout、malformed response、retry 與 conflict 都有 deterministic tests。
 
 ### N-07 — Full E2E / CI / Operations
 
-Status: `PLANNED`
+Status: `IMPLEMENTED`
 
-- [ ] 建立 adapter → normalization → core → CAS → GitHub sink 的 E2E fixtures。
-- [ ] 覆蓋 mixed-language、partial parse、unknown runtime、timeout、restart stale、GitHub failure。
-- [ ] 確認 `test:safety` 已由 N-02 固定為遞迴 `node --test`，並建立 `test:e2e` 與 `test:all` release gate；禁止只用 `tests/*.test.js`。
-- [ ] 更新 architecture、operations 與 failure/retry 文件。
+- [x] 建立 adapter → normalization → core → CAS → GitHub sink 的 E2E fixtures。
+- [x] 覆蓋 mixed-language、partial parse、unknown runtime、timeout、restart stale、GitHub failure。
+- [x] 確認 `test:safety` 已由 N-02 固定為遞迴 `node --test`，並建立 `test:e2e` 與 `test:all` release gate；禁止只用 `tests/*.test.js`。
+- [x] 更新 architecture、operations 與 failure/retry 文件。
 
 Exit criteria: lint、unit、coverage、adapter、storage、sink、E2E 全部通過，且無網路、LLM 或真實 token 依賴；head transition、CAS、Summary 與 sink retry 的 race cases 都有測試。
 
@@ -134,7 +134,7 @@ npm run test:all
 
 ## Phase gate
 
-N-01～N-03 完成前，不得開始 N-04～N-07。第一批的 release gate 是：
+N-04 依賴 N-01～N-03；N-05 依賴 N-01、N-03；N-06 依賴 N-05；N-07 依賴 N-03、N-05、N-06。每個 task 完成前都必須通過以下 release gate：
 
 ```bash
 npm run lint
@@ -143,4 +143,4 @@ npm run test:coverage
 git diff --check
 ```
 
-其中 `npm run test:safety` 在 N-02 完成後就必須遞迴執行所有已存在測試；N-07 只新增 `test:e2e` 與 `test:all`，不得把 nested test discovery 延後到最後階段。
+其中 `npm run test:safety` 必須遞迴執行所有已存在測試；N-07 再新增 `test:e2e` 與 `test:all`，不得把 nested test discovery 延後到最後階段。

@@ -1,0 +1,55 @@
+{
+  "oldRun": {
+    "identity": {
+      "repository": "example/repo",
+      "baseSha": "base-e2e-001",
+      "headSha": "head-e2e-old-001",
+      "policyId": "policy-001",
+      "policyVersion": "1",
+      "runnerVersion": "1"
+    },
+    "adapterResult": {
+      "adapterSet": [{
+        "id": "javascript-v1",
+        "version": "1.0.0",
+        "languages": ["javascript"],
+        "capabilities": ["changed-regions", "runtime-context", "coverage-obligations"]
+      }],
+      "obligations": [{
+        "id": "COV-E2E-STALE-001",
+        "required": true,
+        "status": "COMPLETE",
+        "changedRegions": [{
+          "path": "src/old.js",
+          "startByte": 0,
+          "endByte": 10,
+          "language": "javascript",
+          "adapterId": "javascript-v1",
+          "runtimeContext": {
+            "namespace": "server",
+            "id": "server:api",
+            "version": "node-24",
+            "source": "reference-adapter"
+          }
+        }]
+      }],
+      "diagnostics": [],
+      "evidenceReferences": [],
+      "complete": true
+    }
+  },
+  "newIdentity": {
+    "repository": "example/repo",
+    "baseSha": "base-e2e-001",
+    "headSha": "head-e2e-new-002",
+    "policyId": "policy-001",
+    "policyVersion": "1",
+    "runnerVersion": "1"
+  },
+  "expected": {
+    "publicationReason": "AUTHORITY_CAS_STALE",
+    "checkState": "FAILURE",
+    "checkReason": "AUTHORITY_CAS_STALE",
+    "deliveryCalls": 0
+  }
+}

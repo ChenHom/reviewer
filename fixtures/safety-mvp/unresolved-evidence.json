@@ -1,0 +1,88 @@
+{
+  "identity": {
+    "repository": "example/repo",
+    "baseSha": "base-001",
+    "headSha": "head-unresolved-evidence-001",
+    "policyId": "policy-001",
+    "policyVersion": "1",
+    "runnerVersion": "1"
+  },
+  "adapterResult": {
+    "adapterSet": [
+      {
+        "id": "javascript-v1",
+        "version": "1",
+        "languages": ["javascript"],
+        "capabilities": ["changed-regions", "runtime-context"]
+      }
+    ],
+    "obligations": [
+      {
+        "id": "COV-LANG-001",
+        "required": true,
+        "status": "COMPLETE",
+        "changedRegions": [
+          {
+            "path": "src/payment.js",
+            "startByte": 0,
+            "endByte": 10,
+            "language": "javascript",
+            "adapterId": "javascript-v1",
+            "runtimeContext": {
+              "namespace": "server",
+              "id": "server:api",
+              "version": "node-24",
+              "source": "adapter"
+            }
+          }
+        ]
+      }
+    ],
+    "diagnostics": [],
+    "evidenceReferences": ["EVIDENCE-001"],
+    "complete": true
+  },
+  "coverage": {
+    "obligations": [
+      {
+        "id": "COV-LANG-001",
+        "required": true,
+        "status": "COMPLETE",
+        "changedRegions": [
+          {
+            "path": "src/payment.js",
+            "startByte": 0,
+            "endByte": 10,
+            "language": "javascript",
+            "adapterId": "javascript-v1",
+            "runtime": "server"
+          }
+        ]
+      }
+    ]
+  },
+  "riskBlockers": [],
+  "evidence": {
+    "items": [
+      {
+        "id": "EVIDENCE-001",
+        "source": "adapter:javascript-v1",
+        "subject": "entity:payment-service",
+        "kind": "CALL_EDGE",
+        "complete": false,
+        "provenance": {
+          "path": "src/payment.js",
+          "startByte": 0,
+          "endByte": 10
+        }
+      }
+    ]
+  },
+  "expected": {
+    "decisionStatus": "HUMAN_REVIEW_REQUIRED",
+    "fallback": "TARGETED",
+    "reasons": ["EVIDENCE_COMPLETE_FALSE:EVIDENCE-001"],
+    "checkState": "PASS",
+    "checkReason": "CURRENT_AUTHORITATIVE_SUMMARY"
+  }
+}

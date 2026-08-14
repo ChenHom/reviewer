@@ -1,0 +1,113 @@
+{
+  "partialParse": {
+    "identity": {
+      "repository": "example/repo",
+      "baseSha": "base-e2e-001",
+      "headSha": "head-e2e-partial-001",
+      "policyId": "policy-001",
+      "policyVersion": "1",
+      "runnerVersion": "1"
+    },
+    "adapterResult": {
+      "adapterSet": [{
+        "id": "javascript-v1",
+        "version": "1.0.0",
+        "languages": ["javascript"],
+        "capabilities": ["changed-regions", "runtime-context", "coverage-obligations"]
+      }],
+      "obligations": [{
+        "id": "COV-E2E-PARTIAL-001",
+        "required": true,
+        "status": "PARTIAL_PARSE",
+        "changedRegions": [],
+        "reasonCode": "PARTIAL_PARSE"
+      }],
+      "diagnostics": ["PARTIAL_PARSE"],
+      "evidenceReferences": [],
+      "complete": false,
+      "reasonCode": "PARTIAL_PARSE"
+    },
+    "expected": {
+      "coverageStatus": "INCOMPLETE",
+      "decisionStatus": "HUMAN_REVIEW_REQUIRED",
+      "fallback": "FULL"
+    }
+  },
+  "unknownRuntime": {
+    "identity": {
+      "repository": "example/repo",
+      "baseSha": "base-e2e-001",
+      "headSha": "head-e2e-unknown-001",
+      "policyId": "policy-001",
+      "policyVersion": "1",
+      "runnerVersion": "1"
+    },
+    "adapterResult": {
+      "adapterSet": [{
+        "id": "javascript-v1",
+        "version": "1.0.0",
+        "languages": ["javascript"],
+        "capabilities": ["changed-regions", "runtime-context", "coverage-obligations"]
+      }],
+      "obligations": [{
+        "id": "COV-E2E-UNKNOWN-001",
+        "required": true,
+        "status": "COMPLETE",
+        "changedRegions": [{
+          "path": "src/unknown-runtime.js",
+          "startByte": 0,
+          "endByte": 10,
+          "language": "javascript",
+          "adapterId": "javascript-v1",
+          "runtimeContext": {
+            "namespace": "unknown",
+            "id": "runtime:unknown",
+            "version": "unknown",
+            "source": "reference-adapter"
+          }
+        }]
+      }],
+      "diagnostics": ["UNKNOWN_RUNTIME"],
+      "evidenceReferences": [],
+      "complete": true
+    },
+    "expected": {
+      "coverageStatus": "INCOMPLETE",
+      "decisionStatus": "HUMAN_REVIEW_REQUIRED",
+      "fallback": "FULL"
+    }
+  },
+  "adapterTimeout": {
+    "identity": {
+      "repository": "example/repo",
+      "baseSha": "base-e2e-001",
+      "headSha": "head-e2e-timeout-001",
+      "policyId": "policy-001",
+      "policyVersion": "1",
+      "runnerVersion": "1"
+    },
+    "adapterResult": {
+      "adapterSet": [{
+        "id": "javascript-v1",
+        "version": "1.0.0",
+        "languages": ["javascript"],
+        "capabilities": ["changed-regions", "runtime-context", "coverage-obligations"]
+      }],
+      "obligations": [{
+        "id": "COV-E2E-TIMEOUT-001",
+        "required": true,
+        "status": "TIMEOUT",
+        "changedRegions": []
+      }],
+      "diagnostics": ["TIMEOUT"],
+      "evidenceReferences": [],
+      "complete": false,
+      "reasonCode": "TIMEOUT"
+    },
+    "expected": {
+      "coverageStatus": "INCOMPLETE",
+      "decisionStatus": "HUMAN_REVIEW_REQUIRED",
+      "fallback": "FULL"
+    }
+  }
+}

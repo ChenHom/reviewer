@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createAuthorityState } from '../src/publication.js';
 import { runNormalizedAdapterResult, runSafetyMvp } from '../src/runner.js';
+import { candidateDigest } from '../src/summary.js';
 import { DECISION } from '../src/contracts.js';
 import { createAnalysisContextBinding, validateAdapterResult } from '../src/adapters/contracts.js';
 import { createReferenceAdapter } from '../src/adapters/reference-adapter.js';
@@ -120,6 +121,20 @@ test('mixed-language partial parse 經 normalization 必須保留 Human Review',
   assert.equal(result.candidate.decision.fallback, input.expected.fallback);
   assert.deepEqual(result.candidate.decision.reasons, input.expected.reasons);
   assert.equal(result.check.state, 'PASS');
+});
+
+test('unresolved evidence fixture 保留 blocker、Summary digest 與 Human Review', async () => {
+  const { input, result } = await runFixture('unresolved-evidence');
+  const expected = input.expected;
+
+  assert.equal(result.candidate.decision.status, expected.decisionStatus);
+  assert.equal(result.candidate.decision.fallback, expected.fallback);
+  assert.deepEqual(result.candidate.decision.reasons, expected.reasons);
+  assert.equal(result.summary.summary.candidateDigest, candidateDigest(result.candidate));
+  assert.deepEqual(result.check, {
+    state: expected.checkState,
+    reason: expected.checkReason,
+  });
 });
 
 test('malformed AdapterResult 經 normalized runner 必須進入 analysis failure', async () => {

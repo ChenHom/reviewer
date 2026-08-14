@@ -70,6 +70,14 @@
 - reference adapter 只能 deep-clone fixture；aborted signal 必須回傳合法的 Adapter-declared `TIMEOUT` result。
 - normalized runner 必須按 validation → normalization → `runSafetyMvp()` 順序執行，malformed result 必須進入 analysis failure。
 
+### Adapter Execution Boundary
+
+- valid adapter resolve 必須只回傳 AdapterResult outcome，不得由 Adapter 直接產生 reduction decision。
+- Adapter-declared obligation `TIMEOUT` 必須經 N-02 normalization 變成 `INCOMPLETE` / Human Review。
+- execution deadline、pre-aborted signal、AbortSignal、exception 與 malformed output 必須分別產生 stable failure code，進入 `ANALYSIS_FAILED` / Full / check `FAILURE`。
+- timeout 後的 late resolution、throw 或 result 都不得觸發 publication，也不得覆寫既有 authoritative candidate。
+- failure outcome 不得包含 exception object 或 stack trace；failure code 必須是 candidate 可重算且 deterministic 的輸入。
+
 ### Coverage
 
 - 合法單一與多筆 obligation。
@@ -86,6 +94,24 @@
 - blocker 去重、排序與完整保留。
 - blocker 增加的 monotonic property test。
 - eligibility 缺失與內部矛盾的 fail-closed 結果。
+
+### Evidence / Impact / Invariant
+
+- evidence stable id、source、subject、kind、complete 與 provenance 的合法、缺失、重複、錯型別與零長度 range。
+- impact edge 去重、missing node、missing provenance 與 required subject unresolved。
+- invariant required set、mapping missing、subject scope 與 provenance mismatch。
+- 增加任一 unresolved fact 的 monotonic property：只能增加 blocker，不能改成 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
+
+### Persistent Authority / CAS
+
+- memory store 的 initialize、CAS success、stale no-op、head transition、same-digest idempotency 與 same-head conflict。
+- SQLite close/reopen 讀回 current authority，以及 restart 後 old run no-op。
+- candidate context binding mismatch 不得寫入 persisted authority。
+
+### Provider-neutral Sink
+
+- Summary/check success、non-2xx、timeout/exception、malformed response、retry request identity 與 same-head conflict。
+- sink failure 不得改寫 authority、candidate 或安全 check；stale candidate 不得呼叫 sink。
 
 ### Publication / Summary
 
@@ -156,6 +182,6 @@ Pull request 與 pre-commit 不得只執行單一 test file。若新增 producti
 以下需要獨立的 integration test suite，不由 deterministic Safety MVP tests 假裝涵蓋：
 
 - 真實 parser、可執行的外部 Language Adapter、Framework Adapter（N-01/N-02 contract、normalization 與 reference adapter tests 在範圍內）。
-- 真實 GitHub API、database transaction、CAS 或跨 process locking。
+- 真實 GitHub API credential、跨 process locking 與 production transport；N-05 SQLite transaction、N-06 fake transport 與 N-07 E2E 在本策略範圍內。
 - 外部 analyzer process 的 OS timeout 與網路失敗。
 - 大型 repository 的效能、資源限制與負載測試。

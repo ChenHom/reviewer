@@ -2,7 +2,7 @@
 
 本文記錄目前第一版 Safety MVP 的模組架構、分析流程與安全邊界。
 
-目前實作採 Node.js native ESM 與 `node:test`。N-01 已建立 Adapter ingress contract、runtime context 與 authority binding；尚未接入可執行的 Language/Framework Adapter、外部 Analyzer、LLM 或 GitHub API。
+目前實作採 Node.js native ESM 與 `node:test`。N-01～N-07 的 deterministic safety boundary 已接通；尚未接入真實 Language/Framework Adapter、外部 Analyzer、LLM 或 GitHub API credential。
 
 ## 1. 系統架構
 
@@ -24,6 +24,9 @@ flowchart LR
         C4["runner.js<br/>Pipeline Orchestrator"]
         C5["publication.js<br/>Current Authority"]
         C6["summary.js<br/>Summary + Check State"]
+        C7["evidence.js / impact.js / invariants.js<br/>Fact Blockers"]
+        C8["storage/*<br/>Memory + SQLite CAS"]
+        C9["integrations/github/*<br/>Provider-neutral Sink"]
     end
 
     subgraph RESULT["結果模型"]
@@ -45,13 +48,11 @@ flowchart LR
     end
 
     subgraph FUTURE["後續擴充，目前尚未接入"]
-        F1["Executable Language Adapter"]
-        F2["Executable Framework Adapter"]
-        F3["Impact Graph"]
-        F4["Invariant Mapper"]
-        F5["Analyzer / Evidence"]
-        F6["LLM Hypothesis Engine"]
-        F7["GitHub PR Integration"]
+        F1["Real Language/Framework Adapter"]
+        F2["External Analyzer Process"]
+        F3["LLM Hypothesis Engine"]
+        F4["GitHub API Transport"]
+        F5["Production Operations"]
     end
 
     I1 --> C4
@@ -67,15 +68,18 @@ flowchart LR
     C2 --> R1
     R1 --> C3
     I4 --> C3
+    C7 --> C3
     C3 --> R2
     R2 --> R3
 
     R3 --> C5
     I2 --> C5
     C5 --> R4
+    C8 --> C5
     R4 --> C6
     C6 --> R5
     R5 --> R6
+    R6 --> C9
 
     T1 -.-> C1
     T2 -.-> C2
@@ -87,13 +91,11 @@ flowchart LR
     F1 -.-> I1
     F2 -.-> I1
     F3 -.-> I4
-    F4 -.-> I4
-    F5 -.-> I4
-    F6 -.-> I4
-    F7 -.-> C6
+    F4 -.-> C6
+    F5 -.-> C6
 ```
 
-目前已實作的是中間的 `Safety MVP Deterministic Core`，以及 N-01 的 Adapter ingress contract、runtime context、`AnalysisIdentity` 與 authority binding，N-02 的 changed-region normalization 與 deterministic reference adapter。可執行的 parser/Language/Framework Adapter、Impact Graph、LLM、GitHub API 屬於後續擴充，不是目前的 reduction authority 來源。
+目前已實作的是 `Safety MVP Deterministic Core`、N-01～N-03 Adapter boundary、N-04 fact blocker pipeline、N-05 memory/SQLite CAS authority、N-06 provider-neutral GitHub sink 與 N-07 deterministic E2E/release gate。真實外部 Adapter、Analyzer、LLM、GitHub API transport 屬於未接入的外部實作，不是目前的 reduction authority 來源。
 
 ## 2. 執行流程
 
@@ -141,7 +143,7 @@ flowchart TD
     U -->|否| V["Reject：STALE_ANALYSIS_IDENTITY"]
     V --> W["不得覆寫 Current Result"]
 
-    U -->|是| Y["Atomic Publication"]
+    U -->|是| Y["Atomic CAS Publication<br/>Memory or SQLite"]
     Y --> Z["建立唯一 Summary"]
     Z --> AA{"Summary Publication 成功?"}
 
@@ -151,6 +153,8 @@ flowchart TD
     AC -->|是| AE{"Analysis 是否成功?"}
     AE -->|否| AF["Status Check = FAILURE<br/>ANALYSIS_FAILED"]
     AE -->|是| AG["Status Check = PASS"]
+    AG --> AH["Optional GitHub Sink<br/>delivery-only"]
+    AB --> AH
 ```
 
 ## 3. 安全決策邊界
@@ -184,6 +188,8 @@ flowchart LR
 8. Candidate、Summary、Status Check 必須使用同一份 `AnalysisIdentity`，以及存在時的 `AnalysisContextBinding`。
 9. Summary 發布失敗、遺失或 SHA 不一致時，Status Check 必須失敗。
 10. AdapterResult 或 authority context 缺漏、格式錯誤、digest 不一致或 runtime/adapter 不一致時，必須 fail-closed，不得發布候選結果。
+11. Evidence、impact、invariant unresolved facts 只能增加 reducer blocker，不能導向 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
+12. GitHub sink failure 只能是 delivery failure，不得改寫 authority、candidate 或安全 check。
 
 ## 5. 目前實作對照
 
@@ -193,13 +199,17 @@ flowchart LR
 | Adapter Contract | `src/adapters/contracts.js` | AdapterSet、AdapterResult、runtime context、canonical digest、AnalysisContextBinding |
 | Adapter Normalization | `src/adapters/normalize.js` | Changed-region sorting、terminal status mapping、AdapterResult ingress |
 | Reference Adapter | `src/adapters/reference-adapter.js` | Deterministic fixture adapter；不實作 parser |
+| Adapter Execution | `src/adapters/runner.js`, `src/adapters/errors.js` | Deadline、AbortSignal、exception、malformed output、late-result fail-closed boundary |
 | Coverage | `src/coverage.js` | Required obligation 與 changed-region fail-closed 判斷 |
 | Reducer | `src/reducer.js` | Eligibility 聚合與 Human Review scope 決策 |
+| Fact Blockers | `src/evidence.js`, `src/impact.js`, `src/invariants.js` | Provenance、impact edge、invariant mapping 的 unresolved blocker |
 | Runner | `src/runner.js` | 串接完整 deterministic pipeline |
 | Publication | `src/publication.js` | Current head、stale-run、atomic authority |
+| Authority Storage | `src/storage/*` | Memory/SQLite persisted head、candidate 與 CAS |
 | Summary | `src/summary.js` | Summary payload 與 status check state 的 identity/context binding |
+| GitHub Sink | `src/integrations/github/*` | Provider-neutral Summary/check upsert 與 delivery failure |
 | Fixtures | `fixtures/safety-mvp/` | AdapterResult、Human Review / NOT_SELECTED 情境 |
-| Tests | `tests/` | Adapter/binding、contract、coverage、property、publication、vertical validation |
+| Tests | `tests/`, `fixtures/e2e/` | Contract、property、storage、sink、vertical、full E2E validation |
 
 ## 6. 後續接入方向
 
@@ -217,4 +227,4 @@ Safety MVP Reducer
 ReviewUnit / GitHub Summary / Merge Gate
 ```
 
-後續可執行 Adapter 必須遵守 N-01 contract 與目前的安全邊界：只要不能完整描述 changed region 或 execution context，就輸出 incomplete / unknown，讓既有 Reducer 保留 Human Review，而不是自行宣告安全。
+後續可執行 Adapter 必須遵守 N-01 contract 與目前的安全邊界：只要不能完整描述 changed region 或 execution context，就輸出 incomplete / unknown，讓既有 Reducer 保留 Human Review，而不是自行宣告安全。N-04～N-07 已提供 facts、CAS、sink 與 E2E 的 production seams；真實外部 Adapter 與 GitHub API 仍需另行接入與驗證。

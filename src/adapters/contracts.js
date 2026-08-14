@@ -185,9 +185,10 @@ function validateObligations(obligations, adapters) {
       const runtimeContext = canonicalRuntimeContext(region?.runtimeContext);
       if (!runtimeContext) {
         errors.push(`REGION_RUNTIME_CONTEXT_INVALID:${id}`);
-      } else if (runtimeContext.namespace === 'unknown') {
-        errors.push(`REGION_RUNTIME_UNKNOWN:${id}`);
-      } else if (!runtimeContext.id.startsWith(`${runtimeContext.namespace}:`)) {
+      } else if (
+        runtimeContext.namespace !== 'unknown'
+        && !runtimeContext.id.startsWith(`${runtimeContext.namespace}:`)
+      ) {
         errors.push(`REGION_RUNTIME_NAMESPACE_MISMATCH:${id}`);
       }
 
