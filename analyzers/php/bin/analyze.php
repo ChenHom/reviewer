@@ -145,6 +145,23 @@ function findClosingParen(array $tokens, int $openIndex): ?int
     return null;
 }
 
+function callContainsCallbackBody(array $tokens, int $openIndex, int $closeIndex): bool
+{
+    $callbackTokenIds = [T_FUNCTION];
+    if (defined('T_FN')) {
+        $callbackTokenIds[] = constant('T_FN');
+    }
+
+    for ($index = $openIndex + 1; $index < $closeIndex; $index += 1) {
+        $id = $tokens[$index]['id'];
+        if ($id !== null && in_array($id, $callbackTokenIds, true)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function splitArgumentSegments(array $tokens, int $openIndex, int $closeIndex): array
 {
     $segments = [];
@@ -250,12 +267,23 @@ function extractCalls(string $source, string $path): array
             $statementEnd = $tokens[$closeIndex + 1]['end'];
         }
 
+        $previousText = $tokens[$index - 1]['text'] ?? null;
+        $isStandaloneStatement = $statementEnd > $callEnd
+            && (
+                $index === 0
+                || in_array($previousText, ['{', '}', ';', ':'], true)
+            );
+        $canMaskAsAtomicStatement = $isStandaloneStatement
+            && !callContainsCallbackBody($tokens, $index + 3, $closeIndex);
+
         $calls[] = [
             'callee' => $callee,
             'subject' => subjectAtOffset($tokens, $left['start'], $path),
             'startByte' => $left['start'],
             'endByte' => $callEnd,
             'statementEndByte' => $statementEnd,
+            'isStandaloneStatement' => $isStandaloneStatement,
+            'canMaskAsAtomicStatement' => $canMaskAsAtomicStatement,
             'namedArguments' => namedArguments($tokens, $index + 3, $closeIndex, $source),
         ];
 
@@ -316,17 +344,6 @@ function normalizedSignature(string $source): string
     );
 
     return implode('|', $parts);
-}
-
-function isTransactionCall(array $call): bool
-{
-    return str_ends_with($call['callee'], 'DB::transaction');
-}
-
-function isAuthorizationCall(array $call): bool
-{
-    return str_ends_with($call['callee'], '->authorize')
-        || str_ends_with($call['callee'], 'Gate::authorize');
 }
 
 function sortedFacts(array $facts): array
@@ -440,69 +457,98 @@ foreach ($beforeGroups as $key => $beforeGroup) {
             ];
         }
     }
+
+    for ($callIndex = $pairCount; $callIndex < count($beforeGroup); $callIndex += 1) {
+        $call = $beforeGroup[$callIndex];
+        $facts[] = [
+            'id' => makeFactId(
+                'CALL_REMOVED',
+                $path,
+                $call['subject'],
+                $call['callee'] . ':' . $callIndex,
+                $call['startByte'],
+                $call['statementEndByte'],
+            ),
+            'kind' => 'CALL_REMOVED',
+            'subject' => $call['subject'],
+            'properties' => [
+                'callee' => $call['callee'],
+                'changeSide' => 'before',
+            ],
+            'provenance' => [
+                'path' => $path,
+                'startByte' => $call['startByte'],
+                'endByte' => $call['statementEndByte'],
+            ],
+        ];
+
+        if ($call['canMaskAsAtomicStatement']) {
+            $maskBefore[] = [$call['startByte'], $call['statementEndByte'], ''];
+        }
+    }
+
+    for ($callIndex = $pairCount; $callIndex < count($afterGroup); $callIndex += 1) {
+        $call = $afterGroup[$callIndex];
+        $facts[] = [
+            'id' => makeFactId(
+                'CALL_ADDED',
+                $path,
+                $call['subject'],
+                $call['callee'] . ':' . $callIndex,
+                $call['startByte'],
+                $call['statementEndByte'],
+            ),
+            'kind' => 'CALL_ADDED',
+            'subject' => $call['subject'],
+            'properties' => [
+                'callee' => $call['callee'],
+                'changeSide' => 'after',
+            ],
+            'provenance' => [
+                'path' => $path,
+                'startByte' => $call['startByte'],
+                'endByte' => $call['statementEndByte'],
+            ],
+        ];
+
+        if ($call['canMaskAsAtomicStatement']) {
+            $maskAfter[] = [$call['startByte'], $call['statementEndByte'], ''];
+        }
+    }
 }
 
-$beforeTransactionCalls = array_values(array_filter($beforeCalls, 'isTransactionCall'));
-$afterTransactionCalls = array_values(array_filter($afterCalls, 'isTransactionCall'));
-for (
-    $index = count($afterTransactionCalls);
-    $index < count($beforeTransactionCalls);
-    $index += 1
-) {
-    $call = $beforeTransactionCalls[$index];
-    $facts[] = [
-        'id' => makeFactId(
-            'TRANSACTION_BOUNDARY_REMOVED',
-            $path,
-            $call['subject'],
-            $call['callee'],
-            $call['startByte'],
-            $call['statementEndByte'],
-        ),
-        'kind' => 'TRANSACTION_BOUNDARY_REMOVED',
-        'subject' => $call['subject'],
-        'properties' => [
-            'callee' => $call['callee'],
-            'changeSide' => 'before',
-        ],
-        'provenance' => [
-            'path' => $path,
-            'startByte' => $call['startByte'],
-            'endByte' => $call['statementEndByte'],
-        ],
-    ];
-}
+foreach ($afterGroups as $key => $afterGroup) {
+    if (array_key_exists($key, $beforeGroups)) {
+        continue;
+    }
 
-$beforeAuthorizationCalls = array_values(array_filter($beforeCalls, 'isAuthorizationCall'));
-$afterAuthorizationCalls = array_values(array_filter($afterCalls, 'isAuthorizationCall'));
-for (
-    $index = count($afterAuthorizationCalls);
-    $index < count($beforeAuthorizationCalls);
-    $index += 1
-) {
-    $call = $beforeAuthorizationCalls[$index];
-    $facts[] = [
-        'id' => makeFactId(
-            'AUTHORIZATION_GUARD_REMOVED',
-            $path,
-            $call['subject'],
-            $call['callee'],
-            $call['startByte'],
-            $call['statementEndByte'],
-        ),
-        'kind' => 'AUTHORIZATION_GUARD_REMOVED',
-        'subject' => $call['subject'],
-        'properties' => [
-            'callee' => $call['callee'],
-            'changeSide' => 'before',
-        ],
-        'provenance' => [
-            'path' => $path,
-            'startByte' => $call['startByte'],
-            'endByte' => $call['statementEndByte'],
-        ],
-    ];
-    $maskBefore[] = [$call['startByte'], $call['statementEndByte'], ''];
+    foreach ($afterGroup as $callIndex => $call) {
+        $facts[] = [
+            'id' => makeFactId(
+                'CALL_ADDED',
+                $path,
+                $call['subject'],
+                $call['callee'] . ':' . $callIndex,
+                $call['startByte'],
+                $call['statementEndByte'],
+            ),
+            'kind' => 'CALL_ADDED',
+            'subject' => $call['subject'],
+            'properties' => [
+                'callee' => $call['callee'],
+                'changeSide' => 'after',
+            ],
+            'provenance' => [
+                'path' => $path,
+                'startByte' => $call['startByte'],
+                'endByte' => $call['statementEndByte'],
+            ],
+        ];
+
+        if ($call['canMaskAsAtomicStatement']) {
+            $maskAfter[] = [$call['startByte'], $call['statementEndByte'], ''];
+        }
+    }
 }
 
 $complete = normalizedSignature(maskRanges($beforeSource, $maskBefore))

@@ -14,8 +14,8 @@ Base: PR-A `feat/semantic-fact-ingress`
 - Analyzer 使用 PHP 內建 `token_get_all(..., TOKEN_PARSE)`，不依賴 LLM 或 Composer parser。
 - 支援第一批 deterministic facts：
   - `CALL_ARGUMENT_CHANGED`
-  - `TRANSACTION_BOUNDARY_REMOVED`
-  - `AUTHORIZATION_GUARD_REMOVED`
+  - `CALL_REMOVED`
+  - `CALL_ADDED`
 - Fact 保留 subject、properties、byte provenance 與 adapter source identity。
 - 只有 analyzer 能證明所有 significant token change 都被支援的 fact 覆蓋時才回傳 `COMPLETE`。
 - 無法完整解釋的 PHP change 一律回傳 `PARTIAL_PARSE` + `UNRECOGNIZED_PHP_CHANGE`。
@@ -28,9 +28,22 @@ Base: PR-A `feat/semantic-fact-ingress`
 
 - significant token 不變的 formatting / comment-only change。
 - named argument expression change，且遮罩已辨識 expression 後 before/after significant token signature 完全一致。
-- 單純移除已辨識 authorize statement，且其餘 significant token 完全一致。
+- 單純新增或移除可辨識的 standalone call statement，且遮罩後其餘 significant token 完全一致。
 
-目前 transaction unwrap 會產生 fact，但保持 `PARTIAL_PARSE`，因為 v0.1 尚未證明 transaction closure body 與 unwrap 後 body 完全等價。
+例如 `DB::transaction(...)` wrapper 被移除時，Adapter 只輸出 generic `CALL_REMOVED`。若 unwrap 後 closure body 仍存在，遮罩後 signature 不相等，因此保持 `PARTIAL_PARSE`。`DB::transaction` 或 `authorize` 的 domain 意義由後續 interpreter 決定。
+
+## Deterministic Domain Interpreters
+
+PR-B 同時包含第一批 deterministic domain interpreters；Adapter 仍只輸出 generic facts：
+
+- `CALL_ARGUMENT_CHANGED` + `argument=idempotencyKey`
+  → `PAYMENT_IDEMPOTENCY_IDENTITY_CHANGED`
+- `CALL_REMOVED` + `callee=DB::transaction`
+  → `TRANSACTION_BOUNDARY_REMOVED`
+- `CALL_REMOVED` + `callee=$this->authorize / Gate::authorize`
+  → `AUTHORIZATION_GUARD_REMOVED`
+
+Interpreter 皆提供穩定 `id/version/interpret`，並由 PR-A 的 AnalysisContextBinding 綁定；未知 generic fact 不會被 interpreter 吞掉，仍然 fail-closed 為 `FACT_UNHANDLED`。
 
 ## Explicitly out of scope
 
@@ -38,7 +51,7 @@ Base: PR-A `feat/semantic-fact-ingress`
 - Laravel container resolution。
 - Route / middleware / policy graph。
 - Eloquent model semantic analysis。
-- Risk / invariant domain policy。
+- 更完整的 domain policy / invariant registry。
 - LLM。
 - Mutation / Historical PR Evaluation。
 - code-review-graph。

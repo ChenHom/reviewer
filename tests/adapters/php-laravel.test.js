@@ -7,6 +7,7 @@ import {
   validateAdapterResult,
 } from '../../src/adapters/contracts.js';
 import { createPhpLaravelAdapter } from '../../src/adapters/php-laravel/adapter.js';
+import { PHP_LARAVEL_DOMAIN_INTERPRETERS } from '../../src/interpreters/php-laravel-domain.js';
 import { createAuthorityState } from '../../src/publication.js';
 import { runAdapterPipeline } from '../../src/runner.js';
 
@@ -68,21 +69,47 @@ test('named argument expression 變更會輸出 CALL_ARGUMENT_CHANGED', async ()
   assert.equal(result.facts[0].source.adapterId, 'php-laravel-v1');
 });
 
-test('DB::transaction wrapper 移除會輸出 TRANSACTION_BOUNDARY_REMOVED 並保持 partial coverage', async () => {
+test('DB::transaction wrapper 移除只輸出 generic CALL_REMOVED 並保持 partial coverage', async () => {
   const result = await analyze('transaction-removed');
 
   assert.deepEqual(validateAdapterResult(result), { valid: true, errors: [] });
   assert.equal(result.complete, false);
   assert.equal(result.obligations[0].status, 'PARTIAL_PARSE');
-  assert.ok(result.facts.some((fact) => fact.kind === 'TRANSACTION_BOUNDARY_REMOVED'));
+  assert.ok(result.facts.some((fact) => (
+    fact.kind === 'CALL_REMOVED'
+    && fact.properties.callee === 'DB::transaction'
+  )));
+  assert.equal(
+    result.facts.some((fact) => fact.kind === 'TRANSACTION_BOUNDARY_REMOVED'),
+    false,
+  );
   assert.deepEqual(result.diagnostics, ['UNRECOGNIZED_PHP_CHANGE']);
 });
 
-test('authorize guard 移除會輸出 AUTHORIZATION_GUARD_REMOVED', async () => {
+test('authorize call 移除只描述 CALL_REMOVED，不在 Adapter 解讀授權風險', async () => {
   const result = await analyze('authorization-removed');
 
   assert.deepEqual(validateAdapterResult(result), { valid: true, errors: [] });
-  assert.ok(result.facts.some((fact) => fact.kind === 'AUTHORIZATION_GUARD_REMOVED'));
+  assert.equal(result.complete, true);
+  assert.ok(result.facts.some((fact) => (
+    fact.kind === 'CALL_REMOVED'
+    && fact.properties.callee === '$this->authorize'
+  )));
+  assert.equal(
+    result.facts.some((fact) => fact.kind === 'AUTHORIZATION_GUARD_REMOVED'),
+    false,
+  );
+});
+
+test('新增 standalone call 會輸出 CALL_ADDED 且 completeness 可被證明', async () => {
+  const result = await analyze('call-added');
+
+  assert.deepEqual(validateAdapterResult(result), { valid: true, errors: [] });
+  assert.equal(result.complete, true);
+  assert.ok(result.facts.some((fact) => (
+    fact.kind === 'CALL_ADDED'
+    && fact.properties.callee === '$this->audit'
+  )));
 });
 
 test('未支援的一般 PHP semantic change 必須 PARTIAL_PARSE 而不是誤判安全', async () => {
@@ -122,6 +149,96 @@ test('真實 PHP fact 沒有 interpreter 時會經既有 reducer 保留 Human Re
   assert.equal(pipeline.publication.accepted, true);
   assert.equal(pipeline.candidate.decision.status, 'HUMAN_REVIEW_REQUIRED');
   assert.equal(pipeline.candidate.decision.fallback, 'TARGETED');
+  assert.match(
+    pipeline.candidate.decision.reasons[0],
+    /^FACT_UNHANDLED:php-/,
+  );
+});
+
+
+async function runWithDomainInterpreters(caseName, path) {
+  const [beforeSource, afterSource] = await Promise.all([
+    fixture(caseName, 'before'),
+    fixture(caseName, 'after'),
+  ]);
+  const request = {
+    identity,
+    path,
+    beforeSource,
+    afterSource,
+  };
+  const initialResult = await adapter.analyze(request);
+  const state = createAuthorityState(
+    identity,
+    createAnalysisContextBinding(
+      initialResult,
+      PHP_LARAVEL_DOMAIN_INTERPRETERS,
+    ),
+  );
+
+  return runAdapterPipeline(
+    adapter,
+    request,
+    state,
+    {
+      timeoutMs: 2_000,
+      factInterpreters: PHP_LARAVEL_DOMAIN_INTERPRETERS,
+    },
+  );
+}
+
+test('idempotencyKey 變更由 domain interpreter 轉成 payment blocker', async () => {
+  const pipeline = await runWithDomainInterpreters(
+    'named-argument-change',
+    'app/Services/PaymentService.php',
+  );
+
+  assert.equal(pipeline.publication.accepted, true);
+  assert.equal(pipeline.candidate.decision.status, 'HUMAN_REVIEW_REQUIRED');
+  assert.equal(pipeline.candidate.decision.fallback, 'TARGETED');
+  assert.deepEqual(
+    pipeline.candidate.decision.reasons,
+    ['PAYMENT_IDEMPOTENCY_IDENTITY_CHANGED'],
+  );
+});
+
+test('DB::transaction 移除由 domain interpreter 轉成 transaction blocker', async () => {
+  const pipeline = await runWithDomainInterpreters(
+    'transaction-removed',
+    'app/Services/WalletService.php',
+  );
+
+  assert.equal(pipeline.publication.accepted, true);
+  assert.equal(pipeline.candidate.decision.status, 'HUMAN_REVIEW_REQUIRED');
+  assert.equal(pipeline.candidate.decision.fallback, 'FULL');
+  assert.ok(
+    pipeline.candidate.decision.reasons.includes('TRANSACTION_BOUNDARY_REMOVED'),
+  );
+});
+
+test('authorize call 移除由 domain interpreter 轉成 authorization blocker', async () => {
+  const pipeline = await runWithDomainInterpreters(
+    'authorization-removed',
+    'app/Services/OrderService.php',
+  );
+
+  assert.equal(pipeline.publication.accepted, true);
+  assert.equal(pipeline.candidate.decision.status, 'HUMAN_REVIEW_REQUIRED');
+  assert.equal(pipeline.candidate.decision.fallback, 'TARGETED');
+  assert.deepEqual(
+    pipeline.candidate.decision.reasons,
+    ['AUTHORIZATION_GUARD_REMOVED'],
+  );
+});
+
+test('domain interpreters 不得吞掉不認識的 generic fact', async () => {
+  const pipeline = await runWithDomainInterpreters(
+    'call-added',
+    'app/Services/ExampleService.php',
+  );
+
+  assert.equal(pipeline.publication.accepted, true);
+  assert.equal(pipeline.candidate.decision.status, 'HUMAN_REVIEW_REQUIRED');
   assert.match(
     pipeline.candidate.decision.reasons[0],
     /^FACT_UNHANDLED:php-/,
