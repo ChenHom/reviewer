@@ -3,13 +3,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "lint": "eslint src tests",
+    "lint": "eslint src tests evaluation",
     "prepare": "simple-git-hooks",
     "test": "node --test",
     "test:safety": "node --test",
     "test:e2e": "node --test tests/e2e/*.test.js",
-    "test:all": "npm run lint && npm run test:safety && npm run test:e2e && npm run test:coverage",
-    "test:coverage": "c8 --all --include='src/**/*.js' --check-coverage --lines 90 --functions 90 --branches 85 --statements 90 npm run test:safety"
+    "test:all": "npm run lint && npm run test:safety && npm run test:e2e && npm run test:coverage && npm run eval:mutations",
+    "test:coverage": "c8 --all --include='src/**/*.js' --check-coverage --lines 90 --functions 90 --branches 85 --statements 90 npm run test:safety",
+    "eval:mutations": "node evaluation/mutations/run.js"
   },
   "simple-git-hooks": {
     "pre-commit": "npm run lint"
