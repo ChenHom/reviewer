@@ -244,3 +244,108 @@ test('domain interpreters 不得吞掉不認識的 generic fact', async () => {
     /^FACT_UNHANDLED:php-/,
   );
 });
+
+function inlineAnalyze(beforeSource, afterSource) {
+  return adapter.analyze({
+    identity,
+    path: 'app/Services/InlineService.php',
+    beforeSource,
+    afterSource,
+  });
+}
+
+function wrap(body) {
+  return `<?php\n\nclass InlineService\n{\n    public function run($q)\n    {\n${body}\n    }\n}\n`;
+}
+
+test('closure 內的巢狀 call 會被抽出，unwrap transaction 只留下 CALL_REMOVED', async () => {
+  const result = await inlineAnalyze(
+    wrap('        \\DB::transaction(function () use ($q) {\n            $q->save();\n        });'),
+    wrap('        $q->save();'),
+  );
+
+  assert.deepEqual(validateAdapterResult(result), { valid: true, errors: [] });
+  assert.equal(result.complete, false);
+  assert.deepEqual(
+    result.facts.map(({ kind, properties }) => [kind, properties.callee]),
+    [['CALL_REMOVED', '\\DB::transaction']],
+  );
+});
+
+test('鏈式 call 移除會輸出 ->method callee，且不放寬 completeness', async () => {
+  const result = await inlineAnalyze(
+    wrap('        return Model::query()->lockForUpdate()->find($q);'),
+    wrap('        return Model::query()->find($q);'),
+  );
+
+  assert.equal(result.complete, false);
+  assert.deepEqual(
+    result.facts.map(({ kind, properties }) => [kind, properties.callee]),
+    [['CALL_REMOVED', '->lockForUpdate']],
+  );
+});
+
+test('屬性鏈 receiver 會保留完整名稱', async () => {
+  const result = await inlineAnalyze(
+    wrap('        $this->adminDB->commit();\n        return 1;'),
+    wrap('        return 1;'),
+  );
+
+  assert.equal(result.complete, true);
+  assert.deepEqual(
+    result.facts.map(({ kind, properties }) => [kind, properties.callee]),
+    [['CALL_REMOVED', '$this->adminDB->commit']],
+  );
+});
+
+test('位置參數變更輸出 #index fact 但不 mask，維持 PARTIAL_PARSE', async () => {
+  const result = await inlineAnalyze(
+    wrap("        $q->update(['amount' => $q->amount - 1]);"),
+    wrap("        $q->update(['amount' => $q->amount + 1]);"),
+  );
+
+  assert.equal(result.complete, false);
+  assert.equal(result.obligations[0].status, 'PARTIAL_PARSE');
+  assert.equal(result.facts.length, 1);
+  assert.equal(result.facts[0].kind, 'CALL_ARGUMENT_CHANGED');
+  assert.deepEqual(result.facts[0].properties, {
+    callee: '$q->update',
+    argument: '#0',
+    before: "['amount' => $q->amount - 1]",
+    after: "['amount' => $q->amount + 1]",
+    changeSide: 'after',
+  });
+});
+
+test('含 closure 的位置參數不輸出 argument fact', async () => {
+  const result = await inlineAnalyze(
+    wrap('        $q->each(function ($row) { return 1; });'),
+    wrap('        $q->each(function ($row) { return 2; });'),
+  );
+
+  assert.equal(result.complete, false);
+  assert.deepEqual(result.facts, []);
+});
+
+test('只有空白差異的參數不產生 fact', async () => {
+  const result = await inlineAnalyze(
+    wrap('        $q->charge(idempotencyKey: $a . $b, amount: [1,2]);'),
+    wrap('        $q->charge(\n            idempotencyKey: $a.$b,\n            amount: [1, 2]\n        );'),
+  );
+
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.facts, []);
+});
+
+test('巢狀 call 的 named argument 變更輸出 fact 但不 mask', async () => {
+  const result = await inlineAnalyze(
+    wrap('        \\DB::transaction(function () use ($q) {\n            $q->charge(idempotencyKey: $a);\n        });'),
+    wrap('        \\DB::transaction(function () use ($q) {\n            $q->charge(idempotencyKey: $b);\n        });'),
+  );
+
+  assert.equal(result.complete, false);
+  assert.deepEqual(
+    result.facts.map(({ kind, properties }) => [kind, properties.argument]),
+    [['CALL_ARGUMENT_CHANGED', 'idempotencyKey']],
+  );
+});

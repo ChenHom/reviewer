@@ -57,13 +57,17 @@ Authoritative Candidate / Summary / Check
 - JSON-safe deterministic Fact properties
 - PHP 8.4 CLI analyzer
 - Generic facts：
-  - `CALL_ARGUMENT_CHANGED`
+  - `CALL_ARGUMENT_CHANGED`（named argument；位置參數以 `#index` 表示，只輸出 fact、不放寬 completeness）
   - `CALL_REMOVED`
   - `CALL_ADDED`
-- 第一批 deterministic PHP/Laravel interpreters：
+- Analyzer 會抽出 closure 內的巢狀 call 與鏈式 call（如 `->lockForUpdate`），並保留完整 receiver（如 `$this->adminDB->transaction`）；巢狀 / 鏈式 call 不參與 masking
+- Deterministic PHP/Laravel interpreters（callee 會先正規化 fully-qualified 前導 `\`）：
   - Payment idempotency identity change
-  - Transaction boundary removal
-  - Authorization guard removal
+  - Transaction boundary / rollback removal（`DB::transaction`、`beginTransaction`、`commit`、`rollBack`，含 `\DB::` 與 DB connection receiver）
+  - Authorization guard removal（`$this->authorize`、`Gate::authorize`）
+  - Middleware guard removal（`$this->middleware(...)`、`Route::group` / `->middleware` 移除 middleware）
+  - Row lock removal（`lockForUpdate`、`sharedLock`）
+  - Payment signature verification removal（`verifySign`、`verificationSign`、`checkSign` 等）
 - persisted authority / stale analysis protection
 - Summary / candidate digest binding
 - Mutation Evaluation Harness
@@ -77,11 +81,11 @@ Mutation corpus：
 ```
 Critical Recall               100.0%
 False Negative Rate             0.0%
-Critical Direct Fact Coverage  75.0%
-Safe Reduction Rate            50.0%
-Partial Coverage Rate          50.0%
+Critical Direct Fact Coverage  91.7%
+Safe Reduction Rate            66.7%
+Partial Coverage Rate          60.0%
 Analysis Failure Rate           0.0%
-Full Review Fallback Rate      50.0%
+Full Review Fallback Rate      60.0%
 ```
 
 Historical PR evaluator 的 CI pilot：

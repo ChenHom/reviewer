@@ -207,48 +207,88 @@ function splitArgumentSegments(array $tokens, int $openIndex, int $closeIndex): 
     return $segments;
 }
 
-function namedArguments(array $tokens, int $openIndex, int $closeIndex, string $source): array
+function segmentContainsCallbackBody(array $tokens, int $start, int $end): bool
 {
-    $arguments = [];
+    return callContainsCallbackBody($tokens, $start - 1, $end + 1);
+}
 
-    foreach (splitArgumentSegments($tokens, $openIndex, $closeIndex) as [$start, $end]) {
-        if (
-            $end - $start < 2
-            || $tokens[$start]['id'] !== T_STRING
-            || $tokens[$start + 1]['text'] !== ':'
-        ) {
-            continue;
-        }
+function tokenRangeSignature(array $tokens, int $start, int $end): string
+{
+    $parts = [];
+    for ($index = $start; $index <= $end; $index += 1) {
+        $parts[] = ($tokens[$index]['id'] ?? 0) . ':' . $tokens[$index]['text'];
+    }
 
-        $expressionStart = $start + 2;
-        $expressionEnd = $end;
+    return implode('|', $parts);
+}
+
+function callArguments(array $tokens, int $openIndex, int $closeIndex, string $source): array
+{
+    $named = [];
+    $positional = [];
+
+    foreach (splitArgumentSegments($tokens, $openIndex, $closeIndex) as $segmentIndex => [$start, $end]) {
+        $isNamed = $end - $start >= 2
+            && $tokens[$start]['id'] === T_STRING
+            && $tokens[$start + 1]['text'] === ':';
+        $expressionStart = $isNamed ? $start + 2 : $start;
         $byteStart = $tokens[$expressionStart]['start'];
-        $byteEnd = $tokens[$expressionEnd]['end'];
-
-        $arguments[$tokens[$start]['text']] = [
+        $byteEnd = $tokens[$end]['end'];
+        $argument = [
             'expression' => trim(substr($source, $byteStart, $byteEnd - $byteStart)),
+            'signature' => tokenRangeSignature($tokens, $expressionStart, $end),
+            'hasCallbackBody' => segmentContainsCallbackBody($tokens, $expressionStart, $end),
             'startByte' => $byteStart,
             'endByte' => $byteEnd,
         ];
+
+        if ($isNamed) {
+            $named[$tokens[$start]['text']] = $argument;
+        } else {
+            $positional[$segmentIndex] = $argument;
+        }
     }
 
-    return $arguments;
+    return ['named' => $named, 'positional' => $positional];
+}
+
+/**
+ * 取得 call receiver 起點；`$this->db->transaction(` 會回溯到 `$this`。
+ */
+function receiverStartIndex(array $tokens, int $index): int
+{
+    while (
+        $index >= 2
+        && in_array($tokens[$index - 1]['id'], [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR], true)
+        && tokenIsName($tokens[$index - 2])
+    ) {
+        $index -= 2;
+    }
+
+    return $index;
 }
 
 function extractCalls(string $source, string $path): array
 {
     $tokens = significantTokens($source);
     $calls = [];
+    $enclosingCloseIndexes = [];
+    $objectOperators = [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR];
 
     for ($index = 0; $index + 3 < count($tokens); $index += 1) {
+        while ($enclosingCloseIndexes !== [] && end($enclosingCloseIndexes) < $index) {
+            array_pop($enclosingCloseIndexes);
+        }
+
         $left = $tokens[$index];
         $operator = $tokens[$index + 1];
         $method = $tokens[$index + 2];
         $open = $tokens[$index + 3];
 
+        $isChained = $left['text'] === ')' && in_array($operator['id'], $objectOperators, true);
         if (
-            !tokenIsName($left)
-            || !in_array($operator['id'], [T_OBJECT_OPERATOR, T_DOUBLE_COLON], true)
+            (!$isChained && !tokenIsName($left))
+            || !in_array($operator['id'], [...$objectOperators, T_DOUBLE_COLON], true)
             || $method['id'] !== T_STRING
             || $open['text'] !== '('
         ) {
@@ -260,34 +300,51 @@ function extractCalls(string $source, string $path): array
             continue;
         }
 
-        $callee = $left['text'] . $operator['text'] . $method['text'];
+        if ($isChained) {
+            $receiverIndex = $index + 1;
+            $callee = $operator['text'] . $method['text'];
+        } else {
+            $receiverIndex = receiverStartIndex($tokens, $index);
+            $callee = '';
+            for ($part = $receiverIndex; $part <= $index + 2; $part += 1) {
+                $callee .= $tokens[$part]['text'];
+            }
+        }
+
+        $isNested = $enclosingCloseIndexes !== [];
         $callEnd = $tokens[$closeIndex]['end'];
         $statementEnd = $callEnd;
         if (($tokens[$closeIndex + 1]['text'] ?? null) === ';') {
             $statementEnd = $tokens[$closeIndex + 1]['end'];
         }
 
-        $previousText = $tokens[$index - 1]['text'] ?? null;
-        $isStandaloneStatement = $statementEnd > $callEnd
+        $previousText = $tokens[$receiverIndex - 1]['text'] ?? null;
+        $isStandaloneStatement = !$isChained
+            && $statementEnd > $callEnd
             && (
-                $index === 0
+                $receiverIndex === 0
                 || in_array($previousText, ['{', '}', ';', ':'], true)
             );
+        // 巢狀 / 鏈式 call 只輸出 fact，不參與 masking，避免 mask range 重疊或放寬 completeness。
         $canMaskAsAtomicStatement = $isStandaloneStatement
+            && !$isNested
             && !callContainsCallbackBody($tokens, $index + 3, $closeIndex);
+        $arguments = callArguments($tokens, $index + 3, $closeIndex, $source);
 
         $calls[] = [
             'callee' => $callee,
-            'subject' => subjectAtOffset($tokens, $left['start'], $path),
-            'startByte' => $left['start'],
+            'subject' => subjectAtOffset($tokens, $tokens[$receiverIndex]['start'], $path),
+            'startByte' => $tokens[$receiverIndex]['start'],
             'endByte' => $callEnd,
             'statementEndByte' => $statementEnd,
             'isStandaloneStatement' => $isStandaloneStatement,
             'canMaskAsAtomicStatement' => $canMaskAsAtomicStatement,
-            'namedArguments' => namedArguments($tokens, $index + 3, $closeIndex, $source),
+            'canMaskArguments' => !$isNested && !$isChained,
+            'namedArguments' => $arguments['named'],
+            'positionalArguments' => $arguments['positional'],
         ];
 
-        $index = $closeIndex;
+        $enclosingCloseIndexes[] = $closeIndex;
     }
 
     return $calls;
@@ -317,6 +374,39 @@ function makeFactId(
         0,
         20,
     );
+}
+
+function argumentChangedFact(
+    string $path,
+    array $afterCall,
+    string $argument,
+    array $beforeArgument,
+    array $afterArgument,
+): array {
+    return [
+        'id' => makeFactId(
+            'CALL_ARGUMENT_CHANGED',
+            $path,
+            $afterCall['subject'],
+            $afterCall['callee'] . ':' . $argument,
+            $afterArgument['startByte'],
+            $afterArgument['endByte'],
+        ),
+        'kind' => 'CALL_ARGUMENT_CHANGED',
+        'subject' => $afterCall['subject'],
+        'properties' => [
+            'callee' => $afterCall['callee'],
+            'argument' => $argument,
+            'before' => $beforeArgument['expression'],
+            'after' => $afterArgument['expression'],
+            'changeSide' => 'after',
+        ],
+        'provenance' => [
+            'path' => $path,
+            'startByte' => $afterArgument['startByte'],
+            'endByte' => $afterArgument['endByte'],
+        ],
+    ];
 }
 
 function maskRanges(string $source, array $ranges): string
@@ -412,49 +502,45 @@ foreach ($beforeGroups as $key => $beforeGroup) {
         $beforeCall = $beforeGroup[$pairIndex];
         $afterCall = $afterGroup[$pairIndex];
 
+        $canMask = $beforeCall['canMaskArguments'] && $afterCall['canMaskArguments'];
+
         foreach ($beforeCall['namedArguments'] as $argument => $beforeArgument) {
             $afterArgument = $afterCall['namedArguments'][$argument] ?? null;
             if (
                 $afterArgument === null
-                || $beforeArgument['expression'] === $afterArgument['expression']
+                || $beforeArgument['signature'] === $afterArgument['signature']
             ) {
                 continue;
             }
 
-            $facts[] = [
-                'id' => makeFactId(
-                    'CALL_ARGUMENT_CHANGED',
-                    $path,
-                    $afterCall['subject'],
-                    $afterCall['callee'] . ':' . $argument,
+            $facts[] = argumentChangedFact($path, $afterCall, $argument, $beforeArgument, $afterArgument);
+            if ($canMask) {
+                $maskBefore[] = [
+                    $beforeArgument['startByte'],
+                    $beforeArgument['endByte'],
+                    '__RDE_MASK__',
+                ];
+                $maskAfter[] = [
                     $afterArgument['startByte'],
                     $afterArgument['endByte'],
-                ),
-                'kind' => 'CALL_ARGUMENT_CHANGED',
-                'subject' => $afterCall['subject'],
-                'properties' => [
-                    'callee' => $afterCall['callee'],
-                    'argument' => $argument,
-                    'before' => $beforeArgument['expression'],
-                    'after' => $afterArgument['expression'],
-                    'changeSide' => 'after',
-                ],
-                'provenance' => [
-                    'path' => $path,
-                    'startByte' => $afterArgument['startByte'],
-                    'endByte' => $afterArgument['endByte'],
-                ],
-            ];
-            $maskBefore[] = [
-                $beforeArgument['startByte'],
-                $beforeArgument['endByte'],
-                '__RDE_MASK__',
-            ];
-            $maskAfter[] = [
-                $afterArgument['startByte'],
-                $afterArgument['endByte'],
-                '__RDE_MASK__',
-            ];
+                    '__RDE_MASK__',
+                ];
+            }
+        }
+
+        // 位置參數變更只輸出 fact 供 interpreter 判讀，不 mask：completeness 維持 fail-closed。
+        foreach ($beforeCall['positionalArguments'] as $position => $beforeArgument) {
+            $afterArgument = $afterCall['positionalArguments'][$position] ?? null;
+            if (
+                $afterArgument === null
+                || $beforeArgument['hasCallbackBody']
+                || $afterArgument['hasCallbackBody']
+                || $beforeArgument['signature'] === $afterArgument['signature']
+            ) {
+                continue;
+            }
+
+            $facts[] = argumentChangedFact($path, $afterCall, '#' . $position, $beforeArgument, $afterArgument);
         }
     }
 

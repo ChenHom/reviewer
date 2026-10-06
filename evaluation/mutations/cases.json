@@ -51,6 +51,115 @@
     "expectedFactKinds": []
   },
   {
+    "id": "MUT-005",
+    "classification": "critical",
+    "fixture": "fq-transaction-removed",
+    "path": "app/Entities/Observers/FreezeObserver.php",
+    "description": "Fully-qualified \\DB::transaction wrapper is removed around a cash-flow debit.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedFactKinds": [
+      "CALL_REMOVED"
+    ],
+    "expectedReasons": [
+      "TRANSACTION_BOUNDARY_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-006",
+    "classification": "critical",
+    "fixture": "begin-commit-removed",
+    "path": "app/Services/CheckoutService.php",
+    "description": "\\DB::beginTransaction and \\DB::commit are removed from a settlement loop.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedFactKinds": [
+      "CALL_REMOVED"
+    ],
+    "expectedReasons": [
+      "TRANSACTION_BOUNDARY_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-007",
+    "classification": "critical",
+    "fixture": "rollback-removed",
+    "path": "app/Services/CheckoutService.php",
+    "description": "\\DB::rollBack is removed from the settlement error path.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedFactKinds": [
+      "CALL_REMOVED"
+    ],
+    "expectedReasons": [
+      "TRANSACTION_ROLLBACK_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-008",
+    "classification": "critical",
+    "fixture": "row-lock-removed",
+    "path": "app/Entities/Observers/FreezeObserver.php",
+    "description": "Chained lockForUpdate() is removed inside a transaction closure.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedFactKinds": [
+      "CALL_REMOVED"
+    ],
+    "expectedReasons": [
+      "ROW_LOCK_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-009",
+    "classification": "critical",
+    "fixture": "signature-verification-removed",
+    "path": "app/Adapters/ChannelNotify/IwpNotifyHandler.php",
+    "description": "Payment callback signature verification guard is removed.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedFactKinds": [
+      "CALL_REMOVED"
+    ],
+    "expectedReasons": [
+      "SIGNATURE_VERIFICATION_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-010",
+    "classification": "critical",
+    "fixture": "route-middleware-removed",
+    "path": "routes/web.php",
+    "description": "auth:admin middleware is removed from a Route::group.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedFactKinds": [
+      "CALL_ARGUMENT_CHANGED"
+    ],
+    "expectedReasons": [
+      "MIDDLEWARE_GUARD_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-011",
+    "classification": "critical",
+    "fixture": "controller-middleware-removed",
+    "path": "app/Http/Controllers/Auth/LoginController.php",
+    "description": "$this->middleware(auth:admin) is removed from a controller constructor.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedFactKinds": [
+      "CALL_REMOVED"
+    ],
+    "expectedReasons": [
+      "MIDDLEWARE_GUARD_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-012",
+    "classification": "critical",
+    "fixture": "balance-sign-flip",
+    "path": "app/Entities/Observers/FreezeObserver.php",
+    "description": "Cash-flow debit flips to a credit (- to +); no domain interpreter, must fall back to human review.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedFactKinds": [
+      "CALL_ARGUMENT_CHANGED"
+    ]
+  },
+  {
     "id": "SAFE-001",
     "classification": "safe",
     "fixture": "format-only",
@@ -66,6 +175,15 @@
     "path": "app/Services/ExampleService.php",
     "description": "Local variable rename with all references updated; currently unsupported.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedFactKinds": []
+  },
+  {
+    "id": "SAFE-003",
+    "classification": "safe",
+    "fixture": "transaction-format-only",
+    "path": "app/Entities/Observers/FreezeObserver.php",
+    "description": "Comment and line-wrapping change inside a \\DB::transaction closure.",
+    "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
     "expectedFactKinds": []
   }
 ]
