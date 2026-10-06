@@ -103,6 +103,8 @@ export function runAnalysis(input = {}) {
     eligibility,
     decision,
     errors: [],
+    ...(input.semanticFacts !== undefined ? { semanticFacts: input.semanticFacts } : {}),
+    ...(input.factAssessment !== undefined ? { factAssessment: input.factAssessment } : {}),
     ...(Object.keys(factLayers).length > 1 ? { factLayers } : {}),
   };
 }
@@ -220,11 +222,11 @@ export async function runStoredSafetyMvpWithGithub(
  *
  * @param {object} result - 含 identity 與 AdapterResult 的輸入，或 raw AdapterResult。
  * @param {{valid: boolean, errors: string[]}} validation - AdapterResult validation。
- * @param {function[]} [factInterpreters=[]] - 受信任 semantic fact interpreters。
+ * @param {object[]} [factInterpreters=[]] - 具 id/version 的 semantic fact interpreters。
  * @returns {object} 可交給 Safety MVP 的 normalized input。
  */
 function prepareAdapterAnalysisInput(result, validation, factInterpreters = []) {
-  const normalized = normalizeAdapterResult(result, validation);
+  const normalized = normalizeAdapterResult(result, validation, factInterpreters);
   if (normalized.analysisError) return normalized;
 
   const factAssessment = interpretSemanticFacts(
