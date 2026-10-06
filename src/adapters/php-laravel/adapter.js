@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -17,6 +18,13 @@ const DEFAULT_ANALYZER_PATH = fileURLToPath(
   new URL('../../../analyzers/php/bin/analyze.php', import.meta.url),
 );
 
+/**
+ * 建立 fail-closed terminal AdapterResult。
+ *
+ * @param {string} code - stable failure/reason code。
+ * @param {string} [status='FAILED'] - Adapter terminal status。
+ * @returns {object} terminal AdapterResult。
+ */
 function terminalResult(code, status = 'FAILED') {
   return {
     adapterSet: [PHP_LARAVEL_ADAPTER_DESCRIPTOR],
@@ -35,6 +43,14 @@ function terminalResult(code, status = 'FAILED') {
   };
 }
 
+/**
+ * 建立目前 head source 的 changed region。
+ *
+ * @param {string} path - repository path。
+ * @param {string} source - head PHP source。
+ * @param {string} phpVersion - PHP runtime version。
+ * @returns {object|null} changed region；空檔案回傳 null。
+ */
 function changedRegion(path, source, phpVersion) {
   const endByte = Buffer.byteLength(source, 'utf8');
   if (endByte === 0) return null;
@@ -54,6 +70,16 @@ function changedRegion(path, source, phpVersion) {
   };
 }
 
+/**
+ * 透過 PHP CLI 執行 analyzer，並解析 JSON stdout。
+ *
+ * @param {object} options - analyzer execution options。
+ * @param {string} options.analyzerPath - analyzer PHP script path。
+ * @param {string} options.phpBinary - PHP executable。
+ * @param {object} options.payload - analyzer stdin payload。
+ * @param {AbortSignal|undefined} options.signal - abort signal。
+ * @returns {Promise<object>} analyzer JSON result。
+ */
 function executePhpAnalyzer({
   analyzerPath,
   phpBinary,
