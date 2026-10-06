@@ -4,6 +4,7 @@ import { URL } from 'node:url';
 
 import { createAnalysisContextBinding } from '../../src/adapters/contracts.js';
 import { createPhpLaravelAdapter } from '../../src/adapters/php-laravel/adapter.js';
+import { PHP_LARAVEL_DOMAIN_INTERPRETERS } from '../../src/interpreters/php-laravel-domain.js';
 import { createAuthorityState } from '../../src/publication.js';
 import { runAdapterPipeline } from '../../src/runner.js';
 import {
@@ -79,13 +80,19 @@ async function executeCase(definition) {
   const adapterResult = await adapter.analyze(request);
   const authorityState = createAuthorityState(
     identity,
-    createAnalysisContextBinding(adapterResult),
+    createAnalysisContextBinding(
+      adapterResult,
+      PHP_LARAVEL_DOMAIN_INTERPRETERS,
+    ),
   );
   const pipeline = await runAdapterPipeline(
     adapter,
     request,
     authorityState,
-    { timeoutMs: 2_000 },
+    {
+      timeoutMs: 2_000,
+      factInterpreters: PHP_LARAVEL_DOMAIN_INTERPRETERS,
+    },
   );
 
   return {
