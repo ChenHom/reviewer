@@ -1,6 +1,81 @@
 import { stableStrings } from '../contracts.js';
 
 /**
+ * canonicalize interpreter identity set。
+ *
+ * @param {object[]} [interpreters=[]] - interpreter descriptors 或 identity set。
+ * @returns {{id: string, version: string}[]} sorted identity set。
+ */
+export function canonicalInterpreterSet(interpreters = []) {
+  return interpreters
+    .map(({ id, version }) => ({ id, version }))
+    .sort((left, right) =>
+      left.id < right.id ? -1 : left.id > right.id ? 1
+        : left.version < right.version ? -1 : left.version > right.version ? 1 : 0);
+}
+
+/**
+ * 驗證 context binding 中的 interpreter identity set。
+ *
+ * @param {unknown} interpreterSet - identity descriptors。
+ * @returns {{valid: boolean, errors: string[]}} validation result。
+ */
+export function validateInterpreterIdentitySet(interpreterSet) {
+  if (!Array.isArray(interpreterSet)) {
+    return { valid: false, errors: ['INTERPRETER_SET_INVALID'] };
+  }
+
+  const errors = [];
+  const ids = interpreterSet.map((item) => item?.id);
+  if (new Set(ids).size !== ids.length) errors.push('INTERPRETER_SET_DUPLICATE_ID');
+
+  for (const item of interpreterSet) {
+    const id = typeof item?.id === 'string' && item.id.trim() !== '' ? item.id : 'unknown';
+    if (id === 'unknown') errors.push('INTERPRETER_ID_MISSING');
+    if (typeof item?.version !== 'string' || item.version.trim() === '') {
+      errors.push(`INTERPRETER_VERSION_MISSING:${id}`);
+    }
+    if (
+      item
+      && typeof item === 'object'
+      && Object.keys(item).some((key) => !['id', 'version'].includes(key))
+    ) {
+      errors.push(`INTERPRETER_IDENTITY_INVALID:${id}`);
+    }
+  }
+
+  const stableErrors = stableStrings(errors);
+  return { valid: stableErrors.length === 0, errors: stableErrors };
+}
+
+/**
+ * 驗證 executable fact interpreter descriptors。
+ *
+ * @param {unknown} interpreters - interpreter descriptors。
+ * @returns {{valid: boolean, errors: string[]}} validation result。
+ */
+export function validateFactInterpreters(interpreters) {
+  if (!Array.isArray(interpreters)) {
+    return { valid: false, errors: ['INTERPRETER_SET_INVALID'] };
+  }
+
+  const identityValidation = validateInterpreterIdentitySet(
+    interpreters.map((item) => ({ id: item?.id, version: item?.version })),
+  );
+  const errors = [...identityValidation.errors];
+
+  for (const item of interpreters) {
+    const id = typeof item?.id === 'string' && item.id.trim() !== '' ? item.id : 'unknown';
+    if (!item || typeof item !== 'object' || typeof item.interpret !== 'function') {
+      errors.push(`INTERPRETER_EXECUTABLE_MISSING:${id}`);
+    }
+  }
+
+  const stableErrors = stableStrings(errors);
+  return { valid: stableErrors.length === 0, errors: stableErrors };
+}
+
+/**
  * 驗證單一 interpreter result。
  *
  * @param {unknown} result - interpreter 回傳值。
@@ -26,11 +101,11 @@ function isHandledResult(result) {
 /**
  * 執行 provider-neutral semantic fact interpretation。
  *
- * Interpreter 是 policy/analyzer boundary，不是 Adapter 的一部分。
+ * Interpreter 必須提供 id/version/interpret；id/version 會進 AnalysisContextBinding。
  * 任一 fact 若沒有受信任 interpreter 處理，必須 fail-closed 成為 blocker。
  *
  * @param {object[]} [facts=[]] - normalized semantic facts。
- * @param {function[]} [interpreters=[]] - 受信任 interpreter functions。
+ * @param {object[]} [interpreters=[]] - 受信任 interpreter descriptors。
  * @param {object} [context={}] - identity/context binding。
  * @returns {{
  *   handledFactIds: string[],
@@ -51,14 +126,15 @@ export function interpretSemanticFacts(facts = [], interpreters = [], context = 
     };
   }
 
-  if (!Array.isArray(interpreters) || interpreters.some((item) => typeof item !== 'function')) {
+  const interpreterValidation = validateFactInterpreters(interpreters);
+  if (!interpreterValidation.valid) {
     return {
       handledFactIds: [],
       unhandledFactIds: facts
         .map((fact) => fact?.id)
         .filter((id) => typeof id === 'string')
         .sort(),
-      blockers: ['ANALYZER_FACT_INTERPRETER_INVALID'],
+      blockers: ['ANALYZER_FACT_INTERPRETER_SET_INVALID'],
     };
   }
 
@@ -68,10 +144,10 @@ export function interpretSemanticFacts(facts = [], interpreters = [], context = 
     for (const interpreter of interpreters) {
       let result;
       try {
-        result = interpreter(fact, context);
+        result = interpreter.interpret(fact, context);
       } catch {
         handled = true;
-        blockers.push(`ANALYZER_FACT_INTERPRETER_FAILED:${fact.id}`);
+        blockers.push(`ANALYZER_FACT_INTERPRETER_FAILED:${interpreter.id}:${fact.id}`);
         continue;
       }
 
@@ -81,7 +157,9 @@ export function interpretSemanticFacts(facts = [], interpreters = [], context = 
 
       handled = true;
       if (!isHandledResult(result)) {
-        blockers.push(`ANALYZER_FACT_INTERPRETER_INVALID_RESULT:${fact.id}`);
+        blockers.push(
+          `ANALYZER_FACT_INTERPRETER_INVALID_RESULT:${interpreter.id}:${fact.id}`,
+        );
         continue;
       }
 
