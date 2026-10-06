@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { stableStrings } from '../contracts.js';
+import { validateSemanticFacts } from '../facts/contracts.js';
 
 export const ADAPTER_STATUSES = Object.freeze([
   'COMPLETE',
@@ -15,6 +16,7 @@ export const ADAPTER_CAPABILITIES = Object.freeze([
   'runtime-context',
   'coverage-obligations',
   'evidence-references',
+  'semantic-facts',
 ]);
 
 const adapterCapabilities = new Set(ADAPTER_CAPABILITIES);
@@ -278,6 +280,7 @@ export function validateAdapterResult(result) {
     ...validateObligations(result?.obligations, adapters),
     ...validateResultStringList(result?.diagnostics, 'DIAGNOSTICS'),
     ...validateResultStringList(result?.evidenceReferences, 'EVIDENCE_REFERENCES'),
+    ...validateSemanticFacts(result?.facts, result?.adapterSet).errors,
     ...validateResultCompleteness(result),
   ]);
 
@@ -344,6 +347,7 @@ export function validateAnalysisContextBinding(binding) {
     complete: true,
     diagnostics: [],
     evidenceReferences: [],
+    facts: [],
   }).errors;
   const adapterIdentity = Array.isArray(binding.adapterSet)
     ? binding.adapterSet.map((adapter) => ({ id: adapter?.id, version: adapter?.version }))

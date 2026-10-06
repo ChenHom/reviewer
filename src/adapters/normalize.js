@@ -38,6 +38,55 @@ function compareRegions(left, right) {
 }
 
 /**
+ * 將 fact properties 轉為 key 穩定排序的 JSON-compatible value。
+ *
+ * @param {unknown} value - properties value。
+ * @returns {unknown} canonical value。
+ */
+function canonicalizeFactValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalizeFactValue);
+  if (!value || typeof value !== 'object') return value;
+
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort(compareText)
+      .map((key) => [key, canonicalizeFactValue(value[key])]),
+  );
+}
+
+/**
+ * 將 semantic facts 正規化為 deterministic 順序與穩定 properties。
+ *
+ * @param {object[]} [facts=[]] - 已通過 contract validation 的 semantic facts。
+ * @returns {object[]} normalized semantic facts。
+ */
+function normalizeSemanticFacts(facts = []) {
+  return facts
+    .map((fact) => ({
+      id: fact.id,
+      kind: fact.kind,
+      subject: fact.subject,
+      properties: canonicalizeFactValue(fact.properties),
+      provenance: {
+        path: fact.provenance.path,
+        startByte: fact.provenance.startByte,
+        endByte: fact.provenance.endByte,
+      },
+      source: {
+        adapterId: fact.source.adapterId,
+        adapterVersion: fact.source.adapterVersion,
+      },
+    }))
+    .sort((left, right) =>
+      compareText(left.provenance.path, right.provenance.path)
+      || left.provenance.startByte - right.provenance.startByte
+      || left.provenance.endByte - right.provenance.endByte
+      || compareText(left.kind, right.kind)
+      || compareText(left.subject, right.subject)
+      || compareText(left.id, right.id));
+}
+
+/**
  * 將 AdapterResult wrapper 解出 AdapterResult 與 AnalysisIdentity。
  *
  * @param {object|undefined} input - AdapterResult 或含 identity 的 wrapper。
@@ -105,6 +154,7 @@ export function normalizeAdapterResult(input, validation = undefined) {
     coverage: {
       obligations: adapterResult.obligations.map(normalizeObligation),
     },
+    semanticFacts: normalizeSemanticFacts(adapterResult.facts ?? []),
     riskBlockers: [],
     policyRequirements: [],
     audit: false,
