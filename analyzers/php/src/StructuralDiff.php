@@ -29,6 +29,9 @@ final class StructuralDiff
     /** @var array<string, int> fact budget：kind|subject|callee(|argument) → 可消耗次數 */
     private array $budget = [];
 
+    /** 已消耗的 call fact 次數（與 $facts 一起構成「已解釋」的證據） */
+    private int $consumed = 0;
+
     private Canonicalizer $beforeHasher;
 
     private Canonicalizer $afterHasher;
@@ -59,7 +62,7 @@ final class StructuralDiff
             $key = self::budgetKey(
                 $fact['kind'],
                 $fact['subject'],
-                $fact['properties']['callee'],
+                $fact['calleeKey'],
                 $fact['properties']['argument'] ?? null,
             );
             $this->budget[$key] = ($this->budget[$key] ?? 0) + 1;
@@ -75,6 +78,17 @@ final class StructuralDiff
     {
         $this->compareList($before, $after, 'stmts', 'file');
 
+        // Soundness 不變式：AST 不同時，必須至少有一個差異被 fact 解釋或被標為未解釋。
+        // 防止遞迴比對與 canonical hash 的判斷標準不一致時，把不同的程式判為無 fact 的 COMPLETE。
+        if (
+            $this->unexplained === []
+            && $this->facts === []
+            && $this->consumed === 0
+            && !$this->same($before, $after)
+        ) {
+            $this->unexplained('invariant', null);
+        }
+
         return ['facts' => $this->facts, 'unexplained' => $this->unexplained];
     }
 
@@ -85,11 +99,12 @@ final class StructuralDiff
 
     private function consume(string $kind, array $call, ?string $argument = null): bool
     {
-        $key = self::budgetKey($kind, $call['subject'], $call['callee'], $argument);
+        $key = self::budgetKey($kind, $call['subject'], $call['calleeKey'], $argument);
         if (($this->budget[$key] ?? 0) < 1) {
             return false;
         }
         $this->budget[$key] -= 1;
+        $this->consumed += 1;
 
         return true;
     }
@@ -122,6 +137,12 @@ final class StructuralDiff
 
         if ($before::class !== $after::class) {
             $this->compareDifferentTypes($before, $after, $container);
+            return;
+        }
+
+        // Variable 的 hash 用 canonical 名稱（VariableScopes）；hash 不同時不可再遞迴比較原始名稱字串。
+        if ($before instanceof Expr\Variable) {
+            $this->unexplained('variable', $before);
             return;
         }
 
@@ -334,7 +355,7 @@ final class StructuralDiff
         if ($before instanceof Stmt\Expression && $this->isCall($before->expr) && $this->isCall($after->expr)) {
             $beforeCall = $this->beforeCalls[spl_object_id($before->expr)] ?? null;
             $afterCall = $this->afterCalls[spl_object_id($after->expr)] ?? null;
-            return $beforeCall !== null && $afterCall !== null && $beforeCall['callee'] === $afterCall['callee'];
+            return $beforeCall !== null && $afterCall !== null && $beforeCall['calleeKey'] === $afterCall['calleeKey'];
         }
         foreach (['name'] as $identity) {
             if (property_exists($before, $identity) && $before->$identity instanceof Node && !$before instanceof Expr) {

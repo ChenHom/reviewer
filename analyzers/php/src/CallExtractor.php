@@ -140,13 +140,15 @@ final class CallExtractor
             }
             $startPosition = $operatorPosition;
             $callee = $operator . $methodName;
+            $calleeKey = $callee;
         } else {
             $described = $this->receiverText($receiver);
             if ($described === null || $receiver->getEndTokenPos() !== $leftPosition) {
                 return;
             }
-            [$receiverText, $startPosition] = $described;
+            [$receiverText, $startPosition, $receiverKey] = $described;
             $callee = $receiverText . $operator . $methodName;
+            $calleeKey = $receiverKey . $operator . $methodName;
         }
 
         $openPosition = $this->nextSignificantPosition($node->name->getEndTokenPos());
@@ -164,6 +166,8 @@ final class CallExtractor
             'nodeId' => spl_object_id($node),
             'hasCallbackBody' => $hasCallbackBody,
             'callee' => $callee,
+            // 配對用 key：receiver 中可改名的區域變數換成 canonical 名稱。
+            'calleeKey' => $calleeKey,
             'subject' => $this->subject($class, $function),
             'startByte' => $this->tokens[$startPosition]->pos,
             'endByte' => $callEnd,
@@ -178,13 +182,13 @@ final class CallExtractor
      * 與舊 token extractor 相容：只沿 `->` / `?->` 回溯連續的名稱 token，
      * 遇到非名稱（如 `foo()->bar`）時只保留最長的名稱後綴（`bar`）。
      *
-     * @return array{0: string, 1: int}|null
+     * @return array{0: string, 1: int, 2: string}|null [文字, 起始 token, canonical key]
      */
     private function receiverText(Node $receiver): ?array
     {
         if ($receiver instanceof Expr\Variable) {
             return is_string($receiver->name)
-                ? ['$' . $receiver->name, $receiver->getStartTokenPos()]
+                ? ['$' . $receiver->name, $receiver->getStartTokenPos(), '$' . $this->hasher->variableName($receiver)]
                 : null;
         }
         if (
@@ -194,26 +198,28 @@ final class CallExtractor
             $name = $receiver->name->toString();
             $base = $this->receiverText($receiver->var);
             if ($base === null) {
-                return [$name, $receiver->name->getStartTokenPos()];
+                return [$name, $receiver->name->getStartTokenPos(), $name];
             }
             $operator = $receiver instanceof Expr\NullsafePropertyFetch ? '?->' : '->';
-            return [$base[0] . $operator . $name, $base[1]];
+            return [$base[0] . $operator . $name, $base[1], $base[2] . $operator . $name];
         }
         if ($receiver instanceof Expr\StaticPropertyFetch && $receiver->name instanceof Node\VarLikeIdentifier) {
-            return ['$' . $receiver->name->toString(), $receiver->name->getStartTokenPos()];
+            $text = '$' . $receiver->name->toString();
+            return [$text, $receiver->name->getStartTokenPos(), $text];
         }
         if (
             $receiver instanceof Expr\ClassConstFetch
             && $receiver->name instanceof Identifier
             && strtolower($receiver->name->toString()) !== 'class'
         ) {
-            return [$receiver->name->toString(), $receiver->name->getStartTokenPos()];
+            $text = $receiver->name->toString();
+            return [$text, $receiver->name->getStartTokenPos(), $text];
         }
         if ($receiver instanceof Name) {
             $position = $receiver->getStartTokenPos();
             $token = $this->tokens[$position];
             $nameTokens = [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED, T_NAME_RELATIVE];
-            return in_array($token->id, $nameTokens, true) ? [$token->text, $position] : null;
+            return in_array($token->id, $nameTokens, true) ? [$token->text, $position, $token->text] : null;
         }
 
         return null;

@@ -196,6 +196,24 @@
     ]
   },
   {
+    "id": "MUT-015",
+    "classification": "critical",
+    "fixture": "param-rename",
+    "path": "app/Services/FreezeService.php",
+    "description": "Method parameter is renamed consistently; parameter names are public API under PHP 8 named arguments.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedFactKinds": []
+  },
+  {
+    "id": "MUT-016",
+    "classification": "critical",
+    "fixture": "variable-merge",
+    "path": "app/Services/FeeService.php",
+    "description": "Two locals are merged into one name, so the fee is no longer subtracted.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedFactKinds": []
+  },
+  {
     "id": "SAFE-001",
     "classification": "safe",
     "fixture": "format-only",
@@ -209,8 +227,8 @@
     "classification": "safe",
     "fixture": "safe-local-rename",
     "path": "app/Services/ExampleService.php",
-    "description": "Local variable rename with all references updated; currently unsupported.",
-    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "description": "Local variable rename with all references updated (scope-aware alpha-equivalence).",
+    "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
     "expectedFactKinds": []
   },
   {

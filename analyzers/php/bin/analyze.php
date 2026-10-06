@@ -9,6 +9,7 @@ use Reviewer\PhpAnalyzer\CallExtractor;
 use Reviewer\PhpAnalyzer\CallFacts;
 use Reviewer\PhpAnalyzer\Canonicalizer;
 use Reviewer\PhpAnalyzer\StructuralDiff;
+use Reviewer\PhpAnalyzer\VariableScopes;
 
 function respond(array $payload, int $exitCode = 0): never
 {
@@ -109,24 +110,65 @@ try {
     ]);
 }
 
-$beforeHasher = new Canonicalizer();
-$afterHasher = new Canonicalizer();
-$beforeCalls = CallExtractor::extract($beforeAst, $beforeTokens, $beforeSource, $path, $beforeHasher);
-$afterCalls = CallExtractor::extract($afterAst, $afterTokens, $afterSource, $path, $afterHasher);
-$callFacts = CallFacts::build($path, $beforeCalls, $afterCalls);
+/**
+ * 以指定的變數命名方式分析一次：回傳 call facts、結構性 facts 與未解釋差異。
+ *
+ * @param array<int, string> $beforeNames
+ * @param array<int, string> $afterNames
+ * @return array{facts: list<array<string, mixed>>, unexplained: list<array{string, int}>}
+ */
+function analyzePair(
+    string $path,
+    string $beforeSource,
+    string $afterSource,
+    array $beforeAst,
+    array $afterAst,
+    array $beforeTokens,
+    array $afterTokens,
+    array $beforeNames,
+    array $afterNames,
+): array {
+    $beforeHasher = new Canonicalizer($beforeNames);
+    $afterHasher = new Canonicalizer($afterNames);
+    $beforeCalls = CallExtractor::extract($beforeAst, $beforeTokens, $beforeSource, $path, $beforeHasher);
+    $afterCalls = CallExtractor::extract($afterAst, $afterTokens, $afterSource, $path, $afterHasher);
+    $callFacts = CallFacts::build($path, $beforeCalls, $afterCalls);
 
-$diff = (new StructuralDiff(
-    $path,
-    $beforeSource,
-    $afterSource,
-    array_column($beforeCalls, null, 'nodeId'),
-    array_column($afterCalls, null, 'nodeId'),
-    $callFacts,
-    $beforeHasher,
-    $afterHasher,
-))->run($beforeAst, $afterAst);
+    $diff = (new StructuralDiff(
+        $path,
+        $beforeSource,
+        $afterSource,
+        array_column($beforeCalls, null, 'nodeId'),
+        array_column($afterCalls, null, 'nodeId'),
+        $callFacts,
+        $beforeHasher,
+        $afterHasher,
+    ))->run($beforeAst, $afterAst);
 
-$complete = $diff['unexplained'] === [];
+    return ['facts' => [...$callFacts, ...$diff['facts']], 'unexplained' => $diff['unexplained']];
+}
+
+// 先以原始變數名稱比較；不完整時再以 scope-aware canonical 名稱比較（區域變數改名）。
+// 兩種比較各自 sound，只有 canonical 比較能完整解釋時才採用它，其餘維持原始名稱的結果。
+$analysis = analyzePair($path, $beforeSource, $afterSource, $beforeAst, $afterAst, $beforeTokens, $afterTokens, [], []);
+if ($analysis['unexplained'] !== []) {
+    $renamed = analyzePair(
+        $path,
+        $beforeSource,
+        $afterSource,
+        $beforeAst,
+        $afterAst,
+        $beforeTokens,
+        $afterTokens,
+        VariableScopes::canonicalNames($beforeAst),
+        VariableScopes::canonicalNames($afterAst),
+    );
+    if ($renamed['unexplained'] === []) {
+        $analysis = $renamed;
+    }
+}
+
+$complete = $analysis['unexplained'] === [];
 
 respond([
     'ok' => true,
@@ -134,6 +176,12 @@ respond([
     'complete' => $complete,
     'reasonCode' => $complete ? null : 'UNRECOGNIZED_PHP_CHANGE',
     'diagnostics' => $complete ? [] : ['UNRECOGNIZED_PHP_CHANGE'],
-    'facts' => sortedFacts([...$callFacts, ...$diff['facts']]),
+    'facts' => sortedFacts(array_map(
+        static function (array $fact): array {
+            unset($fact['calleeKey']);
+            return $fact;
+        },
+        $analysis['facts'],
+    )),
     'phpVersion' => PHP_VERSION,
 ]);

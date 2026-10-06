@@ -18,6 +18,26 @@ final class Canonicalizer
     /** @var array<int, string> spl_object_id → hash */
     private array $cache = [];
 
+    /**
+     * @param array<int, string> $variableNames spl_object_id(Variable) → canonical 區域變數名稱
+     *        （見 VariableScopes）；未列出的變數使用原名。
+     */
+    public function __construct(private readonly array $variableNames = [])
+    {
+    }
+
+    /**
+     * 回傳變數的 canonical 名稱（不含 `$`）；不可改名的變數回傳原名。
+     */
+    public function variableName(Node\Expr\Variable $variable): ?string
+    {
+        if (!is_string($variable->name)) {
+            return null;
+        }
+
+        return $this->variableNames[spl_object_id($variable)] ?? $variable->name;
+    }
+
     public function hash(mixed $value): string
     {
         if ($value instanceof Node) {
@@ -36,6 +56,9 @@ final class Canonicalizer
         $parts = [$node::class];
         foreach ($node->getSubNodeNames() as $name) {
             $child = $node->$name;
+            if ($name === 'name' && $node instanceof Node\Expr\Variable && isset($this->variableNames[spl_object_id($node)])) {
+                $child = $this->variableNames[spl_object_id($node)];
+            }
             $parts[] = $name . '=' . match (true) {
                 $child instanceof Node => $this->hash($child),
                 is_array($child) => $this->serializeList($child),

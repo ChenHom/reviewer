@@ -72,7 +72,7 @@ final class CallFacts
     {
         $groups = [];
         foreach ($calls as $call) {
-            $groups[$call['subject'] . '|' . $call['callee']][] = $call;
+            $groups[$call['subject'] . '|' . $call['calleeKey']][] = $call;
         }
 
         return $groups;
@@ -105,6 +105,8 @@ final class CallFacts
         int $endByte,
     ): array {
         return [
+            // 內部配對 key（StructuralDiff budget 用），輸出前移除。
+            'calleeKey' => $call['calleeKey'],
             'id' => 'php-' . substr(
                 hash('sha256', implode('|', [$kind, $path, $call['subject'], $detail, $startByte, $endByte])),
                 0,

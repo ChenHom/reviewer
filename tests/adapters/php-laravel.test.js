@@ -368,8 +368,8 @@ test('只有空白差異的參數不產生 fact', async () => {
 
 test('巢狀 call 的 named argument 變更輸出 fact，並由 AST 解釋為完整', async () => {
   const result = await inlineAnalyze(
-    wrap('        \\DB::transaction(function () use ($q) {\n            $q->charge(idempotencyKey: $a);\n        });'),
-    wrap('        \\DB::transaction(function () use ($q) {\n            $q->charge(idempotencyKey: $b);\n        });'),
+    wrap('        \\DB::transaction(function () use ($q) {\n            $q->charge(idempotencyKey: $q->id);\n        });'),
+    wrap('        \\DB::transaction(function () use ($q) {\n            $q->charge(idempotencyKey: $q->uuid);\n        });'),
   );
 
   assert.equal(result.complete, true);
@@ -545,4 +545,77 @@ test('soundness：沒有 fact 時 COMPLETE 只發生在 AST 完全相同', async
       `${before} → ${after} 不可無 fact 地判為 COMPLETE`,
     );
   }
+});
+
+function method(params, body) {
+  return `<?php\n\nclass RenameService\n{\n    public function run(${params})\n    {\n${body}\n    }\n}\n`;
+}
+
+test('scope 內一致的區域變數改名判為 COMPLETE 且無 fact', async () => {
+  const cases = [
+    [
+      method('$id', '        $cash = Cash::find($id);\n        $cash->save();\n        return $cash->amount;'),
+      method('$id', '        $cashRow = Cash::find($id);\n        $cashRow->save();\n        return $cashRow->amount;'),
+    ],
+    [
+      method('$rows', '        $sum = 0;\n        foreach ($rows as $row) {\n            $sum += $row;\n        }\n        return $sum;'),
+      method('$rows', '        $total = 0;\n        foreach ($rows as $item) {\n            $total += $item;\n        }\n        return $total;'),
+    ],
+    [
+      method('$q', '        $limit = 10;\n        return $q->each(function ($x) use ($limit) {\n            return $x < $limit;\n        });'),
+      method('$q', '        $max = 10;\n        return $q->each(function ($x) use ($max) {\n            return $x < $max;\n        });'),
+    ],
+    [
+      method('', "        try {\n            return 1;\n        } catch (\\Exception $e) {\n            report($e);\n        }"),
+      method('', "        try {\n            return 1;\n        } catch (\\Exception $error) {\n            report($error);\n        }"),
+    ],
+    // 一致的交換（bijection）仍等價
+    [
+      method('', '        $a = 1;\n        $b = 2;\n        return $a - $b;'),
+      method('', '        $b = 1;\n        $a = 2;\n        return $b - $a;'),
+    ],
+  ];
+
+  for (const [before, after] of cases) {
+    const result = await inlineAnalyze(before, after);
+    assert.equal(result.complete, true, after);
+    assert.deepEqual(result.facts, [], after);
+  }
+});
+
+test('不安全的改名絕不判為無 fact 的 COMPLETE', async () => {
+  const cases = [
+    ['合併兩個變數', method('', '        $a = 1;\n        $b = 2;\n        return $a + $b;'), method('', '        $a = 1;\n        $a = 2;\n        return $a + $a;')],
+    ['只改部分出現處', method('', '        $a = 1;\n        return $a;'), method('', '        $a = 1;\n        return $b;')],
+    ['參數改名（named argument API）', method('$amount', '        return $amount;'), method('$value', '        return $value;')],
+    ['closure 參數改名', method('$q', '        return $q->map(function ($row) {\n            return $row;\n        });'), method('$q', '        return $q->map(function ($item) {\n            return $item;\n        });')],
+    ['compact 依賴變數名稱', method('', "        $total = 1;\n        return compact('total');"), method('', "        $sum = 1;\n        return compact('total');")],
+    ['variable variable', method('$name', '        $total = 1;\n        return $$name;'), method('$name', '        $sum = 1;\n        return $$name;')],
+    ['extract 寫入區域變數', method('$data', '        extract($data);\n        return $total;'), method('$data', '        extract($data);\n        return $sum;')],
+    ['include 可讀取區域變數', method('', "        $title = 'x';\n        return include 'view.php';"), method('', "        $heading = 'x';\n        return include 'view.php';")],
+    ['global 變數', method('', '        global $config;\n        return $config;'), method('', '        global $settings;\n        return $settings;')],
+    ['magic local', method('', "        file_get_contents('http://x');\n        return $http_response_header;"), method('', "        file_get_contents('http://x');\n        return $headers;")],
+    ['頂層變數是 global', "<?php\n\n$config = 1;\nreturn $config;\n", "<?php\n\n$settings = 1;\nreturn $settings;\n"],
+    ['只改賦值處，字串內仍用舊名', method('$key', '        $token = substr($key, -4);\n        return "token={$token}";'), method('$key', '        $tokenRenamed = substr($key, -4);\n        return "token={$token}";')],
+    ['合併成另一個既有變數', method('', "        $config = load();\n        $payObject = make();\n        return [$config['v'], $payObject];"), method('', "        $payObject = load();\n        $payObject = make();\n        return [$payObject['v'], $payObject];")],
+    ['頂層 closure 的 use 綁定 global', "<?php\n\nreturn function () use ($config) {\n    return $config;\n};\n", "<?php\n\nreturn function () use ($settings) {\n    return $settings;\n};\n"],
+  ];
+
+  for (const [label, before, after] of cases) {
+    const result = await inlineAnalyze(before, after);
+    assert.ok(result.complete === false || result.facts.length > 0, label);
+  }
+});
+
+test('改名同時有其他變更時仍輸出對應 fact', async () => {
+  const result = await inlineAnalyze(
+    method('$id', '        $cash = Cash::find($id);\n        $cash->lock();\n        return $cash->amount < 10;'),
+    method('$id', '        $row = Cash::find($id);\n        return $row->amount <= 10;'),
+  );
+
+  assert.equal(result.complete, true);
+  assert.deepEqual(
+    result.facts.map(({ kind, properties }) => [kind, properties.callee ?? properties.operatorAfter]),
+    [['CALL_REMOVED', '$cash->lock'], ['BINARY_OPERATOR_CHANGED', '<=']],
+  );
 });
