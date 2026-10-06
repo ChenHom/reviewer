@@ -145,6 +145,23 @@ function findClosingParen(array $tokens, int $openIndex): ?int
     return null;
 }
 
+function callContainsCallbackBody(array $tokens, int $openIndex, int $closeIndex): bool
+{
+    $callbackTokenIds = [T_FUNCTION];
+    if (defined('T_FN')) {
+        $callbackTokenIds[] = constant('T_FN');
+    }
+
+    for ($index = $openIndex + 1; $index < $closeIndex; $index += 1) {
+        $id = $tokens[$index]['id'];
+        if ($id !== null && in_array($id, $callbackTokenIds, true)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function splitArgumentSegments(array $tokens, int $openIndex, int $closeIndex): array
 {
     $segments = [];
@@ -256,6 +273,8 @@ function extractCalls(string $source, string $path): array
                 $index === 0
                 || in_array($previousText, ['{', '}', ';', ':'], true)
             );
+        $canMaskAsAtomicStatement = $isStandaloneStatement
+            && !callContainsCallbackBody($tokens, $index + 3, $closeIndex);
 
         $calls[] = [
             'callee' => $callee,
@@ -264,6 +283,7 @@ function extractCalls(string $source, string $path): array
             'endByte' => $callEnd,
             'statementEndByte' => $statementEnd,
             'isStandaloneStatement' => $isStandaloneStatement,
+            'canMaskAsAtomicStatement' => $canMaskAsAtomicStatement,
             'namedArguments' => namedArguments($tokens, $index + 3, $closeIndex, $source),
         ];
 
@@ -462,7 +482,7 @@ foreach ($beforeGroups as $key => $beforeGroup) {
             ],
         ];
 
-        if ($call['isStandaloneStatement']) {
+        if ($call['canMaskAsAtomicStatement']) {
             $maskBefore[] = [$call['startByte'], $call['statementEndByte'], ''];
         }
     }
@@ -491,7 +511,7 @@ foreach ($beforeGroups as $key => $beforeGroup) {
             ],
         ];
 
-        if ($call['isStandaloneStatement']) {
+        if ($call['canMaskAsAtomicStatement']) {
             $maskAfter[] = [$call['startByte'], $call['statementEndByte'], ''];
         }
     }
@@ -525,7 +545,7 @@ foreach ($afterGroups as $key => $afterGroup) {
             ],
         ];
 
-        if ($call['isStandaloneStatement']) {
+        if ($call['canMaskAsAtomicStatement']) {
             $maskAfter[] = [$call['startByte'], $call['statementEndByte'], ''];
         }
     }
