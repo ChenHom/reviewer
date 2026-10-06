@@ -32,14 +32,26 @@ Base: PR-A `feat/semantic-fact-ingress`
 
 例如 `DB::transaction(...)` wrapper 被移除時，Adapter 只輸出 generic `CALL_REMOVED`。若 unwrap 後 closure body 仍存在，遮罩後 signature 不相等，因此保持 `PARTIAL_PARSE`。`DB::transaction` 或 `authorize` 的 domain 意義由後續 interpreter 決定。
 
+## Deterministic Domain Interpreters
+
+PR-B 同時包含第一批 deterministic domain interpreters；Adapter 仍只輸出 generic facts：
+
+- `CALL_ARGUMENT_CHANGED` + `argument=idempotencyKey`
+  → `PAYMENT_IDEMPOTENCY_IDENTITY_CHANGED`
+- `CALL_REMOVED` + `callee=DB::transaction`
+  → `TRANSACTION_BOUNDARY_REMOVED`
+- `CALL_REMOVED` + `callee=$this->authorize / Gate::authorize`
+  → `AUTHORIZATION_GUARD_REMOVED`
+
+Interpreter 皆提供穩定 `id/version/interpret`，並由 PR-A 的 AnalysisContextBinding 綁定；未知 generic fact 不會被 interpreter 吞掉，仍然 fail-closed 為 `FACT_UNHANDLED`。
+
 ## Explicitly out of scope
 
 - 完整 PHP AST / symbol solver。
 - Laravel container resolution。
 - Route / middleware / policy graph。
 - Eloquent model semantic analysis。
-- Laravel-specific transaction / authorization interpretation。
-- Risk / invariant domain policy。
+- 更完整的 domain policy / invariant registry。
 - LLM。
 - Mutation / Historical PR Evaluation。
 - code-review-graph。
