@@ -21,8 +21,17 @@ jobs:
           node-version: 24
           cache: npm
 
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Lint PHP analyzer
+        run: find analyzers/php -name '*.php' -print0 | xargs -0 -n1 php -l
 
       - name: Run full release gate
         run: npm run test:all
