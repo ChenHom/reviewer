@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   createAnalysisContextBinding,
+  sameAnalysisContextBinding,
   validateAdapterResult,
 } from '../../src/adapters/contracts.js';
 import { normalizeAdapterResult } from '../../src/adapters/normalize.js';
@@ -79,8 +80,15 @@ function adapterResult(facts = [fact()]) {
   };
 }
 
-function stateFor(result) {
-  return createAuthorityState(identity, createAnalysisContextBinding(result));
+function interpreter(id, version, interpret) {
+  return { id, version, interpret };
+}
+
+function stateFor(result, interpreters = []) {
+  return createAuthorityState(
+    identity,
+    createAnalysisContextBinding(result, interpreters),
+  );
 }
 
 test('semantic fact contract 合法時會保留 provenance、source 並 deterministic normalization', () => {
@@ -153,11 +161,13 @@ test('受信任 interpreter 明確處理且沒有 blocker 時才可沿用既有 
   const pipeline = await runAdapterPipeline(
     { analyze: async () => result },
     { identity },
-    stateFor(result),
+    stateFor(result, [
+      interpreter('allow-reference', '1.0.0', () => ({ handled: true, blockers: [] })),
+    ]),
     {
       timeoutMs: 50,
       factInterpreters: [
-        () => ({ handled: true, blockers: [] }),
+        interpreter('allow-reference', '1.0.0', () => ({ handled: true, blockers: [] })),
       ],
     },
   );
@@ -173,13 +183,17 @@ test('interpreter exception 必須轉成 analyzer blocker 並採 Full Review', a
   const pipeline = await runAdapterPipeline(
     { analyze: async () => result },
     { identity },
-    stateFor(result),
+    stateFor(result, [
+      interpreter('throw-reference', '1.0.0', () => {
+        throw new Error('interpreter failure');
+      }),
+    ]),
     {
       timeoutMs: 50,
       factInterpreters: [
-        () => {
+        interpreter('throw-reference', '1.0.0', () => {
           throw new Error('interpreter failure');
-        },
+        }),
       ],
     },
   );
@@ -188,7 +202,7 @@ test('interpreter exception 必須轉成 analyzer blocker 並採 Full Review', a
   assert.equal(pipeline.candidate.decision.fallback, 'FULL');
   assert.deepEqual(
     pipeline.candidate.decision.reasons,
-    ['ANALYZER_FACT_INTERPRETER_FAILED:fact-001'],
+    ['ANALYZER_FACT_INTERPRETER_FAILED:throw-reference:fact-001'],
   );
 });
 
@@ -196,11 +210,11 @@ test('增加 unresolved semantic fact 不得把 Human Review 變成 NOT_SELECTED
   const assessment = interpretSemanticFacts(
     [fact('fact-001'), fact('fact-002')],
     [
-      (item) => (
+      interpreter('risk-reference', '1.0.0', (item) => (
         item.id === 'fact-001'
           ? { handled: true, blockers: ['risk:known'] }
           : null
-      ),
+      )),
     ],
   );
 
@@ -210,4 +224,73 @@ test('增加 unresolved semantic fact 不得把 Human Review 變成 NOT_SELECTED
     assessment.blockers,
     ['FACT_UNHANDLED:fact-002', 'risk:known'],
   );
+});
+
+
+test('Fact properties 非 JSON-safe 時必須在 Adapter contract fail-closed', () => {
+  const circular = {};
+  circular.self = circular;
+
+  const invalidValues = [
+    { value: undefined },
+    { value: 1n },
+    { value: Number.NaN },
+    { value: Number.POSITIVE_INFINITY },
+    { value: () => true },
+    { value: new Date('2026-01-01T00:00:00Z') },
+    { value: circular },
+  ];
+
+  for (const properties of invalidValues) {
+    const validation = validateAdapterResult(adapterResult([
+      fact('fact-json-invalid', { properties }),
+    ]));
+    assert.equal(validation.valid, false);
+    assert.ok(
+      validation.errors.includes('FACT_PROPERTIES_INVALID:fact-json-invalid'),
+    );
+  }
+});
+
+test('semantic facts 內容改變時 AnalysisContextBinding 必須改變', () => {
+  const before = adapterResult([fact('fact-001')]);
+  const after = adapterResult([
+    fact('fact-001', {
+      properties: { a: 'changed', z: 'last' },
+    }),
+  ]);
+
+  const beforeBinding = createAnalysisContextBinding(before);
+  const afterBinding = createAnalysisContextBinding(after);
+
+  assert.notEqual(beforeBinding.semanticFactsDigest, afterBinding.semanticFactsDigest);
+  assert.equal(sameAnalysisContextBinding(beforeBinding, afterBinding), false);
+});
+
+test('interpreter version 改變時 AnalysisContextBinding 必須改變', () => {
+  const result = adapterResult();
+  const v1 = createAnalysisContextBinding(result, [
+    interpreter('payment-policy', '1.0.0', () => ({ handled: false })),
+  ]);
+  const v2 = createAnalysisContextBinding(result, [
+    interpreter('payment-policy', '2.0.0', () => ({ handled: false })),
+  ]);
+
+  assert.notEqual(v1.interpreterSetDigest, v2.interpreterSetDigest);
+  assert.equal(sameAnalysisContextBinding(v1, v2), false);
+});
+
+test('裸 function interpreter 不再是合法 executable interpreter', () => {
+  const result = adapterResult();
+
+  assert.throws(
+    () => createAnalysisContextBinding(result, [() => ({ handled: true })]),
+    /INTERPRETER_SET_INVALID/,
+  );
+
+  const assessment = interpretSemanticFacts(
+    [fact('fact-001')],
+    [() => ({ handled: true, blockers: [] })],
+  );
+  assert.deepEqual(assessment.blockers, ['ANALYZER_FACT_INTERPRETER_SET_INVALID']);
 });
