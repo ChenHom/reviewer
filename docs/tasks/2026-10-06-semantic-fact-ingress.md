@@ -25,6 +25,21 @@ Status: `IMPLEMENTED`
 - 將 interpreter blocker 注入既有 `riskBlockers → eligibility → reducer` 流程。
 - 舊 Adapter 未宣告 `semantic-facts` 時維持相容。
 
+## Analysis Context Hardening
+
+PR-A 同時負責 semantic fact ingress 的 authority / auditability 邊界：
+
+- Fact `properties` 必須是 deterministic JSON-safe value。
+- semantic facts canonicalize 後寫入 AnalysisContextBinding。
+- 新增 `semanticFactsDigest`。
+- Fact interpreter 必須提供 `id / version / interpret`，不接受裸 function。
+- interpreter identity set 寫入 AnalysisContextBinding。
+- 新增 `interpreterSetDigest`。
+- `sameAnalysisContextBinding()` 同時比較 adapter、runtime、semantic facts 與 interpreter set。
+- Candidate / Summary digest 對 semantic facts 與 fact assessment 敏感。
+
+同一個 base/head SHA，只要 semantic fact payload 或 interpreter id/version 不同，就不得共用 authoritative analysis result。
+
 ## Explicitly out of scope
 
 - PHP parser / AST analyzer。
@@ -43,6 +58,10 @@ Status: `IMPLEMENTED`
 4. interpreter failure 不得視為「沒有風險」。
 5. 增加 unresolved fact 不得讓 decision 變得更寬鬆。
 6. 沒有 `semantic-facts` capability 的既有 Adapter 行為不變。
+7. 非 JSON-safe Fact properties 必須 fail-closed。
+8. facts payload 改變必須改變 analysis context。
+9. interpreter id/version 改變必須改變 analysis context。
+10. authority / candidate / Summary 必須綁定同一份完整 context binding。
 
 ## Next
 
