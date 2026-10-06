@@ -12,7 +12,7 @@ Base: PR-B `feat/php-laravel-adapter`
 
 - 建立 manifest-driven mutation corpus。
 - 每個 case 都走 production：
-  `PHP Adapter → Fact ingress → coverage → eligibility → reducer`。
+  `PHP Adapter → Fact ingress → production domain interpreters → coverage → eligibility → reducer`。
 - 不注入測試專用 decision shortcut。
 - 輸出：
   - Critical Recall
@@ -39,6 +39,10 @@ Safe:
 
 - SAFE-001 — formatting/comment-only。
 - SAFE-002 — local variable rename，語意安全但目前 analyzer 尚未支援，用來量測 reduction miss。
+
+## Interpreter Profile
+
+Evaluation 會使用 PR-B 的 `PHP_LARAVEL_DOMAIN_INTERPRETERS`，並將同一組 interpreter identity/version 綁進 AnalysisContextBinding。這可避免 benchmark 只靠 `FACT_UNHANDLED` 保守擋住，而沒有真正測到 domain interpretation。
 
 ## Interpretation
 
