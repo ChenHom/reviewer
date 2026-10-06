@@ -298,8 +298,10 @@ function maskRanges(string $source, array $ranges): string
         static fn (array $left, array $right): int => $right[0] <=> $left[0],
     );
 
-    foreach ($ranges as [$start, $end]) {
-        $source = substr_replace($source, '__RDE_MASK__', $start, $end - $start);
+    foreach ($ranges as $range) {
+        [$start, $end] = $range;
+        $replacement = $range[2] ?? '__RDE_MASK__';
+        $source = substr_replace($source, $replacement, $start, $end - $start);
     }
 
     return $source;
@@ -426,8 +428,16 @@ foreach ($beforeGroups as $key => $beforeGroup) {
                     'endByte' => $afterArgument['endByte'],
                 ],
             ];
-            $maskBefore[] = [$beforeArgument['startByte'], $beforeArgument['endByte']];
-            $maskAfter[] = [$afterArgument['startByte'], $afterArgument['endByte']];
+            $maskBefore[] = [
+                $beforeArgument['startByte'],
+                $beforeArgument['endByte'],
+                '__RDE_MASK__',
+            ];
+            $maskAfter[] = [
+                $afterArgument['startByte'],
+                $afterArgument['endByte'],
+                '__RDE_MASK__',
+            ];
         }
     }
 }
@@ -492,7 +502,7 @@ for (
             'endByte' => $call['statementEndByte'],
         ],
     ];
-    $maskBefore[] = [$call['startByte'], $call['statementEndByte']];
+    $maskBefore[] = [$call['startByte'], $call['statementEndByte'], ''];
 }
 
 $complete = normalizedSignature(maskRanges($beforeSource, $maskBefore))
