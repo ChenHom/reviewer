@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import { stableStrings } from '../contracts.js';
-import { validateSemanticFacts } from '../facts/contracts.js';
+import { canonicalSemanticFacts, validateSemanticFacts } from '../facts/contracts.js';
+import {
+  canonicalInterpreterSet,
+  validateFactInterpreters,
+  validateInterpreterIdentitySet,
+} from '../facts/interpreter.js';
 
 export const ADAPTER_STATUSES = Object.freeze([
   'COMPLETE',
@@ -291,12 +296,19 @@ export function validateAdapterResult(result) {
  * 建立可由 canonical AdapterSet 與 region runtime context 重算的 binding。
  *
  * @param {object} result - 已驗證的 Adapter result。
- * @returns {{adapterSet: object[], adapterSetDigest: string, executionContextDigest: string, regions: object[]}} context binding。
+ * @param {object[]} [factInterpreters=[]] - executable interpreter descriptors。
+ * @returns {object} context binding。
  */
-export function createAnalysisContextBinding(result) {
+export function createAnalysisContextBinding(result, factInterpreters = []) {
   const validation = validateAdapterResult(result);
   if (!validation.valid) {
     throw new Error(`ADAPTER_RESULT_INVALID:${validation.errors.join(',')}`);
+  }
+  const interpreterValidation = validateFactInterpreters(factInterpreters);
+  if (!interpreterValidation.valid) {
+    throw new Error(
+      `INTERPRETER_SET_INVALID:${interpreterValidation.errors.join(',')}`,
+    );
   }
 
   const adapterSet = [...result.adapterSet]
@@ -317,11 +329,18 @@ export function createAnalysisContextBinding(result) {
     startByte: region.startByte,
   }))).sort((left, right) => compareText(JSON.stringify(left), JSON.stringify(right)));
 
+  const semanticFacts = canonicalSemanticFacts(result.facts ?? []);
+  const interpreterSet = canonicalInterpreterSet(factInterpreters);
+
   return {
     adapterSet,
     adapterSetDigest: digest(adapterIdentity),
     executionContextDigest: digest(regions),
     regions,
+    semanticFacts,
+    semanticFactsDigest: digest(semanticFacts),
+    interpreterSet,
+    interpreterSetDigest: digest(interpreterSet),
   };
 }
 
@@ -347,7 +366,7 @@ export function validateAnalysisContextBinding(binding) {
     complete: true,
     diagnostics: [],
     evidenceReferences: [],
-    facts: [],
+    facts: binding.semanticFacts,
   }).errors;
   const adapterIdentity = Array.isArray(binding.adapterSet)
     ? binding.adapterSet.map((adapter) => ({ id: adapter?.id, version: adapter?.version }))
@@ -363,6 +382,30 @@ export function validateAnalysisContextBinding(binding) {
     || binding.executionContextDigest !== digest(binding.regions)
   ) {
     errors.push('EXECUTION_CONTEXT_DIGEST_MISMATCH');
+  }
+
+  const factValidation = validateSemanticFacts(binding.semanticFacts, binding.adapterSet);
+  errors.push(...factValidation.errors);
+  if (
+    factValidation.valid
+    && (
+      typeof binding.semanticFactsDigest !== 'string'
+      || binding.semanticFactsDigest !== digest(canonicalSemanticFacts(binding.semanticFacts))
+    )
+  ) {
+    errors.push('SEMANTIC_FACTS_DIGEST_MISMATCH');
+  }
+
+  const interpreterValidation = validateInterpreterIdentitySet(binding.interpreterSet);
+  errors.push(...interpreterValidation.errors);
+  if (
+    interpreterValidation.valid
+    && (
+      typeof binding.interpreterSetDigest !== 'string'
+      || binding.interpreterSetDigest !== digest(canonicalInterpreterSet(binding.interpreterSet))
+    )
+  ) {
+    errors.push('INTERPRETER_SET_DIGEST_MISMATCH');
   }
 
   const stableErrors = stableStrings(errors);
@@ -382,5 +425,7 @@ export function sameAnalysisContextBinding(left, right) {
   return leftValidation.valid
     && rightValidation.valid
     && left.adapterSetDigest === right.adapterSetDigest
-    && left.executionContextDigest === right.executionContextDigest;
+    && left.executionContextDigest === right.executionContextDigest
+    && left.semanticFactsDigest === right.semanticFactsDigest
+    && left.interpreterSetDigest === right.interpreterSetDigest;
 }
