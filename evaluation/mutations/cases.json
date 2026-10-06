@@ -1,0 +1,62 @@
+[
+  {
+    "id": "MUT-001",
+    "classification": "critical",
+    "fixture": "named-argument-change",
+    "path": "app/Services/PaymentService.php",
+    "description": "Payment idempotency named argument identity changes across retry.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedFactKinds": [
+      "CALL_ARGUMENT_CHANGED"
+    ]
+  },
+  {
+    "id": "MUT-002",
+    "classification": "critical",
+    "fixture": "transaction-removed",
+    "path": "app/Services/WalletService.php",
+    "description": "DB transaction boundary is removed around wallet mutation.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedFactKinds": [
+      "TRANSACTION_BOUNDARY_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-003",
+    "classification": "critical",
+    "fixture": "authorization-removed",
+    "path": "app/Services/OrderService.php",
+    "description": "Authorization guard is removed before protected mutation.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedFactKinds": [
+      "AUTHORIZATION_GUARD_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-004",
+    "classification": "critical",
+    "fixture": "wallet-condition-change",
+    "path": "app/Services/WalletService.php",
+    "description": "Wallet balance boundary changes from < to <= and is intentionally unsupported.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedFactKinds": []
+  },
+  {
+    "id": "SAFE-001",
+    "classification": "safe",
+    "fixture": "format-only",
+    "path": "app/Services/ExampleService.php",
+    "description": "Formatting/comment-only change.",
+    "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "expectedFactKinds": []
+  },
+  {
+    "id": "SAFE-002",
+    "classification": "safe",
+    "fixture": "safe-local-rename",
+    "path": "app/Services/ExampleService.php",
+    "description": "Local variable rename with all references updated; currently unsupported.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedFactKinds": []
+  }
+]
