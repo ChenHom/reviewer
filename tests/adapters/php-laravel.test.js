@@ -7,6 +7,7 @@ import {
   validateAdapterResult,
 } from '../../src/adapters/contracts.js';
 import { createPhpLaravelAdapter } from '../../src/adapters/php-laravel/adapter.js';
+import { PHP_LARAVEL_DOMAIN_INTERPRETERS } from '../../src/interpreters/php-laravel-domain.js';
 import { createAuthorityState } from '../../src/publication.js';
 import { runAdapterPipeline } from '../../src/runner.js';
 
@@ -148,6 +149,96 @@ test('真實 PHP fact 沒有 interpreter 時會經既有 reducer 保留 Human Re
   assert.equal(pipeline.publication.accepted, true);
   assert.equal(pipeline.candidate.decision.status, 'HUMAN_REVIEW_REQUIRED');
   assert.equal(pipeline.candidate.decision.fallback, 'TARGETED');
+  assert.match(
+    pipeline.candidate.decision.reasons[0],
+    /^FACT_UNHANDLED:php-/,
+  );
+});
+
+
+async function runWithDomainInterpreters(caseName, path) {
+  const [beforeSource, afterSource] = await Promise.all([
+    fixture(caseName, 'before'),
+    fixture(caseName, 'after'),
+  ]);
+  const request = {
+    identity,
+    path,
+    beforeSource,
+    afterSource,
+  };
+  const initialResult = await adapter.analyze(request);
+  const state = createAuthorityState(
+    identity,
+    createAnalysisContextBinding(
+      initialResult,
+      PHP_LARAVEL_DOMAIN_INTERPRETERS,
+    ),
+  );
+
+  return runAdapterPipeline(
+    adapter,
+    request,
+    state,
+    {
+      timeoutMs: 2_000,
+      factInterpreters: PHP_LARAVEL_DOMAIN_INTERPRETERS,
+    },
+  );
+}
+
+test('idempotencyKey 變更由 domain interpreter 轉成 payment blocker', async () => {
+  const pipeline = await runWithDomainInterpreters(
+    'named-argument-change',
+    'app/Services/PaymentService.php',
+  );
+
+  assert.equal(pipeline.publication.accepted, true);
+  assert.equal(pipeline.candidate.decision.status, 'HUMAN_REVIEW_REQUIRED');
+  assert.equal(pipeline.candidate.decision.fallback, 'TARGETED');
+  assert.deepEqual(
+    pipeline.candidate.decision.reasons,
+    ['PAYMENT_IDEMPOTENCY_IDENTITY_CHANGED'],
+  );
+});
+
+test('DB::transaction 移除由 domain interpreter 轉成 transaction blocker', async () => {
+  const pipeline = await runWithDomainInterpreters(
+    'transaction-removed',
+    'app/Services/WalletService.php',
+  );
+
+  assert.equal(pipeline.publication.accepted, true);
+  assert.equal(pipeline.candidate.decision.status, 'HUMAN_REVIEW_REQUIRED');
+  assert.equal(pipeline.candidate.decision.fallback, 'FULL');
+  assert.ok(
+    pipeline.candidate.decision.reasons.includes('TRANSACTION_BOUNDARY_REMOVED'),
+  );
+});
+
+test('authorize call 移除由 domain interpreter 轉成 authorization blocker', async () => {
+  const pipeline = await runWithDomainInterpreters(
+    'authorization-removed',
+    'app/Services/OrderService.php',
+  );
+
+  assert.equal(pipeline.publication.accepted, true);
+  assert.equal(pipeline.candidate.decision.status, 'HUMAN_REVIEW_REQUIRED');
+  assert.equal(pipeline.candidate.decision.fallback, 'TARGETED');
+  assert.deepEqual(
+    pipeline.candidate.decision.reasons,
+    ['AUTHORIZATION_GUARD_REMOVED'],
+  );
+});
+
+test('domain interpreters 不得吞掉不認識的 generic fact', async () => {
+  const pipeline = await runWithDomainInterpreters(
+    'call-added',
+    'app/Services/ExampleService.php',
+  );
+
+  assert.equal(pipeline.publication.accepted, true);
+  assert.equal(pipeline.candidate.decision.status, 'HUMAN_REVIEW_REQUIRED');
   assert.match(
     pipeline.candidate.decision.reasons[0],
     /^FACT_UNHANDLED:php-/,
