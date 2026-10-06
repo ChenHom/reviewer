@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "analyzer:install": "composer install --working-dir=analyzers/php --no-interaction",
     "lint": "eslint src tests evaluation",
     "prepare": "simple-git-hooks",
     "test": "node --test",

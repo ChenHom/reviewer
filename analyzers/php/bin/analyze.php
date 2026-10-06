@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+use PhpParser\Error as PhpParserError;
+use PhpParser\ParserFactory;
+use PhpParser\PhpVersion;
+use Reviewer\PhpAnalyzer\CallExtractor;
+
 function respond(array $payload, int $exitCode = 0): never
 {
     echo json_encode(
@@ -9,6 +14,49 @@ function respond(array $payload, int $exitCode = 0): never
         JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
     );
     exit($exitCode);
+}
+
+$autoload = dirname(__DIR__) . '/vendor/autoload.php';
+if (!is_file($autoload)) {
+    respond([
+        'ok' => false,
+        'code' => 'PHP_ANALYZER_DEPENDENCY_MISSING',
+        'phpVersion' => PHP_VERSION,
+    ]);
+}
+require $autoload;
+
+/**
+ * 先以最新 PHP 語法解析；任一側失敗時，兩側一起改用 PHP 7.4 語法重試
+ * （支援 `$str{0}` 等 PHP 8 已移除的語法），確保 before / after 使用同一套語法。
+ *
+ * @return list<array<string, mixed>> [before calls, after calls]
+ */
+function extractCallPair(string $beforeSource, string $afterSource, string $path): array
+{
+    $factory = new ParserFactory();
+    $grammars = [
+        static fn () => $factory->createForNewestSupportedVersion(),
+        static fn () => $factory->createForVersion(PhpVersion::fromString('7.4')),
+    ];
+
+    foreach ($grammars as $index => $createParser) {
+        try {
+            $calls = [];
+            foreach ([$beforeSource, $afterSource] as $source) {
+                $parser = $createParser();
+                $statements = $parser->parse($source) ?? [];
+                $calls[] = CallExtractor::extract($statements, $parser->getTokens(), $source, $path);
+            }
+            return $calls;
+        } catch (PhpParserError $error) {
+            if ($index === count($grammars) - 1) {
+                throw $error;
+            }
+        }
+    }
+
+    throw new LogicException('unreachable');
 }
 
 function significantTokens(string $source): array
@@ -42,312 +90,6 @@ function significantTokens(string $source): array
     }
 
     return $tokens;
-}
-
-function tokenIsName(array $token): bool
-{
-    if ($token['id'] === T_VARIABLE || $token['id'] === T_STRING) {
-        return true;
-    }
-
-    $qualifiedIds = [];
-    foreach (['T_NAME_QUALIFIED', 'T_NAME_FULLY_QUALIFIED', 'T_NAME_RELATIVE'] as $name) {
-        if (defined($name)) {
-            $qualifiedIds[] = constant($name);
-        }
-    }
-
-    return $token['id'] !== null && in_array($token['id'], $qualifiedIds, true);
-}
-
-function subjectAtOffset(array $tokens, int $targetOffset, string $path): string
-{
-    $depth = 0;
-    $pendingClass = null;
-    $pendingFunction = null;
-    $awaitingClassName = false;
-    $awaitingFunctionName = false;
-    $classScopes = [];
-    $functionScopes = [];
-
-    foreach ($tokens as $token) {
-        if ($token['start'] >= $targetOffset) {
-            break;
-        }
-
-        if ($token['id'] === T_CLASS) {
-            $awaitingClassName = true;
-        } elseif ($awaitingClassName && $token['id'] === T_STRING) {
-            $pendingClass = $token['text'];
-            $awaitingClassName = false;
-        }
-
-        if ($token['id'] === T_FUNCTION) {
-            $awaitingFunctionName = true;
-        } elseif ($awaitingFunctionName && $token['id'] === T_STRING) {
-            $pendingFunction = $token['text'];
-            $awaitingFunctionName = false;
-        } elseif ($awaitingFunctionName && $token['text'] === '(') {
-            $awaitingFunctionName = false;
-        }
-
-        if ($token['text'] === '{') {
-            $depth += 1;
-            if ($pendingClass !== null) {
-                $classScopes[] = ['name' => $pendingClass, 'depth' => $depth];
-                $pendingClass = null;
-            }
-            if ($pendingFunction !== null) {
-                $functionScopes[] = ['name' => $pendingFunction, 'depth' => $depth];
-                $pendingFunction = null;
-            }
-            continue;
-        }
-
-        if ($token['text'] === '}') {
-            while ($functionScopes !== [] && end($functionScopes)['depth'] === $depth) {
-                array_pop($functionScopes);
-            }
-            while ($classScopes !== [] && end($classScopes)['depth'] === $depth) {
-                array_pop($classScopes);
-            }
-            $depth = max(0, $depth - 1);
-        }
-    }
-
-    $function = $functionScopes !== [] ? end($functionScopes)['name'] : null;
-    $class = $classScopes !== [] ? end($classScopes)['name'] : null;
-
-    if ($class !== null && $function !== null) {
-        return $class . '::' . $function;
-    }
-    if ($function !== null) {
-        return $function;
-    }
-
-    return $path;
-}
-
-function findClosingParen(array $tokens, int $openIndex): ?int
-{
-    $depth = 0;
-    for ($index = $openIndex; $index < count($tokens); $index += 1) {
-        if ($tokens[$index]['text'] === '(') {
-            $depth += 1;
-        } elseif ($tokens[$index]['text'] === ')') {
-            $depth -= 1;
-            if ($depth === 0) {
-                return $index;
-            }
-        }
-    }
-
-    return null;
-}
-
-function callContainsCallbackBody(array $tokens, int $openIndex, int $closeIndex): bool
-{
-    $callbackTokenIds = [T_FUNCTION];
-    if (defined('T_FN')) {
-        $callbackTokenIds[] = constant('T_FN');
-    }
-
-    for ($index = $openIndex + 1; $index < $closeIndex; $index += 1) {
-        $id = $tokens[$index]['id'];
-        if ($id !== null && in_array($id, $callbackTokenIds, true)) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-function splitArgumentSegments(array $tokens, int $openIndex, int $closeIndex): array
-{
-    $segments = [];
-    $segmentStart = $openIndex + 1;
-    $parenDepth = 0;
-    $bracketDepth = 0;
-    $braceDepth = 0;
-
-    for ($index = $openIndex + 1; $index < $closeIndex; $index += 1) {
-        $text = $tokens[$index]['text'];
-
-        if ($text === '(') {
-            $parenDepth += 1;
-        } elseif ($text === ')') {
-            $parenDepth -= 1;
-        } elseif ($text === '[') {
-            $bracketDepth += 1;
-        } elseif ($text === ']') {
-            $bracketDepth -= 1;
-        } elseif ($text === '{') {
-            $braceDepth += 1;
-        } elseif ($text === '}') {
-            $braceDepth -= 1;
-        }
-
-        if (
-            $text === ','
-            && $parenDepth === 0
-            && $bracketDepth === 0
-            && $braceDepth === 0
-        ) {
-            if ($segmentStart <= $index - 1) {
-                $segments[] = [$segmentStart, $index - 1];
-            }
-            $segmentStart = $index + 1;
-        }
-    }
-
-    if ($segmentStart <= $closeIndex - 1) {
-        $segments[] = [$segmentStart, $closeIndex - 1];
-    }
-
-    return $segments;
-}
-
-function segmentContainsCallbackBody(array $tokens, int $start, int $end): bool
-{
-    return callContainsCallbackBody($tokens, $start - 1, $end + 1);
-}
-
-function tokenRangeSignature(array $tokens, int $start, int $end): string
-{
-    $parts = [];
-    for ($index = $start; $index <= $end; $index += 1) {
-        $parts[] = ($tokens[$index]['id'] ?? 0) . ':' . $tokens[$index]['text'];
-    }
-
-    return implode('|', $parts);
-}
-
-function callArguments(array $tokens, int $openIndex, int $closeIndex, string $source): array
-{
-    $named = [];
-    $positional = [];
-
-    foreach (splitArgumentSegments($tokens, $openIndex, $closeIndex) as $segmentIndex => [$start, $end]) {
-        $isNamed = $end - $start >= 2
-            && $tokens[$start]['id'] === T_STRING
-            && $tokens[$start + 1]['text'] === ':';
-        $expressionStart = $isNamed ? $start + 2 : $start;
-        $byteStart = $tokens[$expressionStart]['start'];
-        $byteEnd = $tokens[$end]['end'];
-        $argument = [
-            'expression' => trim(substr($source, $byteStart, $byteEnd - $byteStart)),
-            'signature' => tokenRangeSignature($tokens, $expressionStart, $end),
-            'hasCallbackBody' => segmentContainsCallbackBody($tokens, $expressionStart, $end),
-            'startByte' => $byteStart,
-            'endByte' => $byteEnd,
-        ];
-
-        if ($isNamed) {
-            $named[$tokens[$start]['text']] = $argument;
-        } else {
-            $positional[$segmentIndex] = $argument;
-        }
-    }
-
-    return ['named' => $named, 'positional' => $positional];
-}
-
-/**
- * 取得 call receiver 起點；`$this->db->transaction(` 會回溯到 `$this`。
- */
-function receiverStartIndex(array $tokens, int $index): int
-{
-    while (
-        $index >= 2
-        && in_array($tokens[$index - 1]['id'], [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR], true)
-        && tokenIsName($tokens[$index - 2])
-    ) {
-        $index -= 2;
-    }
-
-    return $index;
-}
-
-function extractCalls(string $source, string $path): array
-{
-    $tokens = significantTokens($source);
-    $calls = [];
-    $enclosingCloseIndexes = [];
-    $objectOperators = [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR];
-
-    for ($index = 0; $index + 3 < count($tokens); $index += 1) {
-        while ($enclosingCloseIndexes !== [] && end($enclosingCloseIndexes) < $index) {
-            array_pop($enclosingCloseIndexes);
-        }
-
-        $left = $tokens[$index];
-        $operator = $tokens[$index + 1];
-        $method = $tokens[$index + 2];
-        $open = $tokens[$index + 3];
-
-        $isChained = $left['text'] === ')' && in_array($operator['id'], $objectOperators, true);
-        if (
-            (!$isChained && !tokenIsName($left))
-            || !in_array($operator['id'], [...$objectOperators, T_DOUBLE_COLON], true)
-            || $method['id'] !== T_STRING
-            || $open['text'] !== '('
-        ) {
-            continue;
-        }
-
-        $closeIndex = findClosingParen($tokens, $index + 3);
-        if ($closeIndex === null) {
-            continue;
-        }
-
-        if ($isChained) {
-            $receiverIndex = $index + 1;
-            $callee = $operator['text'] . $method['text'];
-        } else {
-            $receiverIndex = receiverStartIndex($tokens, $index);
-            $callee = '';
-            for ($part = $receiverIndex; $part <= $index + 2; $part += 1) {
-                $callee .= $tokens[$part]['text'];
-            }
-        }
-
-        $isNested = $enclosingCloseIndexes !== [];
-        $callEnd = $tokens[$closeIndex]['end'];
-        $statementEnd = $callEnd;
-        if (($tokens[$closeIndex + 1]['text'] ?? null) === ';') {
-            $statementEnd = $tokens[$closeIndex + 1]['end'];
-        }
-
-        $previousText = $tokens[$receiverIndex - 1]['text'] ?? null;
-        $isStandaloneStatement = !$isChained
-            && $statementEnd > $callEnd
-            && (
-                $receiverIndex === 0
-                || in_array($previousText, ['{', '}', ';', ':'], true)
-            );
-        // 巢狀 / 鏈式 call 只輸出 fact，不參與 masking，避免 mask range 重疊或放寬 completeness。
-        $canMaskAsAtomicStatement = $isStandaloneStatement
-            && !$isNested
-            && !callContainsCallbackBody($tokens, $index + 3, $closeIndex);
-        $arguments = callArguments($tokens, $index + 3, $closeIndex, $source);
-
-        $calls[] = [
-            'callee' => $callee,
-            'subject' => subjectAtOffset($tokens, $tokens[$receiverIndex]['start'], $path),
-            'startByte' => $tokens[$receiverIndex]['start'],
-            'endByte' => $callEnd,
-            'statementEndByte' => $statementEnd,
-            'isStandaloneStatement' => $isStandaloneStatement,
-            'canMaskAsAtomicStatement' => $canMaskAsAtomicStatement,
-            'canMaskArguments' => !$isNested && !$isChained,
-            'namedArguments' => $arguments['named'],
-            'positionalArguments' => $arguments['positional'],
-        ];
-
-        $enclosingCloseIndexes[] = $closeIndex;
-    }
-
-    return $calls;
 }
 
 function groupCalls(array $calls): array
@@ -475,11 +217,10 @@ $beforeSource = $input['beforeSource'];
 $afterSource = $input['afterSource'];
 
 try {
-    $beforeCalls = extractCalls($beforeSource, $path);
-    $afterCalls = extractCalls($afterSource, $path);
+    [$beforeCalls, $afterCalls] = extractCallPair($beforeSource, $afterSource, $path);
     normalizedSignature($beforeSource);
     normalizedSignature($afterSource);
-} catch (ParseError) {
+} catch (ParseError | PhpParserError) {
     respond([
         'ok' => false,
         'code' => 'PHP_PARSE_ERROR',
@@ -637,8 +378,13 @@ foreach ($afterGroups as $key => $afterGroup) {
     }
 }
 
-$complete = normalizedSignature(maskRanges($beforeSource, $maskBefore))
-    === normalizedSignature(maskRanges($afterSource, $maskAfter));
+try {
+    $complete = normalizedSignature(maskRanges($beforeSource, $maskBefore))
+        === normalizedSignature(maskRanges($afterSource, $maskAfter));
+} catch (ParseError) {
+    // mask 後的 source 無法 tokenize（例如移除 statement 破壞語法）時不能宣稱 completeness。
+    $complete = false;
+}
 
 respond([
     'ok' => true,

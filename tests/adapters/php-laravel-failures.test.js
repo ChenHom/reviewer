@@ -1,8 +1,9 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Buffer } from 'node:buffer';
 import process from 'node:process';
 
@@ -178,4 +179,21 @@ test('changed region endByte 以 UTF-8 byte 計算', async () => {
     result.obligations[0].changedRegions[0].endByte,
     Buffer.byteLength(afterSource, 'utf8'),
   );
+});
+
+test('analyzer 缺少 Composer 依賴時以 PHP_ANALYZER_DEPENDENCY_MISSING fail-closed', async () => {
+  const isolatedBin = join(workDir, 'isolated', 'bin');
+  await mkdir(isolatedBin, { recursive: true });
+  const analyzerPath = join(isolatedBin, 'analyze.php');
+  await copyFile(
+    fileURLToPath(new URL('../../analyzers/php/bin/analyze.php', import.meta.url)),
+    analyzerPath,
+  );
+  const adapter = createPhpLaravelAdapter({ analyzerPath });
+  const result = await adapter.analyze(request);
+
+  assert.deepEqual(validateAdapterResult(result), { valid: true, errors: [] });
+  assert.equal(result.complete, false);
+  assert.equal(result.reasonCode, 'PHP_ANALYZER_DEPENDENCY_MISSING');
+  assert.equal(result.obligations[0].status, 'FAILED');
 });

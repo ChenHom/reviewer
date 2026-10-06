@@ -349,3 +349,84 @@ test('巢狀 call 的 named argument 變更輸出 fact 但不 mask', async () =>
     [['CALL_ARGUMENT_CHANGED', 'idempotencyKey']],
   );
 });
+
+test('括號包住的 receiver 與 enum case 沿用舊 callee 命名規則', async () => {
+  const before = `<?php
+
+class InlineService
+{
+    public function run($a, $b)
+    {
+        $days = (date_diff($a, $b))->format('%a');
+        $bar = (new Foo())->bar();
+        $label = Suit::Hearts->label();
+        return [$days, $bar, $label];
+    }
+}
+`;
+  const after = before
+    .replace("(date_diff($a, $b))->format('%a')", 'date_diff($a, $b)')
+    .replace('(new Foo())->bar()', 'new Foo()')
+    .replace('Suit::Hearts->label()', 'Suit::Hearts');
+  const result = await inlineAnalyze(before, after);
+
+  assert.deepEqual(
+    result.facts.map(({ kind, properties, provenance }) => [
+      kind,
+      properties.callee,
+      before.slice(provenance.startByte, provenance.startByte + 2),
+    ]),
+    [
+      ['CALL_REMOVED', '->format', '->'],
+      ['CALL_REMOVED', '->bar', '->'],
+      ['CALL_REMOVED', 'Hearts->label', 'He'],
+    ],
+  );
+});
+
+test('trait method subject 包含 trait 名稱，匿名 class 只保留 method 名稱', async () => {
+  const traitSource = (body) => `<?php\n\ntrait Auditable\n{\n    public function audit($q)\n    {\n${body}\n    }\n}\n`;
+  const traitResult = await inlineAnalyze(traitSource('        $q->save();'), traitSource(''));
+  assert.equal(traitResult.facts[0].subject, 'Auditable::audit');
+
+  const anonymous = (body) => `<?php\n\nreturn new class () extends BaseController {\n    public function run()\n    {\n${body}\n    }\n};\n`;
+  const anonymousResult = await inlineAnalyze(anonymous('        $this->check();'), anonymous(''));
+  assert.equal(anonymousResult.facts[0].subject, 'run');
+});
+
+test('static:: call 與舊版相同不抽取', async () => {
+  const result = await inlineAnalyze(wrap('        static::boot();'), wrap(''));
+
+  assert.equal(result.complete, false);
+  assert.deepEqual(result.facts, []);
+});
+
+test('PHP 8 已移除的語法（$str{0}）會以 PHP 7.4 語法 fallback 解析', async () => {
+  const legacy = (body) => `<?php\n\nclass LegacyGateway\n{\n    public function first($s)\n    {\n${body}\n        return $s{0};\n    }\n}\n`;
+  const unchanged = await inlineAnalyze(legacy(''), legacy(''));
+  assert.equal(unchanged.complete, true);
+  assert.deepEqual(unchanged.facts, []);
+
+  const removed = await inlineAnalyze(legacy('        $this->verifySign($s);'), legacy(''));
+  assert.deepEqual(
+    removed.facts.map(({ kind, properties }) => [kind, properties.callee]),
+    [['CALL_REMOVED', '$this->verifySign']],
+  );
+});
+
+test('兩種語法都無法解析時回傳 PHP_PARSE_ERROR', async () => {
+  const result = await inlineAnalyze(wrap('        $q->save();'), wrap('        $q->save(;'));
+
+  assert.equal(result.complete, false);
+  assert.equal(result.reasonCode, 'PHP_PARSE_ERROR');
+});
+
+test('mask 後 source 無法 tokenize 時判為 PARTIAL_PARSE 而不是 crash', async () => {
+  const result = await inlineAnalyze(
+    wrap('        return $q ? 1 : $this->fallback();'),
+    wrap('        return null;'),
+  );
+
+  assert.equal(result.complete, false);
+  assert.equal(result.obligations[0].status, 'PARTIAL_PARSE');
+});

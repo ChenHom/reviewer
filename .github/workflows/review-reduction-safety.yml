@@ -26,12 +26,16 @@ jobs:
         with:
           php-version: '8.4'
           coverage: none
+          tools: composer:v2
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Install PHP analyzer dependencies
+        run: composer install --working-dir=analyzers/php --no-interaction --no-progress --prefer-dist
+
       - name: Lint PHP analyzer
-        run: find analyzers/php -name '*.php' -print0 | xargs -0 -n1 php -l
+        run: find analyzers/php/bin analyzers/php/src -name '*.php' -print0 | xargs -0 -n1 php -l
 
       - name: Run full release gate
         run: npm run test:all

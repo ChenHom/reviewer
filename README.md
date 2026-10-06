@@ -55,7 +55,7 @@ Authoritative Candidate / Summary / Check
 - `semanticFactsDigest`
 - versioned Fact Interpreter identity 與 `interpreterSetDigest`
 - JSON-safe deterministic Fact properties
-- PHP 8.4 CLI analyzer
+- PHP CLI analyzer，以 [nikic/php-parser](https://github.com/nikic/PHP-Parser) 5.9.0（版本鎖定）解析 AST；先用最新 PHP 語法，失敗時 before / after 一起改用 PHP 7.4 語法
 - Generic facts：
   - `CALL_ARGUMENT_CHANGED`（named argument；位置參數以 `#index` 表示，只輸出 fact、不放寬 completeness）
   - `CALL_REMOVED`
@@ -110,6 +110,14 @@ Historical 數字目前來自明確標示的 controlled fixture pilot，只驗�
 - [PR-D：Historical PR Evaluation](docs/tasks/2026-10-06-historical-pr-evaluation.md)
 
 ## Release gate
+
+PHP analyzer 依賴 Composer 套件，第一次執行前先安裝：
+
+```bash
+npm run analyzer:install
+```
+
+缺少依賴時 analyzer 會以 `PHP_ANALYZER_DEPENDENCY_MISSING` fail-closed。
 
 ```bash
 npm run test:all
