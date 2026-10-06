@@ -8,9 +8,10 @@
     "test": "node --test",
     "test:safety": "node --test",
     "test:e2e": "node --test tests/e2e/*.test.js",
-    "test:all": "npm run lint && npm run test:safety && npm run test:e2e && npm run test:coverage && npm run eval:mutations",
+    "test:all": "npm run lint && npm run test:safety && npm run test:e2e && npm run test:coverage && npm run eval:mutations && npm run eval:historical",
     "test:coverage": "c8 --all --include='src/**/*.js' --check-coverage --lines 90 --functions 90 --branches 85 --statements 90 npm run test:safety",
-    "eval:mutations": "node evaluation/mutations/run.js"
+    "eval:mutations": "node evaluation/mutations/run.js",
+    "eval:historical": "node evaluation/historical/run.js"
   },
   "simple-git-hooks": {
     "pre-commit": "npm run lint"

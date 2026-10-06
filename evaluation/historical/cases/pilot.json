@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "sourceType": "fixture",
+  "id": "HIST-PILOT-001",
+  "repository": "evaluation/php-laravel",
+  "baseSha": "historical-pilot-base",
+  "headSha": "historical-pilot-head",
+  "files": [
+    {
+      "path": "app/Services/PaymentService.php",
+      "beforeFile": "../../../fixtures/php-laravel/named-argument-change/before.php",
+      "afterFile": "../../../fixtures/php-laravel/named-argument-change/after.php"
+    },
+    {
+      "path": "app/Services/OrderService.php",
+      "beforeFile": "../../../fixtures/php-laravel/authorization-removed/before.php",
+      "afterFile": "../../../fixtures/php-laravel/authorization-removed/after.php"
+    },
+    {
+      "path": "app/Services/ExampleService.php",
+      "beforeFile": "../../../fixtures/php-laravel/format-only/before.php",
+      "afterFile": "../../../fixtures/php-laravel/format-only/after.php"
+    }
+  ],
+  "humanConcerns": [
+    {
+      "id": "HC-001",
+      "path": "app/Services/PaymentService.php",
+      "category": "idempotency"
+    },
+    {
+      "id": "HC-002",
+      "path": "app/Services/OrderService.php",
+      "category": "authorization"
+    }
+  ]
+}
