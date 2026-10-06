@@ -109,6 +109,12 @@ export function validateMutationEvaluation(results) {
         failures.push(`EXPECTED_FACT_MISSING:${result.id}:${expectedKind}`);
       }
     }
+
+    for (const expectedReason of result.expectedReasons ?? []) {
+      if (!(result.reasons ?? []).includes(expectedReason)) {
+        failures.push(`EXPECTED_REASON_MISSING:${result.id}:${expectedReason}`);
+      }
+    }
   }
 
   return [...new Set(failures)].sort();
