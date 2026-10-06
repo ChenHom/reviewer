@@ -33,6 +33,8 @@ export function candidateDigest(candidate) {
     contextBinding: candidate.contextBinding,
     eligibility: candidate.eligibility,
     decision: candidate.decision,
+    semanticFacts: candidate.semanticFacts,
+    factAssessment: candidate.factAssessment,
     factLayers: candidate.factLayers,
   };
 
@@ -55,6 +57,8 @@ export function buildSummary(candidate) {
     contextBinding: candidate.contextBinding,
     eligibility: candidate.eligibility,
     decision: candidate.decision,
+    semanticFacts: candidate.semanticFacts,
+    factAssessment: candidate.factAssessment,
     factLayers: candidate.factLayers,
     candidateDigest: candidateDigest(candidate),
   };

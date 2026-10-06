@@ -14,6 +14,7 @@ import { validateEvidence } from './evidence.js';
 import { evaluateImpact } from './impact.js';
 import { mapInvariants } from './invariants.js';
 import { publishGithubResult } from './integrations/github/publisher.js';
+import { interpretSemanticFacts } from './facts/interpreter.js';
 
 /**
  * 評估 optional fact layers，將 unresolved facts 統一轉為 reducer blockers。
@@ -102,6 +103,8 @@ export function runAnalysis(input = {}) {
     eligibility,
     decision,
     errors: [],
+    ...(input.semanticFacts !== undefined ? { semanticFacts: input.semanticFacts } : {}),
+    ...(input.factAssessment !== undefined ? { factAssessment: input.factAssessment } : {}),
     ...(Object.keys(factLayers).length > 1 ? { factLayers } : {}),
   };
 }
@@ -214,6 +217,38 @@ export async function runStoredSafetyMvpWithGithub(
 }
 
 /**
+ * 將 AdapterResult 依序完成 validation、normalization 與 semantic fact interpretation。
+ * Adapter 只能提供 facts；是否形成 blocker 由受信任 interpreter 決定。
+ *
+ * @param {object} result - 含 identity 與 AdapterResult 的輸入，或 raw AdapterResult。
+ * @param {{valid: boolean, errors: string[]}} validation - AdapterResult validation。
+ * @param {object[]} [factInterpreters=[]] - 具 id/version 的 semantic fact interpreters。
+ * @returns {object} 可交給 Safety MVP 的 normalized input。
+ */
+function prepareAdapterAnalysisInput(result, validation, factInterpreters = []) {
+  const normalized = normalizeAdapterResult(result, validation, factInterpreters);
+  if (normalized.analysisError) return normalized;
+
+  const factAssessment = interpretSemanticFacts(
+    normalized.semanticFacts ?? [],
+    factInterpreters,
+    {
+      identity: normalized.identity,
+      contextBinding: normalized.contextBinding,
+    },
+  );
+
+  return {
+    ...normalized,
+    riskBlockers: [...new Set([
+      ...(normalized.riskBlockers ?? []),
+      ...factAssessment.blockers,
+    ])].sort(),
+    factAssessment,
+  };
+}
+
+/**
  * 驗證 AdapterResult、正規化 facts，並交由既有 Safety MVP runner 決定。
  *
  * @param {object} result - 含 identity 與 AdapterResult 的輸入，或 raw AdapterResult。
@@ -221,11 +256,16 @@ export async function runStoredSafetyMvpWithGithub(
  * @param {{succeed?: boolean}} [summaryOptions={}] - Summary publication 選項。
  * @returns {{candidate: object, publication: object, summary: object|null, check: object}} pipeline 結果。
  */
-export function runNormalizedAdapterResult(result, authorityState, summaryOptions = {}) {
+export function runNormalizedAdapterResult(
+  result,
+  authorityState,
+  summaryOptions = {},
+  factInterpreters = [],
+) {
   const adapterResult = result?.adapterResult ?? result;
   const validation = validateAdapterResult(adapterResult);
   return runSafetyMvp(
-    normalizeAdapterResult(result, validation),
+    prepareAdapterAnalysisInput(result, validation, factInterpreters),
     authorityState,
     summaryOptions,
   );
@@ -282,7 +322,7 @@ export async function runAdapterPipeline(
   }
 
   return runSafetyMvp(
-    normalizeAdapterResult(input, validation),
+    prepareAdapterAnalysisInput(input, validation, options.factInterpreters ?? []),
     authorityState,
     options,
   );
@@ -323,7 +363,11 @@ export async function runStoredAdapterPipeline(
     }, 'ADAPTER_RESULT_INVALID');
   }
 
-  const normalized = normalizeAdapterResult(input, validation);
+  const normalized = prepareAdapterAnalysisInput(
+    input,
+    validation,
+    options.factInterpreters ?? [],
+  );
   return transport
     ? runStoredSafetyMvpWithGithub(normalized, store, transport, options)
     : runStoredSafetyMvp(normalized, store, options);

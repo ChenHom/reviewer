@@ -1,4 +1,5 @@
 import { createAnalysisContextBinding, validateAdapterResult } from './contracts.js';
+import { canonicalSemanticFacts } from '../facts/contracts.js';
 
 const coverageStatusByAdapterStatus = Object.freeze({
   COMPLETE: 'COMPLETE',
@@ -85,9 +86,10 @@ function normalizeObligation(obligation) {
  *
  * @param {object|undefined} input - 含 identity 與 adapterResult 的輸入，或 raw AdapterResult。
  * @param {{valid: boolean, errors: string[]}} [validation] - 可重用的 AdapterResult validation 結果。
+ * @param {object[]} [factInterpreters=[]] - executable interpreter descriptors。
  * @returns {object} normalized analysis input；輸入無效時只回傳 analysis failure input。
  */
-export function normalizeAdapterResult(input, validation = undefined) {
+export function normalizeAdapterResult(input, validation = undefined, factInterpreters = []) {
   const { adapterResult, identity } = unpackInput(input);
   const resultValidation = validation ?? validateAdapterResult(adapterResult);
 
@@ -101,10 +103,11 @@ export function normalizeAdapterResult(input, validation = undefined) {
 
   return {
     identity,
-    contextBinding: createAnalysisContextBinding(adapterResult),
+    contextBinding: createAnalysisContextBinding(adapterResult, factInterpreters),
     coverage: {
       obligations: adapterResult.obligations.map(normalizeObligation),
     },
+    semanticFacts: canonicalSemanticFacts(adapterResult.facts ?? []),
     riskBlockers: [],
     policyRequirements: [],
     audit: false,
