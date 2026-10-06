@@ -35,7 +35,7 @@ jobs:
         run: composer install --working-dir=analyzers/php --no-interaction --no-progress --prefer-dist
 
       - name: Lint PHP analyzer
-        run: find analyzers/php/bin analyzers/php/src -name '*.php' -print0 | xargs -0 -n1 php -l
+        run: find analyzers/php/bin analyzers/php/src evaluation -name '*.php' -print0 | xargs -0 -n1 php -l
 
       - name: Run full release gate
         run: npm run test:all

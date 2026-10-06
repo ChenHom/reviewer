@@ -93,6 +93,16 @@ Analysis Failure Rate           0.0%
 Full Review Fallback Rate      25.0%
 ```
 
+Real-repo evaluation（[說明](evaluation/real-repo/README.md)；兩個真實 PHP 金流專案、3,033 個檔案，seed 42、rate 0.3，共 12,155 筆 mutation）：
+
+```
+Risky reduced (must be 0)       0
+Analyzer errors                 0
+Safe reduction rate         100.0%
+Unchanged reduction rate     99.9%   （其餘為空檔）
+Risky targeted rate          35.5%
+```
+
 Historical PR evaluator 的 CI pilot：
 
 ```
@@ -113,6 +123,7 @@ Historical 數字目前來自明確標示的 controlled fixture pilot，只驗�
 - [PR-B：PHP/Laravel Adapter](docs/tasks/2026-10-06-php-laravel-adapter.md)
 - [PR-C：Mutation Evaluation](docs/tasks/2026-10-06-mutation-evaluation.md)
 - [PR-D：Historical PR Evaluation](docs/tasks/2026-10-06-historical-pr-evaluation.md)
+- [Real-repo Evaluation：在真實 PHP 專案上產生 mutation 並驗證 gate](evaluation/real-repo/README.md)
 
 ## Release gate
 

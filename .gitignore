@@ -4,3 +4,4 @@ coverage/
 npm-debug.log*
 .DS_Store
 analyzers/php/vendor/
+real-repo-eval-output/
