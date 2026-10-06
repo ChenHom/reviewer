@@ -112,8 +112,25 @@ test('新增 standalone call 會輸出 CALL_ADDED 且 completeness 可被證明'
   )));
 });
 
-test('未支援的一般 PHP semantic change 必須 PARTIAL_PARSE 而不是誤判安全', async () => {
+test('運算子變更由 AST 解釋為 BINARY_OPERATOR_CHANGED，不會被誤判安全', async () => {
   const result = await analyze('unsupported-operator-change');
+
+  assert.deepEqual(validateAdapterResult(result), { valid: true, errors: [] });
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.facts.map(({ kind, properties }) => [
+    kind,
+    properties.operatorBefore,
+    properties.operatorAfter,
+  ]), [['BINARY_OPERATOR_CHANGED', '+', '-']]);
+});
+
+test('沒有對應 fact 的 PHP semantic change 必須 PARTIAL_PARSE 而不是誤判安全', async () => {
+  const result = await adapter.analyze({
+    identity,
+    path: 'app/Services/ExampleService.php',
+    beforeSource: "<?php\n\nfunction label() {\n    return 'paid';\n}\n",
+    afterSource: "<?php\n\nfunction label() {\n    return 'refunded';\n}\n",
+  });
 
   assert.deepEqual(validateAdapterResult(result), { valid: true, errors: [] });
   assert.equal(result.complete, false);
@@ -272,13 +289,13 @@ test('closure 內的巢狀 call 會被抽出，unwrap transaction 只留下 CALL
   );
 });
 
-test('鏈式 call 移除會輸出 ->method callee，且不放寬 completeness', async () => {
+test('鏈式 call 移除會輸出 ->method callee，並由 AST 解釋為完整', async () => {
   const result = await inlineAnalyze(
     wrap('        return Model::query()->lockForUpdate()->find($q);'),
     wrap('        return Model::query()->find($q);'),
   );
 
-  assert.equal(result.complete, false);
+  assert.equal(result.complete, true);
   assert.deepEqual(
     result.facts.map(({ kind, properties }) => [kind, properties.callee]),
     [['CALL_REMOVED', '->lockForUpdate']],
@@ -298,10 +315,10 @@ test('屬性鏈 receiver 會保留完整名稱', async () => {
   );
 });
 
-test('位置參數變更輸出 #index fact 但不 mask，維持 PARTIAL_PARSE', async () => {
+test('無法被更細 fact 解釋的位置參數變更輸出 #index fallback fact，維持 PARTIAL_PARSE', async () => {
   const result = await inlineAnalyze(
-    wrap("        $q->update(['amount' => $q->amount - 1]);"),
-    wrap("        $q->update(['amount' => $q->amount + 1]);"),
+    wrap("        $q->update(['amount' => 1]);"),
+    wrap("        $q->update(['amount' => 2]);"),
   );
 
   assert.equal(result.complete, false);
@@ -311,10 +328,22 @@ test('位置參數變更輸出 #index fact 但不 mask，維持 PARTIAL_PARSE', 
   assert.deepEqual(result.facts[0].properties, {
     callee: '$q->update',
     argument: '#0',
-    before: "['amount' => $q->amount - 1]",
-    after: "['amount' => $q->amount + 1]",
+    before: "['amount' => 1]",
+    after: "['amount' => 2]",
     changeSide: 'after',
   });
+});
+
+test('位置參數內的運算子變更由 BINARY_OPERATOR_CHANGED 解釋，不另外輸出 fallback fact', async () => {
+  const result = await inlineAnalyze(
+    wrap("        $q->update(['amount' => $q->amount - 1]);"),
+    wrap("        $q->update(['amount' => $q->amount + 1]);"),
+  );
+
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.facts.map(({ kind, properties }) => [kind, properties.before, properties.after]), [
+    ['BINARY_OPERATOR_CHANGED', '$q->amount - 1', '$q->amount + 1'],
+  ]);
 });
 
 test('含 closure 的位置參數不輸出 argument fact', async () => {
@@ -337,13 +366,13 @@ test('只有空白差異的參數不產生 fact', async () => {
   assert.deepEqual(result.facts, []);
 });
 
-test('巢狀 call 的 named argument 變更輸出 fact 但不 mask', async () => {
+test('巢狀 call 的 named argument 變更輸出 fact，並由 AST 解釋為完整', async () => {
   const result = await inlineAnalyze(
     wrap('        \\DB::transaction(function () use ($q) {\n            $q->charge(idempotencyKey: $a);\n        });'),
     wrap('        \\DB::transaction(function () use ($q) {\n            $q->charge(idempotencyKey: $b);\n        });'),
   );
 
-  assert.equal(result.complete, false);
+  assert.equal(result.complete, true);
   assert.deepEqual(
     result.facts.map(({ kind, properties }) => [kind, properties.argument]),
     [['CALL_ARGUMENT_CHANGED', 'idempotencyKey']],
@@ -429,4 +458,91 @@ test('mask 後 source 無法 tokenize 時判為 PARTIAL_PARSE 而不是 crash', 
 
   assert.equal(result.complete, false);
   assert.equal(result.obligations[0].status, 'PARTIAL_PARSE');
+});
+
+test('trailing comma、引號種類、array() 語法與括號差異不影響 AST，判為 COMPLETE 且無 fact', async () => {
+  const result = await inlineAnalyze(
+    wrap("        return $q->send(array('a' => 'x', 'b' => ($q->n + 1)));"),
+    wrap('        return $q->send([\n            "a" => "x",\n            "b" => $q->n + 1,\n        ]);'),
+  );
+
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.facts, []);
+});
+
+test('移除 early-exit guard 輸出 GUARD_REMOVED 並判為完整', async () => {
+  const result = await inlineAnalyze(
+    wrap("        if (!$q->valid()) {\n            throw new \\Exception('invalid');\n        }\n        return $q->id;"),
+    wrap('        return $q->id;'),
+  );
+
+  assert.equal(result.complete, true);
+  const guard = result.facts.find(({ kind }) => kind === 'GUARD_REMOVED');
+  assert.deepEqual(guard.properties, {
+    condition: '!$q->valid()',
+    exit: 'throw',
+    changeSide: 'before',
+  });
+  assert.equal(guard.subject, 'InlineService::run');
+});
+
+test('非 guard 的 if 被移除時仍為 PARTIAL_PARSE', async () => {
+  const result = await inlineAnalyze(
+    wrap("        if ($q->valid()) {\n            $total = 1;\n        }\n        return $q->id;"),
+    wrap('        return $q->id;'),
+  );
+
+  assert.equal(result.complete, false);
+});
+
+test('property 陣列移除元素輸出 ARRAY_ITEM_REMOVED 並帶 container', async () => {
+  const controller = (items) => `<?php\n\nreturn new class () extends BaseController {\n    protected $beforeActionList = [${items}];\n};\n`;
+  const result = await inlineAnalyze(
+    controller("'verifyToken', 'authorize'"),
+    controller("'verifyToken'"),
+  );
+
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.facts.map(({ kind, properties }) => [kind, properties]), [[
+    'ARRAY_ITEM_REMOVED',
+    {
+      container: 'property:$beforeActionList',
+      key: null,
+      value: "'authorize'",
+      changeSide: 'before',
+    },
+  ]]);
+});
+
+test('Route::group middleware 移除輸出帶 key path 的 ARRAY_ITEM_REMOVED', async () => {
+  const route = (items) => `<?php\n\nRoute::group(['middleware' => [${items}]], function () {\n    Route::get('/', 'HomeController@index');\n});\n`;
+  const result = await inlineAnalyze(
+    route("'auth:admin', 'loginBasic:admin'"),
+    route("'loginBasic:admin'"),
+  );
+
+  assert.equal(result.complete, true);
+  assert.deepEqual(
+    result.facts.map(({ kind, properties }) => [kind, properties.container, properties.value]),
+    [['ARRAY_ITEM_REMOVED', 'Route::group#0[middleware]', "'auth:admin'"]],
+  );
+});
+
+test('soundness：沒有 fact 時 COMPLETE 只發生在 AST 完全相同', async () => {
+  const cases = [
+    ["return 'a';", "return 'b';"],
+    ['return 1;', 'return 2;'],
+    ['return $q;', 'return !$q;'],
+    ['return foo($q);', 'return bar($q);'],
+    ['$q->a = 1;', '$q->b = 1;'],
+    ['return $q ?? 1;', 'return $q ?: 1;'],
+  ];
+
+  for (const [before, after] of cases) {
+    const result = await inlineAnalyze(wrap(`        ${before}`), wrap(`        ${after}`));
+    assert.ok(
+      result.complete === false || result.facts.length > 0,
+      `${before} → ${after} 不可無 fact 地判為 COMPLETE`,
+    );
+  }
 });

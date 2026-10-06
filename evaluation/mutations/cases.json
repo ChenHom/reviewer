@@ -46,9 +46,14 @@
     "classification": "critical",
     "fixture": "wallet-condition-change",
     "path": "app/Services/WalletService.php",
-    "description": "Wallet balance boundary changes from < to <= and is intentionally unsupported.",
+    "description": "Wallet balance boundary changes from < to <=.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
-    "expectedFactKinds": []
+    "expectedFactKinds": [
+      "BINARY_OPERATOR_CHANGED"
+    ],
+    "expectedReasons": [
+      "COMPARISON_OPERATOR_CHANGED"
+    ]
   },
   {
     "id": "MUT-005",
@@ -128,7 +133,7 @@
     "description": "auth:admin middleware is removed from a Route::group.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
     "expectedFactKinds": [
-      "CALL_ARGUMENT_CHANGED"
+      "ARRAY_ITEM_REMOVED"
     ],
     "expectedReasons": [
       "MIDDLEWARE_GUARD_REMOVED"
@@ -153,10 +158,41 @@
     "classification": "critical",
     "fixture": "balance-sign-flip",
     "path": "app/Entities/Observers/FreezeObserver.php",
-    "description": "Cash-flow debit flips to a credit (- to +); no domain interpreter, must fall back to human review.",
+    "description": "Cash-flow debit flips to a credit (- to +).",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
     "expectedFactKinds": [
-      "CALL_ARGUMENT_CHANGED"
+      "BINARY_OPERATOR_CHANGED"
+    ],
+    "expectedReasons": [
+      "ARITHMETIC_OPERATOR_CHANGED"
+    ]
+  },
+  {
+    "id": "MUT-013",
+    "classification": "critical",
+    "fixture": "guard-removed",
+    "path": "app/Adapters/ChannelNotify/IwpNotifyHandler.php",
+    "description": "Signature check stays but its throw guard is removed, so a failed check no longer stops the callback.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedFactKinds": [
+      "GUARD_REMOVED"
+    ],
+    "expectedReasons": [
+      "GUARD_CLAUSE_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-014",
+    "classification": "critical",
+    "fixture": "before-action-authorize-removed",
+    "path": "admin/src/entries/v1/customer/settings/moneySwitch/patch.php",
+    "description": "authorize is removed from a base-controller $beforeActionList property.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedFactKinds": [
+      "ARRAY_ITEM_REMOVED"
+    ],
+    "expectedReasons": [
+      "MIDDLEWARE_GUARD_REMOVED"
     ]
   },
   {
@@ -183,6 +219,15 @@
     "fixture": "transaction-format-only",
     "path": "app/Entities/Observers/FreezeObserver.php",
     "description": "Comment and line-wrapping change inside a \\DB::transaction closure.",
+    "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "expectedFactKinds": []
+  },
+  {
+    "id": "SAFE-004",
+    "classification": "safe",
+    "fixture": "syntax-only-equivalent",
+    "path": "app/Services/SettlementService.php",
+    "description": "array() to [], quote style, redundant parentheses and trailing comma only.",
     "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
     "expectedFactKinds": []
   }

@@ -15,9 +15,9 @@ use PhpParser\Token;
 /**
  * 以 PHP-Parser AST 抽取 method / static call。
  *
- * 輸出格式與舊 token-based extractor 相同（callee、subject、byte ranges、
- * masking 能力、named / positional arguments），讓 fact 生成與 completeness
- * 邏輯不需改動即可替換。
+ * callee 命名、subject 與 byte ranges 沿用舊 token-based extractor 的規則，
+ * 讓既有 fact 與 interpreter 不受 parser 替換影響。每筆 call 帶 `nodeId`，
+ * 供 StructuralDiff 把 AST 差異對應回 call facts。
  */
 final class CallExtractor
 {
@@ -39,6 +39,7 @@ final class CallExtractor
         private readonly string $source,
         private readonly string $path,
         private readonly array $tokens,
+        private readonly Canonicalizer $hasher,
     ) {
         foreach ($tokens as $position => $token) {
             if (!in_array($token->id, self::IGNORED_TOKENS, true)) {
@@ -53,10 +54,15 @@ final class CallExtractor
      * @param list<Token> $tokens parser token stream。
      * @return list<array<string, mixed>> calls（依 startByte 排序）。
      */
-    public static function extract(array $statements, array $tokens, string $source, string $path): array
-    {
-        $extractor = new self($source, $path, $tokens);
-        $extractor->walkList($statements, null, null, 0);
+    public static function extract(
+        array $statements,
+        array $tokens,
+        string $source,
+        string $path,
+        Canonicalizer $hasher,
+    ): array {
+        $extractor = new self($source, $path, $tokens, $hasher);
+        $extractor->walkList($statements, null, null);
 
         $calls = $extractor->calls;
         usort($calls, static fn (array $left, array $right): int => $left['startByte'] <=> $right['startByte']);
@@ -67,18 +73,18 @@ final class CallExtractor
     /**
      * @param array<mixed> $nodes
      */
-    private function walkList(array $nodes, ?string $class, ?string $function, int $argumentDepth): void
+    private function walkList(array $nodes, ?string $class, ?string $function): void
     {
         foreach ($nodes as $node) {
             if ($node instanceof Node) {
-                $this->walk($node, $class, $function, $argumentDepth);
+                $this->walk($node, $class, $function);
             } elseif (is_array($node)) {
-                $this->walkList($node, $class, $function, $argumentDepth);
+                $this->walkList($node, $class, $function);
             }
         }
     }
 
-    private function walk(Node $node, ?string $class, ?string $function, int $argumentDepth): void
+    private function walk(Node $node, ?string $class, ?string $function): void
     {
         if ($node instanceof Stmt\ClassLike) {
             // 匿名 class 沒有名稱；method subject 只保留 method name。
@@ -94,35 +100,27 @@ final class CallExtractor
                 || $node instanceof Expr\StaticCall)
             && $node->name instanceof Identifier
         ) {
-            $receiver = $node instanceof Expr\StaticCall ? $node->class : $node->var;
-            $call = $this->describeCall($node, $class, $function, $argumentDepth > 0);
-
-            if ($receiver instanceof Node) {
-                $this->walk($receiver, $class, $function, $argumentDepth);
-            }
-            $this->walkList($node->args, $class, $function, $call === null ? $argumentDepth : $argumentDepth + 1);
-            return;
+            $this->describeCall($node, $class, $function);
         }
 
         foreach ($node->getSubNodeNames() as $name) {
             $child = $node->$name;
             if ($child instanceof Node) {
-                $this->walk($child, $class, $function, $argumentDepth);
+                $this->walk($child, $class, $function);
             } elseif (is_array($child)) {
-                $this->walkList($child, $class, $function, $argumentDepth);
+                $this->walkList($child, $class, $function);
             }
         }
     }
 
     /**
-     * @return array<string, mixed>|null 加入的 call；不支援的 receiver 回傳 null。
+     * 記錄一筆 call；不支援的 receiver（`static::`、`$a['k']->m()` 等）不記錄。
      */
     private function describeCall(
         Expr\MethodCall|Expr\NullsafeMethodCall|Expr\StaticCall $node,
         ?string $class,
         ?string $function,
-        bool $isNested,
-    ): ?array {
+    ): void {
         $methodName = $node->name->toString();
         $isStatic = $node instanceof Expr\StaticCall;
         $operator = $isStatic ? '::' : ($node instanceof Expr\NullsafeMethodCall ? '?->' : '->');
@@ -133,21 +131,19 @@ final class CallExtractor
         $operatorPosition = $this->previousSignificantPosition($node->name->getStartTokenPos());
         $leftPosition = $operatorPosition === null ? null : $this->previousSignificantPosition($operatorPosition);
         if ($leftPosition === null) {
-            return null;
+            return;
         }
 
-        $isChained = false;
         if ($this->tokens[$leftPosition]->text === ')') {
             if ($isStatic) {
-                return null;
+                return;
             }
-            $isChained = true;
             $startPosition = $operatorPosition;
             $callee = $operator . $methodName;
         } else {
             $described = $this->receiverText($receiver);
             if ($described === null || $receiver->getEndTokenPos() !== $leftPosition) {
-                return null;
+                return;
             }
             [$receiverText, $startPosition] = $described;
             $callee = $receiverText . $operator . $methodName;
@@ -162,35 +158,18 @@ final class CallExtractor
             $statementEnd = $this->tokenEnd($afterClose);
         }
 
-        $previousPosition = $this->previousSignificantPosition($startPosition);
-        $isStandaloneStatement = !$isChained
-            && $statementEnd > $callEnd
-            && (
-                $previousPosition === null
-                || in_array($this->tokens[$previousPosition]->text, ['{', '}', ';', ':'], true)
-            );
-        $canMaskAsAtomicStatement = $isStandaloneStatement
-            && !$isNested
-            && !$this->rangeContainsCallback($openPosition + 1, $closePosition - 1);
+        $hasCallbackBody = $this->rangeContainsCallback($openPosition + 1, $closePosition - 1);
 
-        [$named, $positional] = $this->arguments($node->args);
-        $startByte = $this->tokens[$startPosition]->pos;
-
-        $call = [
+        $this->calls[] = [
+            'nodeId' => spl_object_id($node),
+            'hasCallbackBody' => $hasCallbackBody,
             'callee' => $callee,
             'subject' => $this->subject($class, $function),
-            'startByte' => $startByte,
+            'startByte' => $this->tokens[$startPosition]->pos,
             'endByte' => $callEnd,
             'statementEndByte' => $statementEnd,
-            'isStandaloneStatement' => $isStandaloneStatement,
-            'canMaskAsAtomicStatement' => $canMaskAsAtomicStatement,
-            'canMaskArguments' => !$isNested && !$isChained,
-            'namedArguments' => $named,
-            'positionalArguments' => $positional,
+            'namedArguments' => $this->namedArguments($node->args),
         ];
-        $this->calls[] = $call;
-
-        return $call;
     }
 
     /**
@@ -242,62 +221,26 @@ final class CallExtractor
 
     /**
      * @param array<Arg|Node\VariadicPlaceholder> $args
-     * @return array{0: array<string, array<string, mixed>>, 1: array<int, array<string, mixed>>}
+     * @return array<string, array<string, mixed>> named argument → expression / canonical signature / byte range
      */
-    private function arguments(array $args): array
+    private function namedArguments(array $args): array
     {
         $named = [];
-        $positional = [];
-
-        foreach ($args as $index => $arg) {
-            if ($arg instanceof Arg && $arg->name !== null) {
-                $named[$arg->name->toString()] = $this->argument($arg->value);
-            } else {
-                $positional[$index] = $this->argument($arg);
+        foreach ($args as $arg) {
+            if (!$arg instanceof Arg || $arg->name === null) {
+                continue;
             }
+            $startByte = $arg->value->getStartFilePos();
+            $endByte = $arg->value->getEndFilePos() + 1;
+            $named[$arg->name->toString()] = [
+                'expression' => trim(substr($this->source, $startByte, $endByte - $startByte)),
+                'signature' => $this->hasher->hash($arg->value),
+                'startByte' => $startByte,
+                'endByte' => $endByte,
+            ];
         }
 
-        return [$named, $positional];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function argument(Node $node): array
-    {
-        $startPosition = $node->getStartTokenPos();
-        $endPosition = $node->getEndTokenPos();
-        $startByte = $node->getStartFilePos();
-        $endByte = $node->getEndFilePos() + 1;
-
-        return [
-            'expression' => trim(substr($this->source, $startByte, $endByte - $startByte)),
-            'signature' => $this->tokenRangeSignature($startPosition, $endPosition),
-            'hasCallbackBody' => $this->rangeContainsCallback($startPosition, $endPosition),
-            'startByte' => $startByte,
-            'endByte' => $endByte,
-        ];
-    }
-
-    private function tokenRangeSignature(int $startPosition, int $endPosition): string
-    {
-        $parts = [];
-        for ($position = $startPosition; $position <= $endPosition; $position += 1) {
-            $token = $this->tokens[$position];
-            if (!in_array($token->id, self::IGNORED_TOKENS, true)) {
-                $parts[] = self::tokenSignatureId($token) . ':' . $token->text;
-            }
-        }
-
-        return implode('|', $parts);
-    }
-
-    /**
-     * 與舊 token_get_all signature 相容：單字元 token 的 id 記為 0。
-     */
-    public static function tokenSignatureId(Token $token): int
-    {
-        return $token->id < 256 ? 0 : $token->id;
+        return $named;
     }
 
     private function rangeContainsCallback(int $startPosition, int $endPosition): bool

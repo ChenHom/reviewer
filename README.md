@@ -56,18 +56,22 @@ Authoritative Candidate / Summary / Check
 - versioned Fact Interpreter identity 與 `interpreterSetDigest`
 - JSON-safe deterministic Fact properties
 - PHP CLI analyzer，以 [nikic/php-parser](https://github.com/nikic/PHP-Parser) 5.9.0（版本鎖定）解析 AST；先用最新 PHP 語法，失敗時 before / after 一起改用 PHP 7.4 語法
+- AST 結構比對判定 completeness：排版、註解、trailing comma、引號種類、`array()` / `[]`、多餘括號不影響結果；每個被「解釋」的差異都必須對應一個 fact，因此沒有 fact 的 COMPLETE 只會發生在兩棵 AST 完全相同時
 - Generic facts：
-  - `CALL_ARGUMENT_CHANGED`（named argument；位置參數以 `#index` 表示，只輸出 fact、不放寬 completeness）
-  - `CALL_REMOVED`
-  - `CALL_ADDED`
-- Analyzer 會抽出 closure 內的巢狀 call 與鏈式 call（如 `->lockForUpdate`），並保留完整 receiver（如 `$this->adminDB->transaction`）；巢狀 / 鏈式 call 不參與 masking
+  - `CALL_ARGUMENT_CHANGED`（named argument；位置參數只在無法被更細 fact 解釋時以 `#index` 輸出，且不視為已解釋）
+  - `CALL_REMOVED` / `CALL_ADDED`（含 closure 內的巢狀 call 與鏈式 call，如 `->lockForUpdate`；receiver 保留完整名稱，如 `$this->adminDB->transaction`）
+  - `BINARY_OPERATOR_CHANGED`（左右運算元不變，只有運算子改變）
+  - `GUARD_REMOVED` / `GUARD_ADDED`（body 只有 throw / return / exit 的 if）
+  - `ARRAY_ITEM_REMOVED` / `ARRAY_ITEM_ADDED`（帶 container，如 `property:$beforeActionList`、`Route::group#0[middleware]`）
 - Deterministic PHP/Laravel interpreters（callee 會先正規化 fully-qualified 前導 `\`）：
   - Payment idempotency identity change
   - Transaction boundary / rollback removal（`DB::transaction`、`beginTransaction`、`commit`、`rollBack`，含 `\DB::` 與 DB connection receiver）
   - Authorization guard removal（`$this->authorize`、`Gate::authorize`）
-  - Middleware guard removal（`$this->middleware(...)`、`Route::group` / `->middleware` 移除 middleware）
+  - Middleware guard removal（`$this->middleware(...)`、`Route::group` / `->middleware` / `$middleware` / `$beforeActionList` 移除 middleware）
   - Row lock removal（`lockForUpdate`、`sharedLock`）
   - Payment signature verification removal（`verifySign`、`verificationSign`、`checkSign` 等）
+  - Operator change（comparison / arithmetic / logical）
+  - Guard clause removal / addition
 - persisted authority / stale analysis protection
 - Summary / candidate digest binding
 - Mutation Evaluation Harness
@@ -81,11 +85,11 @@ Mutation corpus：
 ```
 Critical Recall               100.0%
 False Negative Rate             0.0%
-Critical Direct Fact Coverage  91.7%
-Safe Reduction Rate            66.7%
-Partial Coverage Rate          60.0%
+Critical Direct Fact Coverage 100.0%
+Safe Reduction Rate            75.0%
+Partial Coverage Rate          22.2%
 Analysis Failure Rate           0.0%
-Full Review Fallback Rate      60.0%
+Full Review Fallback Rate      22.2%
 ```
 
 Historical PR evaluator 的 CI pilot：

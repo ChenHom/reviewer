@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import {
   AUTHORIZATION_GUARD_INTERPRETER,
+  GUARD_CLAUSE_INTERPRETER,
+  OPERATOR_CHANGE_INTERPRETER,
   MIDDLEWARE_GUARD_INTERPRETER,
   PAYMENT_IDEMPOTENCY_INTERPRETER,
   PHP_LARAVEL_DOMAIN_INTERPRETERS,
@@ -236,4 +238,85 @@ test('payment idempotency interpreter 不處理位置參數', () => {
     blockersOf(PAYMENT_IDEMPOTENCY_INTERPRETER, argumentChanged('$gateway->charge', '#0', '$a', '$b')),
     null,
   );
+});
+
+function arrayItemRemoved(container, value = "'auth'") {
+  return {
+    id: 'php-4',
+    kind: 'ARRAY_ITEM_REMOVED',
+    properties: { container, key: null, value, changeSide: 'before' },
+  };
+}
+
+test('middleware interpreter 處理 middleware container 的 ARRAY_ITEM_REMOVED', () => {
+  for (const container of [
+    'Route::group#0[middleware]',
+    'Route::group#0[prefix][middleware]',
+    '->middleware#0',
+    'Route::middleware#0',
+    'property:$middleware',
+    'property:$beforeActionList',
+  ]) {
+    assert.deepEqual(
+      blockersOf(MIDDLEWARE_GUARD_INTERPRETER, arrayItemRemoved(container)),
+      ['MIDDLEWARE_GUARD_REMOVED'],
+      container,
+    );
+  }
+  assert.deepEqual(
+    blockersOf(MIDDLEWARE_GUARD_INTERPRETER, {
+      id: 'php-8',
+      kind: 'ARRAY_ITEM_REMOVED',
+      properties: {
+        container: 'Route::group#0',
+        key: "'middleware'",
+        value: "'check.permission:admin'",
+        changeSide: 'before',
+      },
+    }),
+    ['MIDDLEWARE_GUARD_REMOVED'],
+  );
+  for (const container of ['Route::group#0', 'property:$fillable', 'assign:$middleware', '->where#0', 'file']) {
+    assert.equal(blockersOf(MIDDLEWARE_GUARD_INTERPRETER, arrayItemRemoved(container)), null, container);
+  }
+  assert.equal(
+    blockersOf(MIDDLEWARE_GUARD_INTERPRETER, {
+      id: 'php-5',
+      kind: 'ARRAY_ITEM_ADDED',
+      properties: { container: 'property:$middleware', key: null, value: "'x'", changeSide: 'after' },
+    }),
+    null,
+  );
+});
+
+test('operator interpreter 依運算子類別回傳 blocker', () => {
+  const operatorChanged = (before, after) => ({
+    id: 'php-6',
+    kind: 'BINARY_OPERATOR_CHANGED',
+    properties: { operatorBefore: before, operatorAfter: after, before: 'a', after: 'b', changeSide: 'after' },
+  });
+
+  assert.deepEqual(blockersOf(OPERATOR_CHANGE_INTERPRETER, operatorChanged('<', '<=')), ['COMPARISON_OPERATOR_CHANGED']);
+  assert.deepEqual(blockersOf(OPERATOR_CHANGE_INTERPRETER, operatorChanged('===', '==')), ['COMPARISON_OPERATOR_CHANGED']);
+  assert.deepEqual(blockersOf(OPERATOR_CHANGE_INTERPRETER, operatorChanged('-', '+')), ['ARITHMETIC_OPERATOR_CHANGED']);
+  assert.deepEqual(blockersOf(OPERATOR_CHANGE_INTERPRETER, operatorChanged('&&', '||')), ['LOGICAL_OPERATOR_CHANGED']);
+  assert.deepEqual(blockersOf(OPERATOR_CHANGE_INTERPRETER, operatorChanged('.', '+')), ['OPERATOR_CHANGED']);
+  assert.deepEqual(blockersOf(OPERATOR_CHANGE_INTERPRETER, operatorChanged('<', '+')), ['OPERATOR_CHANGED']);
+  assert.equal(
+    blockersOf(OPERATOR_CHANGE_INTERPRETER, { id: 'x', kind: 'BINARY_OPERATOR_CHANGED', properties: {} }),
+    null,
+  );
+  assert.equal(blockersOf(OPERATOR_CHANGE_INTERPRETER, removed('$a->b')), null);
+});
+
+test('guard clause interpreter 處理 guard 的移除與新增', () => {
+  const guard = (kind) => ({
+    id: 'php-7',
+    kind,
+    properties: { condition: '!$ok', exit: 'throw', changeSide: kind === 'GUARD_REMOVED' ? 'before' : 'after' },
+  });
+
+  assert.deepEqual(blockersOf(GUARD_CLAUSE_INTERPRETER, guard('GUARD_REMOVED')), ['GUARD_CLAUSE_REMOVED']);
+  assert.deepEqual(blockersOf(GUARD_CLAUSE_INTERPRETER, guard('GUARD_ADDED')), ['GUARD_CLAUSE_ADDED']);
+  assert.equal(blockersOf(GUARD_CLAUSE_INTERPRETER, removed('$a->b')), null);
 });

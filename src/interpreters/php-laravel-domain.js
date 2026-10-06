@@ -130,10 +130,40 @@ export const AUTHORIZATION_GUARD_INTERPRETER = Object.freeze({
   },
 });
 
+const middlewareProperties = new Set(['$middleware', '$middlewares', '$beforeActionList']);
+
+/**
+ * 判斷 ARRAY_ITEM_REMOVED 的 container 是否為 middleware 宣告。
+ *
+ * @param {unknown} container - fact properties.container。
+ * @returns {boolean} 是否為 middleware container。
+ */
+function isMiddlewareContainer(container) {
+  if (typeof container !== 'string') return false;
+  if (container.startsWith('property:')) {
+    return middlewareProperties.has(container.slice('property:'.length));
+  }
+
+  return /\[middleware\]$/.test(container) || /(->|::)middleware#\d+$/.test(container);
+}
+
 export const MIDDLEWARE_GUARD_INTERPRETER = Object.freeze({
   id: 'php-laravel-middleware-guard',
-  version: '1.0.0',
+  version: '1.1.0',
   interpret(fact) {
+    // `Route::group(['middleware' => [...]])`、`->middleware([...])` 或
+    // `$middleware` / `$beforeActionList` property 中移除一個元素，
+    // 或整個 `'middleware' => ...` 設定被移除。
+    if (
+      fact?.kind === 'ARRAY_ITEM_REMOVED'
+      && (
+        isMiddlewareContainer(fact?.properties?.container)
+        || /^['"]middleware['"]$/.test(fact?.properties?.key ?? '')
+      )
+    ) {
+      return { handled: true, blockers: ['MIDDLEWARE_GUARD_REMOVED'] };
+    }
+
     const parts = calleeParts(fact?.properties?.callee);
     if (!parts) return { handled: false };
 
@@ -200,6 +230,58 @@ export const SIGNATURE_VERIFICATION_INTERPRETER = Object.freeze({
   },
 });
 
+const comparisonOperators = new Set(['<', '<=', '>', '>=', '==', '!=', '===', '!==', '<>', '<=>']);
+const arithmeticOperators = new Set(['+', '-', '*', '/', '%', '**']);
+const logicalOperators = new Set(['&&', '||', 'and', 'or', 'xor']);
+
+/**
+ * 依 operator 類別回傳 blocker。
+ *
+ * @param {string} before - 變更前 operator。
+ * @param {string} after - 變更後 operator。
+ * @returns {string} blocker code。
+ */
+function operatorBlocker(before, after) {
+  const both = (set) => set.has(before) && set.has(after);
+  if (both(comparisonOperators)) return 'COMPARISON_OPERATOR_CHANGED';
+  if (both(arithmeticOperators)) return 'ARITHMETIC_OPERATOR_CHANGED';
+  if (both(logicalOperators)) return 'LOGICAL_OPERATOR_CHANGED';
+  return 'OPERATOR_CHANGED';
+}
+
+export const OPERATOR_CHANGE_INTERPRETER = Object.freeze({
+  id: 'php-operator-change',
+  version: '1.0.0',
+  interpret(fact) {
+    const before = fact?.properties?.operatorBefore;
+    const after = fact?.properties?.operatorAfter;
+    if (
+      fact?.kind !== 'BINARY_OPERATOR_CHANGED'
+      || typeof before !== 'string'
+      || typeof after !== 'string'
+    ) {
+      return { handled: false };
+    }
+
+    return { handled: true, blockers: [operatorBlocker(before, after)] };
+  },
+});
+
+export const GUARD_CLAUSE_INTERPRETER = Object.freeze({
+  id: 'php-guard-clause',
+  version: '1.0.0',
+  interpret(fact) {
+    if (fact?.kind === 'GUARD_REMOVED') {
+      return { handled: true, blockers: ['GUARD_CLAUSE_REMOVED'] };
+    }
+    if (fact?.kind === 'GUARD_ADDED') {
+      return { handled: true, blockers: ['GUARD_CLAUSE_ADDED'] };
+    }
+
+    return { handled: false };
+  },
+});
+
 export const PHP_LARAVEL_DOMAIN_INTERPRETERS = Object.freeze([
   PAYMENT_IDEMPOTENCY_INTERPRETER,
   TRANSACTION_BOUNDARY_INTERPRETER,
@@ -207,4 +289,6 @@ export const PHP_LARAVEL_DOMAIN_INTERPRETERS = Object.freeze([
   MIDDLEWARE_GUARD_INTERPRETER,
   ROW_LOCK_INTERPRETER,
   SIGNATURE_VERIFICATION_INTERPRETER,
+  OPERATOR_CHANGE_INTERPRETER,
+  GUARD_CLAUSE_INTERPRETER,
 ]);
