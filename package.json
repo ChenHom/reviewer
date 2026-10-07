@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "docker:build": "docker build --tag reviewer:local .",
+    "review:docker": "npm run docker:build && sh bin/review-docker.sh",
     "lint": "eslint bin src tests evaluation",
     "prepare": "simple-git-hooks",
     "test": "node --test",
