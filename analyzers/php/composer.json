@@ -1,0 +1,19 @@
+{
+    "name": "reviewer/php-analyzer",
+    "description": "Deterministic PHP semantic fact analyzer for the Reviewer PHP/Laravel adapter.",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.3",
+        "nikic/php-parser": "5.9.0"
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    },
+    "autoload": {
+        "psr-4": {
+            "Reviewer\\PhpAnalyzer\\": "src/"
+        }
+    }
+}

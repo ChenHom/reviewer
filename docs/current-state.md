@@ -64,7 +64,7 @@ Generic Semantic Facts
 PHP/Laravel Domain Interpreters
 ```
 
-Adapter 目前輸出 generic facts：
+PR-B 完成時 Adapter 輸出的 generic facts（之後 analyzer 已改用 PHP-Parser AST，並增加運算子、guard、陣列元素、字面值、條件反轉、回傳值、參數順序、變數等 facts；目前完整清單見 [README「已實作」](../README.md#已實作)）：
 
 - `CALL_ARGUMENT_CHANGED`
 - `CALL_REMOVED`

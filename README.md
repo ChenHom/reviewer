@@ -49,21 +49,73 @@ Authoritative Candidate / Summary / Check
 
 目前第一個 executable Adapter 是 PHP/Laravel。
 
+## Review 一個 PR
+
+```bash
+npm run analyzer:install   # 第一次需要安裝 PHP analyzer 依賴
+
+node bin/review.js --repo /path/to/project --base origin/master --head HEAD
+```
+
+對 `base..head` 的每個變更檔案逐一決策，列出需要 Human Review 的檔案、原因與行號。`TARGETED` 表示變更已被具體 fact 完整解釋、標示位置是 review 的起點；`FULL` 表示有無法自動解釋的變更、需完整 review 該檔案。兩者都仍需 review 整個檔案（見「目前能力邊界」）：
+
+```
+Review：HUMAN_REVIEW_REQUIRED（2/4 個檔案需要 review；TARGETED 1、FULL 1）
+
+需要 review：
+  FULL     composer.json
+           - UNSUPPORTED_FILE_TYPE（非 PHP 檔案，未分析）
+           變更位置：head:L8
+  TARGETED app/Services/FreezeService.php
+           - COMPARISON_OPERATOR_CHANGED
+           變更位置：head:L87
+           · head:L87 運算子 < → <=：$cash->amount < $amount → $cash->amount <= $amount
+
+不需要 review（2）：
+  app/Entities/Observers/FreezeObserver.php
+  app/Services/TransactionCheckoutServices.php
+```
+
+- 只有 `.php` 的修改與 rename 會送進 analyzer；新增、刪除、非 PHP、binary、symlink、submodule 檔案一律 `FULL`。
+- rename 與檔案權限變更即使內容等價也要求 review（`FILE_RENAMED`、`FILE_MODE_CHANGED`）。
+- PR 層級的決策只有在**所有**檔案都不需 review 時才是 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
+- `--json` 輸出完整報表，`--out` 另存一份；`--fail-on-review` 讓需要 review 時 exit code 為 1，可直接放進 CI。
+
 ## 已實作
 
 - Semantic Fact contract 與 fail-closed ingress
 - `semanticFactsDigest`
 - versioned Fact Interpreter identity 與 `interpreterSetDigest`
 - JSON-safe deterministic Fact properties
-- PHP 8.4 CLI analyzer
+- PHP CLI analyzer，以 [nikic/php-parser](https://github.com/nikic/PHP-Parser) 5.9.0（版本鎖定）解析 AST；先用最新 PHP 語法，失敗時 before / after 一起改用 PHP 7.4 語法
+- AST 結構比對判定 completeness：排版、註解、trailing comma、引號種類、`array()` / `[]`、多餘括號不影響結果；每個被「解釋」的差異都必須對應一個 fact，因此沒有 fact 的 COMPLETE 只會發生在兩棵 AST 完全相同時（區域變數以 canonical 名稱比較，見下）
+- Scope-aware 區域變數改名：method / function 內一致的區域變數改名視為等價（可安全減少 Review）。參數（named argument API）、`$this`、superglobal、magic local、`global` 變數與頂層變數不改名；scope 內出現 `compact`、`extract`、`get_defined_vars`、`$$x`、`eval`、`include` / `require`、單參數 `parse_str` 時整個 scope 不做改名正規化（含 `use function compact as x` 等別名）
+- `__LINE__` 的行號與 `__COMPILER_HALT_OFFSET__` 納入 AST 比較：排版變更讓它們的值改變時不視為等價
+- 判為等價前同時檢查 PHP 8 與 PHP 7 的解讀（7.4 語法，`#[` 視為註解）：兩邊的可解析性必須一致、且兩種語法下都等價，否則回報 `PHP_GRAMMAR_DIVERGENCE`（例如 `.` 與 `+` 的優先順序在 PHP 8 改變）。舊版 PHP 不支援的新語法（例如參數 trailing comma）不在檢查範圍，請以目標版本的 `php -l` 檢查
 - Generic facts：
-  - `CALL_ARGUMENT_CHANGED`
-  - `CALL_REMOVED`
-  - `CALL_ADDED`
-- 第一批 deterministic PHP/Laravel interpreters：
+  - `CALL_ARGUMENT_CHANGED`（named argument；位置參數只在無法被更細 fact 解釋時以 `#index` 輸出，且不視為已解釋）
+  - `CALL_REMOVED` / `CALL_ADDED`（含 closure 內的巢狀 call 與鏈式 call，如 `->lockForUpdate`；receiver 保留完整名稱，如 `$this->adminDB->transaction`）；同一位置換成另一個 method（`->first()` → `->firstOrFail()`）由這兩個 fact 一起解釋
+  - `BINARY_OPERATOR_CHANGED`（左右運算元不變，只有運算子改變）
+  - `GUARD_REMOVED` / `GUARD_ADDED`（body 只有 throw / return / exit 的 if）
+  - `ARRAY_ITEM_REMOVED` / `ARRAY_ITEM_ADDED`（帶 container，如 `property:$beforeActionList`、`Route::group#0[middleware]`）
+  - `LITERAL_CHANGED`（數字、字串、true / false / null 換成另一個字面值；帶 container，如 `const:RATE`、`$q->take#0`、`return[title]`）
+  - `EXPRESSION_NEGATED`（`X` ↔ `!X`；container 標示位置，如 `if`、`while`、`ternary`、`return`）
+  - `RETURN_VALUE_CHANGED`（回傳值換成常數或從常數換掉，如 `return null;`、`return [];`、`return;`；兩邊都不是常數時維持未解釋）
+  - `CALL_ARGUMENTS_REORDERED`（參數內容相同、只有順序改變；method / function call 與 `new`）
+  - `VARIABLE_CHANGED`（改用另一個變數，如部分改名、合併變數、參數改名；只在 scope 內一致改名也無法解釋差異時才輸出，container `param` 表示參數）
+- Deterministic PHP/Laravel interpreters（callee 會先正規化 fully-qualified 前導 `\`）：
   - Payment idempotency identity change
-  - Transaction boundary removal
-  - Authorization guard removal
+  - Transaction boundary / rollback removal（`DB::transaction`、`beginTransaction`、`commit`、`rollBack`，含 `\DB::` 與 DB connection receiver）
+  - Authorization guard removal（`$this->authorize`、`Gate::authorize`）
+  - Middleware guard removal（`$this->middleware(...)`、`Route::group` / `->middleware` / `$middleware` / `$beforeActionList` 移除 middleware）
+  - Row lock removal（`lockForUpdate`、`sharedLock`）
+  - Payment signature verification removal（`verifySign`、`verificationSign`、`checkSign` 等）
+  - Operator change（comparison / arithmetic / logical）
+  - Guard clause removal / addition
+  - Condition negation（`CONDITION_NEGATED`；條件以外的反轉為 `BOOLEAN_VALUE_NEGATED`）、回傳值改變（`RETURN_VALUE_CHANGED`）、參數順序（`ARGUMENTS_REORDERED`）、參數改名（`PARAMETER_RENAMED`，named argument API）、改用另一個變數（`VARIABLE_REFERENCE_CHANGED`）、class 常數改值（`CONSTANT_VALUE_CHANGED`）
+  - Authorization ability 改變（`$this->authorize('update')` → `'view'`）、middleware 名稱被換掉（`'auth'` → `'guest'`）
+  - Laravel validation rules（`rules()` 回傳值、`$request->validate`、`Validator::make` 的規則增減或改值 → `VALIDATION_RULE_CHANGED`）
+  - Laravel model attributes（`$fillable` / `$guarded` → `MASS_ASSIGNMENT_CHANGED`、`$hidden` / `$visible` → `SERIALIZED_ATTRIBUTES_CHANGED`、`$casts` / `casts()` → `ATTRIBUTE_CAST_CHANGED`）
 - persisted authority / stale analysis protection
 - Summary / candidate digest binding
 - Mutation Evaluation Harness
@@ -77,12 +129,25 @@ Mutation corpus：
 ```
 Critical Recall               100.0%
 False Negative Rate             0.0%
-Critical Direct Fact Coverage  75.0%
-Safe Reduction Rate            50.0%
-Partial Coverage Rate          50.0%
+Critical Direct Fact Coverage 100.0%
+Safe Reduction Rate           100.0%
+Partial Coverage Rate          15.0%
 Analysis Failure Rate           0.0%
-Full Review Fallback Rate      50.0%
+Full Review Fallback Rate      15.0%
 ```
+
+Real-repo evaluation（[說明](evaluation/real-repo/README.md)；兩個真實 PHP 金流專案與一個 Laravel 11 專案、3,093 個檔案，seed 42、rate 0.3，共 12,283 筆：3,093 unchanged、3,648 safe、5,542 risky）。`npm run eval:real-repo -- evaluate` 的摘要輸出：
+
+```
+Rows                         12283 (analyzed 12283, skipped 0, errors 0)
+Risky reduced (must be 0)    0
+Risky targeted rate          99.3%
+Risky specific reason rate   53.4%
+Safe reduction rate          100.0%
+Unchanged reduction rate     99.9%
+```
+
+未被 reduce 的 3 個 unchanged 都是空檔（`parseable: false`）。Risky targeted rate 是 risky mutation 以 `TARGETED`（變更已被具體 fact 完整解釋）而非 `FULL` 送 Human Review 的比例；加入 `LITERAL_CHANGED` 等 facts 前為 34.6%（specific 9.3%）。仍為 `FULL` 的主要是移除含 closure body 的 call（closure 內可能有任意邏輯）與改變運算子優先順序的 `&&` / `||` 互換。
 
 Historical PR evaluator 的 CI pilot：
 
@@ -104,8 +169,17 @@ Historical 數字目前來自明確標示的 controlled fixture pilot，只驗�
 - [PR-B：PHP/Laravel Adapter](docs/tasks/2026-10-06-php-laravel-adapter.md)
 - [PR-C：Mutation Evaluation](docs/tasks/2026-10-06-mutation-evaluation.md)
 - [PR-D：Historical PR Evaluation](docs/tasks/2026-10-06-historical-pr-evaluation.md)
+- [Real-repo Evaluation：在真實 PHP 專案上產生 mutation 並驗證 gate](evaluation/real-repo/README.md)
 
 ## Release gate
+
+PHP analyzer 依賴 Composer 套件，第一次執行前先安裝：
+
+```bash
+npm run analyzer:install
+```
+
+缺少依賴時 analyzer 會以 `PHP_ANALYZER_DEPENDENCY_MISSING` fail-closed。
 
 ```bash
 npm run test:all
@@ -167,5 +241,5 @@ blocker → factId → provenance
 1. 真實 Historical PR corpus。
 2. 增加 PHP/Laravel 支援範圍，降低 `PARTIAL_PARSE`。
 3. 提升 Safe Reduction Rate。
-4. 建立 multi-file Review Plan / CLI。
+4. 建立 multi-file Review Plan / CLI（`bin/review.js` 已提供 PR 層級的逐檔決策與位置提示）。
 5. 再往 region-level review scope 發展。
