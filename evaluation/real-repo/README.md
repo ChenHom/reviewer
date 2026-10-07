@@ -78,7 +78,7 @@ Gate（任一項不為 0 時 gate 失敗）：
 | 欄位 | 意義 |
 |---|---|
 | reduced | `NOT_SELECTED_FOR_HUMAN_REVIEW` 的比例 |
-| targeted | Human Review、只需看指定位置（`TARGETED`）的比例 |
+| targeted | Human Review、變更已被具體 fact 完整解釋（`TARGETED`）的比例 |
 | full | Human Review、需要完整 review（`FULL`）的比例 |
 | specific | decision reasons 含具體 domain blocker（不是 `COV-…`、`FACT_UNHANDLED:…` 等 generic fallback）的比例 |
 

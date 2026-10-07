@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "analyzer:install": "composer install --working-dir=analyzers/php --no-interaction",
-    "lint": "eslint src tests evaluation",
+    "lint": "eslint bin src tests evaluation",
     "prepare": "simple-git-hooks",
     "test": "node --test",
     "test:safety": "node --test",

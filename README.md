@@ -49,6 +49,38 @@ Authoritative Candidate / Summary / Check
 
 目前第一個 executable Adapter 是 PHP/Laravel。
 
+## Review 一個 PR
+
+```bash
+npm run analyzer:install   # 第一次需要安裝 PHP analyzer 依賴
+
+node bin/review.js --repo /path/to/project --base origin/master --head HEAD
+```
+
+對 `base..head` 的每個變更檔案逐一決策，列出需要 Human Review 的檔案、原因與行號。`TARGETED` 表示變更已被具體 fact 完整解釋、標示位置是 review 的起點；`FULL` 表示有無法自動解釋的變更、需完整 review 該檔案。兩者都仍需 review 整個檔案（見「目前能力邊界」）：
+
+```
+Review：HUMAN_REVIEW_REQUIRED（2/4 個檔案需要 review；TARGETED 1、FULL 1）
+
+需要 review：
+  FULL     composer.json
+           - UNSUPPORTED_FILE_TYPE（非 PHP 檔案，未分析）
+           變更位置：head:L8
+  TARGETED app/Services/FreezeService.php
+           - COMPARISON_OPERATOR_CHANGED
+           變更位置：head:L87
+           · head:L87 運算子 < → <=：$cash->amount < $amount → $cash->amount <= $amount
+
+不需要 review（2）：
+  app/Entities/Observers/FreezeObserver.php
+  app/Services/TransactionCheckoutServices.php
+```
+
+- 只有 `.php` 的修改與 rename 會送進 analyzer；新增、刪除、非 PHP、binary、symlink、submodule 檔案一律 `FULL`。
+- rename 與檔案權限變更即使內容等價也要求 review（`FILE_RENAMED`、`FILE_MODE_CHANGED`）。
+- PR 層級的決策只有在**所有**檔案都不需 review 時才是 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
+- `--json` 輸出完整報表，`--out` 另存一份；`--fail-on-review` 讓需要 review 時 exit code 為 1，可直接放進 CI。
+
 ## 已實作
 
 - Semantic Fact contract 與 fail-closed ingress
@@ -106,7 +138,7 @@ Safe reduction rate          100.0%
 Unchanged reduction rate     99.9%
 ```
 
-未被 reduce 的 3 個 unchanged 都是空檔（`parseable: false`）。Risky targeted rate 是 risky mutation 以 `TARGETED`（只需看指定位置）而非 `FULL` 送 Human Review 的比例。
+未被 reduce 的 3 個 unchanged 都是空檔（`parseable: false`）。Risky targeted rate 是 risky mutation 以 `TARGETED`（變更已被具體 fact 完整解釋）而非 `FULL` 送 Human Review 的比例。
 
 Historical PR evaluator 的 CI pilot：
 
@@ -200,5 +232,5 @@ blocker → factId → provenance
 1. 真實 Historical PR corpus。
 2. 增加 PHP/Laravel 支援範圍，降低 `PARTIAL_PARSE`。
 3. 提升 Safe Reduction Rate。
-4. 建立 multi-file Review Plan / CLI。
+4. 建立 multi-file Review Plan / CLI（`bin/review.js` 已提供 PR 層級的逐檔決策與位置提示）。
 5. 再往 region-level review scope 發展。
