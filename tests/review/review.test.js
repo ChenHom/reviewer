@@ -235,6 +235,49 @@ test('reviewRange：analyzer 失敗時該檔案 fail-closed 為 FULL', async () 
   assert.equal(report.files[0].fallback, 'FULL');
 });
 
+test('reviewRange：從 merge base 算起，base 在分支建立後的新 commit 不列入', async () => {
+  const forked = await mkdtemp(join(tmpdir(), 'review-fork-'));
+  try {
+    const g = (...args) => run('git', ['-C', forked, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args]);
+    const put = (path, content) => writeFile(join(forked, path), content);
+    await g('init', '-q', '-b', 'main');
+    await put('Service.php', php('        return $q->amount < 10;'));
+    await put('Other.php', php('        return $q->save();'));
+    await g('add', '-A');
+    await g('commit', '-q', '-m', 'fork point');
+    const forkPoint = (await g('rev-parse', 'HEAD')).stdout.trim();
+
+    await g('checkout', '-q', '-b', 'feature');
+    await put('Service.php', php('        return $q->amount <= 10;'));
+    await g('commit', '-qam', 'feature change');
+
+    // base 分支在分支建立後繼續前進：只在 base 上的變更不屬於這個 PR。
+    await g('checkout', '-q', 'main');
+    await put('Other.php', php('        return $q->delete();'));
+    await g('commit', '-qam', 'main moves on');
+    const mainTip = (await g('rev-parse', 'HEAD')).stdout.trim();
+
+    const report = await reviewRange({ repo: forked, base: 'main', head: 'feature' });
+    assert.deepEqual(report.files.map((file) => file.path), ['Service.php']);
+    assert.deepEqual(report.files[0].reasons, ['COMPARISON_OPERATOR_CHANGED']);
+    assert.equal(report.base.sha, mainTip);
+    assert.equal(report.mergeBase, forkPoint);
+    assert.match(formatReview(report), new RegExp(`比較起點為 merge base ${forkPoint.slice(0, 12)}`));
+
+    // base 就是 merge base 時不另外標示。
+    const direct = await reviewRange({ repo: forked, base: forkPoint, head: 'feature' });
+    assert.equal(direct.mergeBase, forkPoint);
+    assert.doesNotMatch(formatReview(direct), /merge base/);
+
+    // 沒有共同祖先的 history 無法決定比較起點。
+    await g('checkout', '-q', '--orphan', 'unrelated');
+    await g('commit', '-q', '-m', 'unrelated', '--allow-empty');
+    await assert.rejects(reviewRange({ repo: forked, base: 'main', head: 'unrelated' }), /GIT_NO_MERGE_BASE/);
+  } finally {
+    await rm(forked, { recursive: true, force: true });
+  }
+});
+
 test('resolveCommit 拒絕不存在或像選項的 ref', async () => {
   assert.equal(await resolveCommit(repo, base), base);
   await assert.rejects(resolveCommit(repo, 'no-such-ref'), /GIT_FAILED/);

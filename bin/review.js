@@ -10,9 +10,10 @@ import { HUMAN_REVIEW, reviewRange } from '../src/review/review.js';
 
 const USAGE = `用法：node bin/review.js --base <ref> [--head HEAD] [--repo .] [options]
 
-Review 一段 git 範圍（base..head）內的變更，列出需要 Human Review 的檔案與原因。
+Review head 相對於 base 的變更（與 GitHub PR 相同，從兩者的 merge base 算起），
+列出需要 Human Review 的檔案與原因。
 
-  --base <ref>          比較基準（例如 origin/master、PR 的 merge base）
+  --base <ref>          PR 的目標分支（例如 origin/master）
   --head <ref>          要 review 的版本（預設 HEAD）
   --repo <path>         git repository 路徑（預設目前目錄）
   --json                輸出 JSON 報表
