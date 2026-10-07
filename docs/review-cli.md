@@ -2,7 +2,7 @@
 
 `bin/review.js` 對一個 PR（base 與 head 兩個 git ref）的每個變更檔案做 review scope 決策：哪些檔案需要 Human Review、原因是什麼、從哪裡開始看。
 
-本文是這個 CLI 的完整參考：前置需求、用法與選項、比較範圍、檔案分類、決策語意、原因代碼、文字與 JSON 輸出、exit code、CI 用法與限制。其他文件只連到這裡，不重複這些內容。
+本文是這個 CLI 的完整參考：前置需求、用法與選項、比較範圍、檔案分類、決策語意、原因代碼、文字與 JSON 輸出、exit code、CI 用法與限制。其他文件以本文為準，只做摘要並連到這裡。
 
 實作位置：
 
@@ -22,7 +22,7 @@
 ## 前置需求
 
 - `git`，在 PATH 上。
-- Node.js。CLI 只用 Node 內建模組與本 repo 的 `src/`，執行時不需要 `npm install`（`npm ci` 是給 lint 與測試用的）。CI 使用 Node 24。
+- Node.js。CLI 用到 `os.availableParallelism`，至少需要 Node 18.14；`package.json` 沒有宣告 `engines`，只有 CI 使用的 Node 24 經過測試。CLI 只用 Node 內建模組與本 repo 的 `src/`，執行時不需要 `npm install`（`npm ci` 是給 lint 與測試用的）。
 - PHP CLI 8.3 以上，以 `php` 的名稱放在 PATH 上（`analyzers/php/composer.json` 要求 `php >= 8.3`；CI 使用 PHP 8.4）。
 - Composer 2，用來安裝 analyzer 依賴（[nikic/php-parser](https://github.com/nikic/PHP-Parser) 5.9.0，版本鎖定在 `analyzers/php/composer.lock`）：
 
@@ -90,7 +90,9 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
   base 是 head 的祖先（例如 PR 分支已經 rebase 到最新的 base）時，merge base 就是 base，不會有後半段。
 - 只比較 commit：working tree 與 index 中未 commit 的變更不會被 review。
 - head 已經包含在 base 中（merge base 等於 head）時沒有任何變更，PR 決策為 `NOT_SELECTED_FOR_HUMAN_REVIEW`，原因 `NO_CHANGES`。
-- base 與 head 沒有共同祖先時以 `GIT_NO_MERGE_BASE` 結束（exit code 2）。除了真的不相關的歷史，常見原因是 shallow clone 沒有抓到 merge base（例如 `actions/checkout` 預設 `fetch-depth: 1`）；請抓取完整歷史（`fetch-depth: 0`）或 fetch 到足夠的深度。
+- base 與 head 沒有共同祖先時以 `GIT_NO_MERGE_BASE` 結束（exit code 2）。除了真的不相關的歷史，常見原因是 shallow clone：base 有 fetch，但歷史不夠深，到不了 merge base。
+- shallow clone 也可能根本沒有 base：`actions/checkout` 預設 `fetch-depth: 1`，只抓要 checkout 的那一個 commit，不會有 `origin/<base 分支>`，base 的 commit 也不在 repository 中。這時在解析 ref 時就以 `GIT_FAILED:git rev-parse: fatal: Needed a single revision` 結束，不會走到 merge base。
+- 這兩種情況都請抓取完整歷史（`fetch-depth: 0`），或 fetch base 並加深到包含 merge base。
 - rename 以 `git diff -M` 偵測（git 預設相似度 50%）。相似度不足的改名會變成一個刪除加一個新增（PHP 檔為 `FILE_DELETED` 與 `FILE_ADDED`）。
 
 ## 檔案分類
@@ -460,9 +462,12 @@ exit code 2 的錯誤：
 | `OPTION_MISSING:--base` | 沒有 `--base`，或值為空字串 |
 | `OPTION_INVALID:--<選項> <值>` | `--concurrency` 不是 1–64 的整數，或 `--timeout-ms` 不是 1–2147483647 的整數 |
 | `GIT_REF_INVALID:<ref>` | ref 為空（例如 `--head ''`）或以 `-` 開頭（例如 `--base=-x`）。不存在的 ref 是 `GIT_FAILED` |
-| `GIT_FAILED:git <子指令>: <git 的訊息>` | git 指令失敗，例如 ref 不存在（`fatal: Needed a single revision`）、`--repo` 不存在或不是 git repository、PATH 上沒有 `git`（`spawn git ENOENT`） |
+| `GIT_FAILED:git <子指令>: <git 的訊息>` | git 指令失敗，例如 ref 不存在（`fatal: Needed a single revision`，包括 shallow clone 沒有 fetch base）、`--repo` 不存在或不是 git repository、PATH 上沒有 `git`（`spawn git ENOENT`） |
 | `GIT_NO_MERGE_BASE:<base SHA>..<head SHA>` | base 與 head 沒有共同祖先：不相關的歷史，或 shallow clone 沒有抓到 merge base |
 | Node 參數解析的訊息 | 例如 `Unknown option '--foo'`、`Option '--base <value>' argument missing`、`Unexpected argument 'x'. This command does not take positional arguments` |
+| Node 檔案系統的錯誤訊息 | `--out` 無法寫入，例如 `EISDIR: illegal operation on a directory, open '<file>'`（目標是目錄）、`EEXIST: file already exists, mkdir '<dir>'`（上層路徑是一般檔案）、`EACCES`（沒有權限）。報表在寫檔之後才印到 stdout，所以這時 stdout 也沒有報表 |
+
+`GIT_DIFF_UNPARSABLE:<header>`（`git diff --raw` 的輸出無法解析）是防禦性檢查，正常執行不會出現；出現時也是 exit code 2。
 
 analyzer 的問題（找不到 `php`、沒有安裝依賴、逾時）**不是** exit code 2，而是讓檔案變成 `FULL`（見「前置需求」與「原因代碼」）。
 
@@ -471,13 +476,14 @@ analyzer 的問題（找不到 `php`、沒有安裝依賴、逾時）**不是** 
 ```bash
 # 在 Reviewer 的 checkout 中執行（第一次先 npm run analyzer:install）。
 # PROJECT_DIR 是要 review 的專案，已 checkout 在 PR head，並有 base 的完整歷史。
+# CI 的 shell 通常開著 errexit（bash -e），exit code 必須用 `|| status=$?` 取得。
+status=0
 node bin/review.js \
   --repo "$PROJECT_DIR" \
   --base "$BASE_REF" \
   --head HEAD \
   --fail-on-review \
-  --out review/report.json
-status=$?
+  --out review/report.json || status=$?
 
 if [ "$status" -eq 2 ]; then
   echo "review CLI 執行失敗" >&2
@@ -497,16 +503,17 @@ exit "$status"   # 0：不需要 Human Review；1：需要（清單見 review/re
 ```
 
 - `--fail-on-review` 的 exit code 1 表示「需要 Human Review」，不是 CLI 失敗；CLI 失敗是 2。
+- GitHub Actions 的 `run:` 預設以 `bash -e` 執行（指定 `shell: bash` 時是 `bash -eo pipefail`），CLI 一以非 0 結束，step 就會中止。如果在 node 指令之後才另起一行寫 `status=$?`，那一行、exit code 2 的判斷與 analyzer 檢查都不會執行，「analyzer 無法執行」會被當成一般的 exit code 1（需要 review）。
 - `--out` 讓 stdout 保留給人看的文字報表，同時留下 JSON 供後續步驟使用。
 - `ANALYZER_ERROR:PHP_ANALYZER_ABORTED`（逾時）也會被上面的檢查擋下；大型檔案多時可以調高 `--timeout-ms`。
-- 在 GitHub Actions 中，`actions/checkout` 預設只抓一個 commit，請設 `fetch-depth: 0`（或另外 fetch base），否則會得到 `GIT_NO_MERGE_BASE`。
+- 在 GitHub Actions 中，`actions/checkout` 預設只抓一個 commit，請設 `fetch-depth: 0`。否則 base 的 ref 不存在（`GIT_FAILED:git rev-parse: …`）；另外 fetch base 但深度不夠時，則是找不到 merge base（`GIT_NO_MERGE_BASE`）。見「比較範圍」。
 
 ## 限制
 
 - 決策是 file-level：`TARGETED` 的位置只是起點，仍需 review 整個檔案。
 - 只分析 PHP（`.php`）。新增、刪除、非 PHP、binary、symlink、submodule、type change 一律 `FULL`，不會分析內容。
 - 只比較 commit，不看 working tree。
-- 需要 base 與 head 的共同歷史；shallow clone 可能得到 `GIT_NO_MERGE_BASE`。
+- 需要 base 與 head 的共同歷史；shallow clone 可能缺少 base（`GIT_FAILED`）或找不到 merge base（`GIT_NO_MERGE_BASE`）。
 - 不檢查目標 PHP 版本是否支援新語法（例如在 PHP 7 專案中使用參數 trailing comma），請以目標版本的 `php -l` 檢查。
 - analyzer 失敗與缺少依賴不會讓 CLI 以錯誤結束，CI 需另外檢查（見上）。
 - JSON 的 fact 不含 fact id，`FACT_UNHANDLED:<id>` 無法直接對應到個別 fact。

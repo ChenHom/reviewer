@@ -93,7 +93,7 @@ Agent Work Harness
         ├─ typecheck
         └─ build
         ↓
-Harness SUCCESS（attempt 的結果已經是 commit）
+Harness SUCCESS（attempt 的結果需先 commit，見 §6）
         ↓
 Reviewer（node bin/review.js）
         │
@@ -219,7 +219,7 @@ Not Selected     12
 Reduction       70.6%
 ```
 
-Changed、Human Review、Not Selected 對應報表的 `decision.files`、`decision.targeted + decision.full`、`decision.notSelected`。CLI 不輸出 reduction 比例，Reduction 由 Harness 以 `decision.notSelected / decision.files` 計算。
+Changed、Human Review、Not Selected 對應報表的 `decision.files`、`decision.targeted + decision.full`、`decision.notSelected`。CLI 不輸出 reduction 比例，Reduction 由 Harness 以 `decision.notSelected / decision.files` 計算。`decision.files` 為 0（`decision.reasons` 為 `["NO_CHANGES"]`）時沒有 reduction 可算，應顯示為沒有變更，不要做 0 / 0 的除法。
 
 Review scope 不應反向修改 Harness Outcome；Reviewer 執行失敗也一樣。
 
@@ -227,7 +227,7 @@ Review scope 不應反向修改 Harness Outcome；Reviewer 執行失敗也一樣
 
 ### 目前：`node bin/review.js`
 
-Reviewer 已有 PR 層級的 multi-file CLI（`bin/review.js` 與 `src/review/`）。在 Reviewer 的 checkout 中這樣呼叫：
+Reviewer 已有 PR 層級的 multi-file CLI（`bin/review.js` 與 `src/review/`）。可以從任何目錄以 Reviewer checkout 中的 `bin/review.js` 呼叫（`<reviewer>` 為 Reviewer checkout 的路徑，`--repo` 指向要 review 的專案）：
 
 ```bash
 node <reviewer>/bin/review.js \
@@ -251,7 +251,8 @@ node <reviewer>/bin/review.js \
 
 比較範圍：
 
-- 只讀 git 物件（commit 與 blob），不讀 working tree 或 index；未 commit 的變更不會被 review。
+- 比較的內容只來自 git 物件（commit、tree、blob），不讀 working tree 或 index；未 commit 的變更不會被 review。
+- 但 `--repo` 必須是有 work tree 的 repository（一般 clone 或 `git worktree`）：CLI 以 `git rev-parse --show-toplevel` 找 repository 根目錄，bare repository 會以 `GIT_FAILED:git rev-parse: fatal: this operation must be run in a work tree` 結束（exit code 2）。
 - base 在 head 分出後才有的 commit 不算在內。報表的 `base.sha` 仍是 `--base` 指向的 commit，`mergeBase` 才是實際的比較起點。
 - base 與 head 沒有共同歷史時以 `GIT_NO_MERGE_BASE` 結束（exit code 2）；shallow clone 沒抓到 merge base 時也是如此。
 - 細節見 [PR Review CLI](../review-cli.md)「比較範圍：merge base」。
@@ -351,7 +352,7 @@ latest successful Attempt
   ↓
 attempt.baseRevision 與 attempt 結果的 commit
   ↓
-node <reviewer>/bin/review.js --base <baseRevision> --head <結果 commit> --out review_scope.json
+node <reviewer>/bin/review.js --repo <workspace> --base <baseRevision> --head <結果 commit> --out review_scope.json
   ↓
 檢查 exit code 與 analyzer 錯誤（§4、§5「前置需求」）
   ↓
@@ -363,6 +364,8 @@ Review Scope section
 ```
 
 Reviewer 只讀 commit，所以 attempt 實際改出的 tree 必須先成為 commit；working tree 中未 commit 的變更不會出現在報表裡。結果 commit 是從 `attempt.baseRevision` 長出來的時候，merge base 就是 `attempt.baseRevision`，報表的 `mergeBase` 與 `base.sha` 相同。
+
+`--repo` 要指向含有這兩個 commit、而且有 work tree 的 repository。Harness 的 commit 如果只存在 bare repository（例如 artifact 或 attempt store），要先從它開一個 `git worktree` 或 clone 再交給 Reviewer，直接傳 bare repository 會以 `GIT_FAILED` 結束（§5「比較範圍」）。
 
 Harness 應保存：
 
@@ -392,7 +395,7 @@ Harness 在 attempt 完成後對 attempt 的 commit 跑 Reviewer，適合開發�
 
 - `--base` 傳 PR 的目標分支（例如 `origin/main`）或 PR 的 base SHA。base 分支在 PR 分出後才有的 commit 不會被算進來。
 - `--head` 明確傳 PR head 的 commit（`pull_request.head.sha`）。`pull_request` 事件下 `actions/checkout` 預設 checkout 的是 GitHub 產生的 test merge commit，不是 PR 分支本身，而 `--head` 預設為 `HEAD`。
-- checkout 要有足以找到 merge base 的歷史（例如 `actions/checkout` 設 `fetch-depth: 0`），否則會以 `GIT_NO_MERGE_BASE` 結束。
+- checkout 要有 base 與 head 的 commit，以及兩者到 merge base 的歷史（例如 `actions/checkout` 設 `fetch-depth: 0`），否則會以 exit code 2 結束：base 或 head 的 commit 沒有抓下來時是 `GIT_FAILED`（`fatal: Needed a single revision`；`actions/checkout` 預設的 `fetch-depth: 1` 就是這種情況），兩者都在但共同歷史被截斷時是 `GIT_NO_MERGE_BASE`。
 
 建議 GitHub workflow：
 
@@ -403,7 +406,7 @@ checkout 專案（fetch-depth: 0）與 Reviewer
         ↓
 setup PHP ≥ 8.3 + npm run analyzer:install
         ↓
-node bin/review.js --base <目標分支> --head <PR head SHA> --out review.json
+node <reviewer>/bin/review.js --repo <專案目錄> --base <目標分支> --head <PR head SHA> --out review.json
         ↓
 exit code 2 或 analyzer 錯誤 → 回報 Reviewer 錯誤
         ↓

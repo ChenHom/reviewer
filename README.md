@@ -86,7 +86,7 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
 第二行是 repository 與 base / head 的 ref 和 commit；merge base 不是 base 的 commit 時（base 分支之後又有新 commit），會另外標出實際的比較起點。
 
 - `FULL`：有無法以 fact 解釋的變更（例如 `COV-PHP-001:UNRECOGNIZED_PHP_CHANGE`）、analyzer 失敗，或檔案沒有送進 analyzer。需完整 review 該檔案。
-- `TARGETED`：每一處程式碼變更都已被具體 fact 解釋（或檔案只是 rename / 權限變更）。列出的原因與位置是 review 的起點，**整個檔案仍需 review**（reduction 是 file-level，見「目前能力邊界」）。
+- `TARGETED`：每一處程式碼變更都已被 fact 解釋（或檔案只是 rename / 權限變更）；解釋變更的 fact 不一定有對應的 domain 規則，見下方 `FACT_UNHANDLED`。列出的原因與位置是 review 的起點，**整個檔案仍需 review**（reduction 是 file-level，見「目前能力邊界」）。
 - `FACT_UNHANDLED ×N`：有 N 個 fact 沒有對應的 domain 規則，例如上例 `->first()` → `->firstOrFail()` 產生的 `CALL_REMOVED` / `CALL_ADDED`。這些變更仍已被 fact 解釋，所以檔案沒有其他無法解釋的變更時是 `TARGETED`。
 - 每個 fact 都會讓檔案需要 review。PHP 檔只有在沒有任何 fact、AST 等價（排版、註解、一致的區域變數改名等，見「已實作」），而且不是 rename 或權限變更時，才會列在「不需要 review」，例如上例只加了註解、改了區域變數名稱的 `FreezeObserver.php`。
 - 只有 `.php` 的修改與 rename 會送進 analyzer；新增、刪除、非 PHP、binary、symlink、submodule 檔案一律 `FULL`。rename 與檔案權限變更即使內容等價也要求 review（`FILE_RENAMED`、`FILE_MODE_CHANGED`）。
@@ -160,9 +160,9 @@ Safe reduction rate          100.0%
 Unchanged reduction rate     99.9%
 ```
 
-這三個專案不在本 repo 內（corpus 與結果含目標專案的原始碼片段，不能 commit），所以這些數字無法只靠本 repo 重現；它們是在本機以目前的 analyzer / interpreter 程式碼量測的一次性結果。Real-repo evaluation 不在 `npm run test:all` 與 CI 中，不屬於 release gate；修改 analyzer 或 interpreter 後，請對自己的專案以 `--baseline-ref` 重跑比較。
+這三個專案不在本 repo 內（corpus 與結果含目標專案的原始碼片段，不能 commit），所以這些數字無法只靠本 repo 重現；它們是在本機以 commit `9022e04`（analyzer / interpreter 與 master `2be0cde` 相同）量測的一次性結果。Real-repo evaluation 不在 `npm run test:all` 與 CI 中，不屬於 release gate；修改 analyzer 或 interpreter 後，請對自己的專案以 `--baseline-ref` 重跑比較。
 
-未被 reduce 的 3 個 unchanged 都是空檔（`parseable: false`）。Risky targeted rate 是 risky mutation 以 `TARGETED`（變更已被具體 fact 完整解釋）而非 `FULL` 送 Human Review 的比例；加入 `LITERAL_CHANGED` 等 facts 前為 34.6%（specific 9.3%）。仍為 `FULL` 的主要是移除含 closure body 的 call（closure 內可能有任意邏輯）與改變運算子優先順序的 `&&` / `||` 互換。
+未被 reduce 的 3 個 unchanged 都是空檔（`parseable: false`）。Risky targeted rate 是 risky mutation 以 `TARGETED`（變更已被 fact 完整解釋）而非 `FULL` 送 Human Review 的比例，加入 `LITERAL_CHANGED` 等 facts 前為 34.6%。Risky specific reason rate 是原因中至少有一個 domain 規則產生的具體原因（不只有 `FACT_UNHANDLED`、`COV-…` 等 generic 原因）的比例，加入前為 9.3%。仍為 `FULL` 的主要是移除含 closure body 的 call（closure 內可能有任意邏輯）與改變運算子優先順序的 `&&` / `||` 互換。
 
 Historical PR evaluator 的 CI pilot：
 
@@ -200,7 +200,7 @@ Historical 數字目前來自明確標示的 controlled fixture pilot，只驗�
 npm run analyzer:install
 ```
 
-缺少依賴時 analyzer 會以 `PHP_ANALYZER_DEPENDENCY_MISSING` fail-closed。PHP 版本不足時 `composer install` 會因 platform requirement 失敗；已安裝的依賴也會在執行時被 Composer 的 platform check 擋下，此時（以及找不到 `php` 時）`bin/review.js` 會把每個 PHP 檔以 `ANALYZER_ERROR` 列為 `FULL`。
+缺少依賴時 analyzer 會以 `PHP_ANALYZER_DEPENDENCY_MISSING` fail-closed。PHP 版本不足時 `composer install` 會因 platform requirement 失敗；已安裝的依賴也會在執行時被 Composer 的 platform check 擋下，此時（以及找不到 `php` 時）`bin/review.js` 不會以錯誤結束（exit code 仍為 0，`--fail-on-review` 時為 1），而是把每個送進 analyzer 的 PHP 檔以 `ANALYZER_ERROR` 列為 `FULL`（見 [PR Review CLI](docs/review-cli.md#前置需求)）。
 
 ```bash
 npm run test:all

@@ -42,7 +42,7 @@ Safe:
 - SAFE-001 — formatting/comment-only。
 - SAFE-002 — local variable rename，語意安全但 PR-C 當時 analyzer 尚未支援，用來量測 reduction miss。加入 scope-aware 區域變數改名後已可 reduce（預期 `NOT_SELECTED_FOR_HUMAN_REVIEW`）。
 
-目前 corpus 已擴充為 MUT-001～MUT-016、SAFE-001～SAFE-004，見 `evaluation/mutations/cases.json`；目前數字見 [README「目前驗證基準」](../../README.md#目前驗證基準)。
+截至 2026-10-07，corpus 已擴充為 MUT-001～MUT-016、SAFE-001～SAFE-004，見 `evaluation/mutations/cases.json`；目前數字見 [README「目前驗證基準」](../../README.md#目前驗證基準)。
 
 ## Interpreter Profile
 

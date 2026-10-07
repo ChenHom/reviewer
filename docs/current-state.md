@@ -95,7 +95,7 @@ callee=$this->authorize / Gate::authorize
 AUTHORIZATION_GUARD_REMOVED
 ```
 
-之後 interpreter 已從 3 個擴充為 15 個（`PHP_LARAVEL_DOMAIN_INTERPRETERS`）：原本三個也擴大了範圍（例如 `rollBack` 移除 → `TRANSACTION_ROLLBACK_REMOVED`、authorize 的 ability 字串改值 → `AUTHORIZATION_ABILITY_CHANGED`），另新增 middleware guard、row lock、payment signature verification、運算子、guard clause、運算式反轉、回傳值、參數順序、變數 / 參數改名、class 常數、Laravel validation rules、Laravel model attributes。各 interpreter 的範圍見 [README「已實作」](../README.md#已實作)；完整的 blocker 代碼以 `src/interpreters/php-laravel-domain.js` 為準。
+之後 interpreter 已從 3 個擴充為 15 個（`PHP_LARAVEL_DOMAIN_INTERPRETERS`）：原本三個中，transaction boundary 與 authorization guard 也擴大了範圍（例如 `rollBack` 移除 → `TRANSACTION_ROLLBACK_REMOVED`、authorize 的 ability 字串改值 → `AUTHORIZATION_ABILITY_CHANGED`），另新增 middleware guard、row lock、payment signature verification、運算子、guard clause、運算式反轉、回傳值、參數順序、變數 / 參數改名、class 常數、Laravel validation rules、Laravel model attributes。各 interpreter 的範圍見 [README「已實作」](../README.md#已實作)；完整的 blocker 代碼以 `src/interpreters/php-laravel-domain.js` 為準。
 
 這個分層很重要：
 
@@ -276,7 +276,8 @@ HUMAN_REVIEW_REQUIRED（TARGETED / FULL）
 或
 NOT_SELECTED_FOR_HUMAN_REVIEW
   ↓
-  ├─ PR review CLI：rename / 權限變更改為 TARGETED，彙整成 PR 層級決策
+  ├─ PR review CLI：內容等價（原本 NOT_SELECTED）的 rename / 權限變更改為 TARGETED，
+  │  其餘只附加 FILE_RENAMED / FILE_MODE_CHANGED（TARGETED / FULL 不變）；彙整成 PR 層級決策
   │  （所有檔案都 NOT_SELECTED 才 NOT_SELECTED）→ 文字 / JSON 報表
   └─ runStoredAdapterPipeline：CAS Authority → Summary / Status Check
      （GitHub transport 需注入；目前只有測試呼叫，沒有 CLI 或 workflow 使用）
@@ -313,7 +314,7 @@ NOT_SELECTED_FOR_HUMAN_REVIEW
 目前不應宣稱：
 
 - 能做 symbol solving / 型別推論。analyzer 已用 nikic/php-parser 解析完整 AST 並以結構比對判定 completeness，但 callee 只以原始碼中的名稱文字比對（interpreter 只去掉前導 `\`），不解析 `use` 別名、namespace、變數型別、繼承或動態呼叫。例如 `use Illuminate\Support\Facades\Gate as G;` 之後移除 `G::authorize(...)` 不會被辨識為 `AUTHORIZATION_GUARD_REMOVED`，只會是 `FACT_UNHANDLED`（仍要求 review）。
-- 能分析跨檔案影響。每個檔案獨立分析，沒有 call graph 或 impact 分析。
+- 能分析跨檔案影響。每個檔案獨立分析，沒有 call graph；pipeline 的 Impact 層只驗證外部提供的 impact graph，目前沒有任何 adapter / provider 產生（見 §5 第 8 項）。
 - 能理解所有 Laravel runtime behavior。
 - 能安全處理所有語言。只有 PHP 檔會被分析，其他檔案一律 `FULL`。
 - 已有真實世界 false-negative 保證。mutation corpus 是 curated case；real-repo evaluation 是在真實程式碼上自動產生的 mutation，不是真實 PR；historical evaluation 仍是 controlled fixture pilot。

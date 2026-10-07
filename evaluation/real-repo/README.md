@@ -6,6 +6,8 @@ corpus 不保存完整檔案，但 edits 會包含目標 repo 的原始碼片段
 
 ## 快速開始
 
+需要 PATH 上的 `php`（PHP CLI ≥ 8.3，generator 與 analyzer 都以 `php` 執行；找不到時 `evaluate` / `generate` 立即失敗（exit 2），單獨執行 `run` 時每筆都是 `ANALYZER_ERROR`）與 Composer 2（前置需求見 [PR Review CLI](../../docs/review-cli.md#前置需求)）。目標專案不在本 repo 內，這項評估不在 `npm run test:all` 與 CI 中；最近一次的量測結果見 [README「目前驗證基準」](../../README.md#目前驗證基準)。
+
 ```bash
 npm run analyzer:install   # 第一次需要安裝 PHP analyzer 依賴
 
@@ -39,7 +41,7 @@ npm run eval:real-repo -- evaluate --repo shop=/path/to/shop-api --baseline-ref 
 | `safe` | 加註解、改縮排、參數換行、trailing comma、引號、method 內一致的區域變數改名 | 越多被 reduce 越好（Safe reduction rate） |
 | `risky` | 移除 call / guard / 陣列元素、替換運算子、否定 `if` 條件、改字串或數字、交換參數、`return` 改成 `null`、在 `__LINE__` 所在行之前插入一行、部分改名、合併變數、參數改名、改名 `compact()` 引用的變數、改名 `global` 變數 | 絕不能 `NOT_SELECTED` |
 
-報表 `op` 欄顯示的是 generator 的 op 名稱。每種 op 在每個檔案最多產生一筆，再依 `--rate` 抽樣；改名類 op 只在隨機挑選的一個 method 內產生，該 method 內有巢狀 method / function（例如匿名 class）時不產生。
+報表 `op` 欄顯示的是 generator 的 op 名稱。每種 op 在每個檔案最多產生一筆，再依 `--rate` 抽樣；改名類 op 只在隨機挑選的一個 method 內產生，該 method 內有巢狀的 method（例如匿名 class）或在 method 內宣告的具名 function 時不產生（closure / arrow function 不受影響，其中的變數與 method 的變數一起改名）。
 
 | op | label | 變更 |
 |---|---|---|
@@ -111,7 +113,7 @@ Gate（任一項不為 0 時 gate 失敗）：
 | full | Human Review、有無法自動解釋的變更或 analyzer 無法完整分析（`FULL`）的比例 |
 | specific | decision reasons 含具體 domain blocker（不是 `COV-…`、`FACT_UNHANDLED:…` 等 generic fallback）的比例 |
 
-`TARGETED` 與 `FULL` 都仍需 review 整個檔案；`TARGETED` 標示的位置只是 review 的起點。目前的 reduction 只到檔案層級（見 [README「目前能力邊界」](../../README.md#目前能力邊界)），只有 reduced（`NOT_SELECTED_FOR_HUMAN_REVIEW`）代表 review 範圍真的縮小。
+`TARGETED` 與 `FULL` 都仍需 review 整個檔案；`bin/review.js` 對 `TARGETED` 檔案列出的位置只是 review 的起點（見 [PR Review CLI](../../docs/review-cli.md)），這份報表只統計比例、不列出位置。目前的 reduction 只到檔案層級（見 [README「目前能力邊界」](../../README.md#目前能力邊界)），只有 reduced（`NOT_SELECTED_FOR_HUMAN_REVIEW`）代表 review 範圍真的縮小。
 
 摘要中的 Risky targeted rate 是 risky mutation 以 `TARGETED`（而非 `FULL`）送 Human Review 的比例，衡量的是變更被具體 fact 解釋的程度，不是 review 工作量的減少。
 
@@ -132,7 +134,7 @@ $CLI inspect --corpus $OUT/corpus.jsonl --repo shop=/path/to/shop-api \
 
 - 每個指令都可加 `--help`；`--out` 的上層目錄不存在時會自動建立。
 - `--repo` 格式為 `label=path`，可重複指定多個 repo：label 只能含英數字與 `.` `_` `-`，path 不可為空（否則 `REPO_OPTION_INVALID`）；label 不可重複（`REPO_LABEL_DUPLICATED`）。
-- `run --reviewer <dir>`：改用另一份 reviewer checkout（例如另一個 worktree）執行 corpus，不建立 `git archive` snapshot。該 checkout 必須已執行 `npm run analyzer:install`，否則以 `ANALYZER_DEPENDENCY_MISSING` 結束（exit 2）。`--reviewer` 與 `--baseline-ref` 只能擇一，同時指定時為 `OPTION_CONFLICT`（exit 2）。
+- `run --reviewer <dir>`：改用另一份 reviewer checkout（例如另一個 worktree）執行 corpus，不建立 `git archive` snapshot。該 checkout 若有 `analyzers/php/composer.json`（AST analyzer 之後的版本），必須已執行 `npm run analyzer:install`，否則以 `ANALYZER_DEPENDENCY_MISSING` 結束（exit 2）；更早的版本不需要依賴。`--reviewer` 與 `--baseline-ref` 只能擇一，同時指定時為 `OPTION_CONFLICT`（exit 2）。
 - `report --json`、`compare --json`：改以 JSON 輸出到 stdout。`report` 輸出 `{summary, gate}`，gate 失敗時 exit code 仍為 1；`compare` 輸出比較結果（`total`、`identical`、`categories`、`transitions`、`newReductions`、`lostReductions`）。
 - `evaluate` 在 gate 失敗時，會在報表後自動對前 3 筆有 index 的失敗（`RISKY_REDUCED`、`ANALYZER_ERROR`、`UNCHANGED_NOT_REDUCED`）印出 `inspect` 結果，只含 candidate 的結果；`NO_ROWS_ANALYZED`、`REPO_NOT_ANALYZED` 沒有 index，不會印出。其餘失敗請用 `inspect` 指令查看。
 - `--concurrency`：同時執行的 analyzer 數（預設為 CPU 數，最多 8）。

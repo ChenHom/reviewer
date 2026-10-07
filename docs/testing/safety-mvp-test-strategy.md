@@ -18,7 +18,7 @@
 `npm run eval:mutations` 與 `npm run eval:historical` 也以真實 analyzer 執行完整 pipeline。因此執行測試前需要：
 
 - PHP CLI 8.3 以上，以 `php` 的名稱放在 PATH 上（`analyzers/php/composer.json` 的要求；CI 使用 PHP 8.4），以及 Composer 2。
-- 已執行 `npm run analyzer:install`（`analyzers/php/vendor/` 不納入版本控制）。缺少依賴時 analyzer 以 `PHP_ANALYZER_DEPENDENCY_MISSING` fail-closed（obligation `FAILED`），real-repo 的 `loadReviewer()` 以 `ANALYZER_DEPENDENCY_MISSING` 立即失敗；上述測試與 `eval:mutations` 都會失敗，不會被當成通過。`eval:historical` 的 gate 只檢查 publication 是否被接受，以及 human concern 是否落在被選取的檔案；此時每個檔案都是 Full Review，所以仍會通過，但 Analysis Failure Rate 為 100%。
+- 已執行 `npm run analyzer:install`（`analyzers/php/vendor/` 不納入版本控制）。缺少依賴時 analyzer 以 `PHP_ANALYZER_DEPENDENCY_MISSING` fail-closed（obligation `FAILED`），real-repo 的 `loadReviewer()` 以 `ANALYZER_DEPENDENCY_MISSING` 立即失敗；`tests/adapters/php-laravel.test.js`、`tests/review/review.test.js`、`tests/evaluation/real-repo-cli.test.js` 與 `eval:mutations` 都會失敗，不會被當成通過（`php-laravel-failures.test.js` 使用 fake analyzer，缺少依賴的案例則執行複製到隔離目錄的 `analyze.php`，因此不受影響）。`eval:historical` 的 gate 只檢查 publication 是否被接受，以及 human concern 是否落在被選取的檔案；此時每個檔案都是 Full Review，所以仍會通過，但 Analysis Failure Rate 為 100%。
 - PATH 上的 `git` 與 `tar`，並在本 repo 的 git checkout 中執行（real-repo baseline 測試會讀取本 repo 的 `HEAD`）。
 
 real-repo generator 以 seed 與檔案路徑重設 `mt_srand`，相同 seed 產生相同 corpus，測試會驗證這一點。
@@ -106,7 +106,7 @@ real-repo generator 以 seed 與檔案路徑重設 `mt_srand`，相同 seed 產�
 
 測試：`tests/adapters/php-laravel.test.js`（真實 analyzer）、`tests/adapters/php-laravel-failures.test.js`（failure path）。facts 的定義見 [README「已實作」](../../README.md#已實作)。
 
-- AST 等價：排版、註解、trailing comma、引號種類、`array()` / `[]`、多餘括號判為 `COMPLETE` 且無 fact。沒有 fact 的 `COMPLETE` 只能發生在兩棵 AST 完全相同時（soundness 案例）；任何沒有被 fact 解釋的差異都必須是 `PARTIAL_PARSE` + `UNRECOGNIZED_PHP_CHANGE`。
+- AST 等價：排版、註解、trailing comma、引號種類、`array()` / `[]`、多餘括號判為 `COMPLETE` 且無 fact。沒有 fact 的 `COMPLETE` 只能發生在兩棵 AST 經 canonical 比較等價時（只差上述語法形式，或 scope 內一致的區域變數改名；soundness 案例）；任何沒有被 fact 解釋的差異都必須是 `PARTIAL_PARSE` + `UNRECOGNIZED_PHP_CHANGE`。
 - 語法版本：最新語法無法解析任一側時，兩側一起改用 PHP 7.4 語法（例如 `$str{0}`）；兩種語法都無法同時解析兩側時回傳 `PHP_PARSE_ERROR`（`FAILED`）。原本會判為無 fact 的 `COMPLETE` 時，若在最新語法或 PHP 7 視角（7.4 語法，`#[` 視為註解）下兩側的可解析性不一致，或兩側都能解析但不等價，必須改為 `PARTIAL_PARSE` + `PHP_GRAMMAR_DIVERGENCE`。
 - 排版讓 `__LINE__` 或 `__COMPILER_HALT_OFFSET__` 的值改變時，不得判為無 fact 的 `COMPLETE`。
 - Scope-aware 改名：scope 內一致的區域變數改名判為 `COMPLETE` 且無 fact。不改名的變數（參數、`$this`、superglobal、magic local、`global` 變數、頂層變數、頂層 closure 的 `use` 變數）與整個 scope 不改名的情況（`compact`、`extract`、`get_defined_vars`、`$$x`、`eval`、`include` / `require`、單參數或 spread 參數的 `parse_str`、PHP 7 字串 `assert()`，含 `use function` 別名）都要有案例。canonical 名稱不得與保留原名的變數碰撞（例如參數 `$__rv0`）；改名同時有其他變更時仍輸出對應 fact；無法以改名解釋的變數差異輸出 `VARIABLE_CHANGED`；不安全的改名絕不判為無 fact 的 `COMPLETE`。目前 `$this`、superglobal、`get_defined_vars`、`eval`、`require` 與單參數 `parse_str` 沒有專用案例。
@@ -198,7 +198,7 @@ real-repo generator 以 seed 與檔案路徑重設 `mt_srand`，相同 seed 產�
 - 比較範圍：從 merge base 算起。base 在分支建立後的新 commit 不列入；報表的 `base.sha` 是 base ref 的 commit，`mergeBase` 是比較起點；merge base 與 base 不同時文字輸出標示比較起點，相同時不標示；沒有共同祖先時為 `GIT_NO_MERGE_BASE`。
 - 檔案分類：[「檔案分類」](../review-cli.md#檔案分類)表的每一列都要有案例；第 1–7 步不得呼叫 analyzer，一律 `FULL`。analyzer 失敗（例如 PHP binary 不存在）時該檔案 fail-closed 為 `FULL`（`ANALYZER_ERROR:*`），PR 不得因此變成 `NOT_SELECTED_FOR_HUMAN_REVIEW`。目前 `SUBMODULE_CHANGED` 與 `UNSUPPORTED_CHANGE_TYPE:type-changed` 沒有 `reviewRange()` 層級的案例（type change 只有 `parseRawDiff` 的解析案例），`--timeout-ms` 逾時造成的 `ANALYZER_ERROR:PHP_ANALYZER_ABORTED` 只在 adapter 層測試。
 - rename 與權限變更：內容等價時必須是 `TARGETED`，原因只有 `FILE_RENAMED` / `FILE_MODE_CHANGED`；內容也有變更時接在 analyzer 的原因之後。目前只有內容等價的案例。
-- 逐檔決策：`NOT_SELECTED_FOR_HUMAN_REVIEW`、`TARGETED`、`FULL` 都要有案例。需要 review 的檔案附 `changedLines`（git hunk 的 head / base 行號），`NOT_SELECTED_FOR_HUMAN_REVIEW` 不附；`TARGETED` 另有每個 fact 的 side 與行號。這些位置只是 review 起點（見「Safety invariants」）。
+- 逐檔決策：`NOT_SELECTED_FOR_HUMAN_REVIEW`、`TARGETED`、`FULL` 都要有案例。需要 review 的檔案附 `changedLines`（git hunk 的 head / base 行號），`NOT_SELECTED_FOR_HUMAN_REVIEW` 不附；經 analyzer 分析的檔案另有每個 fact 的 side 與行號，不只 `TARGETED`，有部分變更無法解釋的 `FULL`（`COV-PHP-001:<原因>` 加上已找到的 fact 的原因）也會有，測試不得假設 `FULL` 沒有 fact 位置。這些位置只是 review 起點（見「Safety invariants」）。
 - PR 彙整（`summarizeFiles`）：只有所有檔案都是 `NOT_SELECTED_FOR_HUMAN_REVIEW` 時 PR 才是 `NOT_SELECTED_FOR_HUMAN_REVIEW`；`reasons` 是需要 review 的檔案原因去重後排序的結果；只有排版變更時 `reasons` 為 `[]`；沒有任何檔案變更（例如 base 與 head 是同一個 commit）時為 `NO_CHANGES`。
 - 輸出與 exit code：文字輸出（`formatReview`，含 `FACT_UNHANDLED ×N` 的合併）、`describeFact` 對每種 fact 的描述、`--json`、`--out`（內容與 stdout 的 JSON 相同）、`--help`；exit code 0、1（`--fail-on-review` 且需要 review）與 2（例如 `OPTION_MISSING`、`OPTION_INVALID`）。exit code 的完整定義見 [「Exit code 與錯誤」](../review-cli.md#exit-code-與錯誤)。
 

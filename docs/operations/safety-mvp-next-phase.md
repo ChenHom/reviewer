@@ -25,7 +25,7 @@ Adapter、evidence、impact、invariant 與 GitHub sink 都不能直接改寫 re
 - 只有修改或 rename 的 `.php` 檔會送進 analyzer。每個檔案各自執行一次 `runAdapterPipeline`，搭配當次建立、用完即丟的記憶體 authority state（`createAuthorityState`，本地 identity：`policyId: 'pr-review'`，`baseSha` 為 merge base），只取 candidate 的 decision。
 - CLI **不經過** `SqliteAuthorityStore` 的 persisted CAS，不產生 authoritative Summary 或 Status Check，也不呼叫 GitHub sink；結果只輸出到 stdout 與 `--out` 的檔案。本文「Authority 與 CAS」「Summary、status check 與 sink」兩節的保證不適用於 CLI 報表，`AUTHORITY_CAS_*` 與 `GITHUB_PUBLICATION_FAILED` 也只屬於 authoritative 流程。
 - 新增、刪除、非 PHP、binary、symlink、submodule 與 type change 的檔案不經 analyzer，一律 `FULL`。rename 與權限變更即使內容等價也要求 review（`FILE_RENAMED` / `FILE_MODE_CHANGED`）。CLI 只會把 pipeline 的決策往更嚴格的方向調整，不會放寬。
-- 決策是 file-level。`TARGETED` 表示檔案中每個變更都已被具體 fact 解釋，列出的位置是 review 的起點；`FULL` 表示至少有一個變更無法解釋，或檔案沒有（或無法）分析。兩者都要 review 整個檔案。PR 層級只有在**所有**檔案都是 `NOT_SELECTED_FOR_HUMAN_REVIEW` 時才不需要 review。
+- 決策是 file-level。`TARGETED` 表示檔案中每個變更都已被具體 fact 解釋（或內容等價、只有 rename / 權限改變），列出的位置是 review 的起點；`FULL` 表示至少有一個變更無法解釋，或檔案沒有（或無法）分析。兩者都要 review 整個檔案。PR 層級只有在**所有**檔案都是 `NOT_SELECTED_FOR_HUMAN_REVIEW` 時才不需要 review。
 - analyzer 的問題（找不到 `php`、缺少依賴、逾時）不會讓 CLI 以 exit code 2 結束，而是讓該檔變成 `FULL`；在 CI 中使用時需另外檢查（見下方「Incident handling」與 [PR Review CLI「在 CI 中使用」](../review-cli.md#在-ci-中使用)）。
 - 本 repo 的 CI 只跑下一節的 release gate，不會在 PR 上執行 `bin/review.js`。
 
@@ -59,7 +59,7 @@ npm run eval:real-repo -- evaluate --repo <label>=/path/to/project --baseline-re
 ```
 
 - gate 的任一項（`RISKY_REDUCED`、`ANALYZER_ERROR`、`UNCHANGED_NOT_REDUCED`、`NO_ROWS_ANALYZED`、`REPO_NOT_ANALYZED`）不為 0 即失敗，exit code 1；參數錯誤、analyzer 依賴未安裝、generator / snapshot / composer 失敗等執行錯誤為 exit code 2。`evaluate` 只對 `candidate.jsonl` 判定 gate，baseline 需另外以 `report --results baseline.jsonl` 檢查。
-- `--baseline-ref` 的 snapshot 在 `composer.lock` 與目前不同、或目前沒有安裝 `analyzers/php/vendor/` 時會執行 `composer install`，需要 `composer` 與網路。
+- `--baseline-ref` 的 snapshot 若有 `analyzers/php/composer.json`，且 `composer.lock` 與目前不同或目前沒有安裝 `analyzers/php/vendor/`，會執行 `composer install`（需要 `composer` 與網路）；否則直接複製目前的 `vendor/`。PR #6 之前的版本（沒有 `analyzers/php/composer.json`）不需要安裝依賴。
 - 輸出（預設 `real-repo-eval-output/`，已列入 `.gitignore`）含目標專案的原始碼片段，應視為與目標專案同等敏感，不得 commit 或分享到目標專案以外。
 
 完整說明見 [Real-repo Evaluation](../../evaluation/real-repo/README.md)。
@@ -104,8 +104,8 @@ PHP analyzer 的常見失敗。前兩列是 `ANALYSIS_FAILED`（CLI 中為 `FULL
 
 | Reason | 意義 | 安全行為 |
 |---|---|---|
-| `COV-PHP-001:PHP_ANALYZER_DEPENDENCY_MISSING` | `analyzers/php/vendor/autoload.php` 不存在（未執行 `npm run analyzer:install`）。adapter 回報 FAILED 的 `COV-PHP-001` obligation，coverage FAILED | 每個送進 analyzer 的 PHP 檔都 fail-closed：authoritative 流程為 `ANALYSIS_FAILED`、Full Review、check FAILURE；`bin/review.js` 中該檔為 `FULL`，exit code 不變。執行 `npm run analyzer:install` 後重新分析，不得把這次結果當成已完成分析 |
-| `ANALYZER_ERROR:<訊息>`（`bin/review.js` 的檔案原因） | analyzer 執行時丟出例外：找不到 `php`（`spawn php ENOENT`）、逾時（`PHP_ANALYZER_ABORTED`）、非 0 結束（`PHP_ANALYZER_EXIT_<code>`，例如 PHP 低於 8.3）、輸出不是 JSON（`PHP_ANALYZER_OUTPUT_INVALID`）。authoritative 流程中同樣的失敗由 adapter runner 轉成 `ADAPTER_EXCEPTION` / `ADAPTER_EXECUTION_TIMEOUT`，歸入 `ANALYSIS_FAILED` | 該檔為 `FULL`，exit code 不是 2。確認 PHP CLI ≥ 8.3 與 analyzer 依賴後重跑；逾時可調高 `--timeout-ms` |
-| `ANALYZER_DEPENDENCY_MISSING:<路徑>`（`npm run eval:real-repo`） | 受測 reviewer checkout（目前的 checkout，或 `run --reviewer <dir>` 指定的目錄）沒有安裝 analyzer 依賴 | evaluation 以 exit code 2 結束，不產生結果；在該 checkout 執行 `npm run analyzer:install` 後重跑 |
+| `COV-PHP-001:PHP_ANALYZER_DEPENDENCY_MISSING` | `analyzers/php/vendor/autoload.php` 不存在（未執行 `npm run analyzer:install`）。adapter 回報 FAILED 的 `COV-PHP-001` obligation，coverage FAILED | 每個送進 analyzer 的 PHP 檔都 fail-closed：authoritative 流程為 `ANALYSIS_FAILED`、Full Review、check FAILURE；`bin/review.js` 中該檔為 `FULL`，exit code 不會是 2（沒有 `--fail-on-review` 時為 0，有時為 1，與「需要 review」無法區分）。執行 `npm run analyzer:install` 後重新分析，不得把這次結果當成已完成分析 |
+| `ANALYZER_ERROR:<訊息>`（`bin/review.js` 的檔案原因） | analyzer 執行時丟出例外：找不到 `php`（`spawn php ENOENT`）、逾時（`PHP_ANALYZER_ABORTED`）、非 0 結束（`PHP_ANALYZER_EXIT_<code>`，例如 PHP 低於 8.3）、輸出不是 JSON（`PHP_ANALYZER_OUTPUT_INVALID`）。authoritative 流程中同樣的失敗由 adapter runner 轉成 `ADAPTER_EXCEPTION` / `ADAPTER_EXECUTION_TIMEOUT`，歸入 `ANALYSIS_FAILED` | 該檔為 `FULL`，exit code 不會是 2（同上一列）。確認 PHP CLI ≥ 8.3 與 analyzer 依賴後重跑；逾時可調高 `--timeout-ms` |
+| `GENERATOR_FAILED:<label>:PHP analyzer dependencies are missing…`、`ANALYZER_DEPENDENCY_MISSING:<路徑>`（`npm run eval:real-repo`） | `evaluate` 與 `generate` 先執行 generator（`evaluation/real-repo/generate.php`），它使用目前 checkout 的 `analyzers/php/vendor/`，未安裝時為 `GENERATOR_FAILED:<label>:…`；`run` 時受測 reviewer checkout（目前的 checkout，或 `--reviewer <dir>` 指定的目錄）未安裝依賴時為 `ANALYZER_DEPENDENCY_MISSING:<路徑>` | exit code 2，不產生分析結果（`evaluate` 會留下空的 `corpus.jsonl`，`generate` 的 `--out` 也是空檔）；在對應的 checkout 執行 `npm run analyzer:install` 後重跑 |
 
 不應以重跑或手動重送來掩蓋 stale/conflict；先確認 persisted current head 與 candidate digest，再決定是否建立新 run。

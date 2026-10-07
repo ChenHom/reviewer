@@ -56,9 +56,9 @@ flowchart LR
 
 圖中有兩條使用 pipeline 結果的路徑：
 
-- **PR Review CLI**（`bin/review.js`）：與 GitHub PR 相同，比較 head 相對於 `git merge-base <base> <head>` 的變更。每個變更檔案各自走一次 Adapter → Interpreters → Reducer，再彙整成 PR 層級決策。analysis identity 的 `baseSha` 是 merge base；報表的 `base.sha` 仍是 `--base` 指向的 commit，另以 `mergeBase` 標出比較起點。
+- **PR Review CLI**（`bin/review.js`）：與 GitHub PR 相同，比較 head 相對於 `git merge-base <base> <head>` 的變更。每個送進 analyzer 的檔案各自走一次 Adapter → Interpreters → Reducer，所有變更檔案再彙整成 PR 層級決策。analysis identity 的 `baseSha` 是 merge base；報表的 `base.sha` 仍是 `--base` 指向的 commit，另以 `mergeBase` 標出比較起點。
   - 只有 `.php` 的修改與 rename 會送進 analyzer；新增、刪除、非 PHP、binary、symlink、submodule 與 type change 一律 `FULL`。analyzer process 失敗（找不到 `php`、逾時、非 0 結束、輸出不是 JSON）時該檔也是 `FULL`（`ANALYZER_ERROR:<訊息>`）。
-  - rename（`FILE_RENAMED`）與權限變更（`FILE_MODE_CHANGED`）即使內容等價也要求 review：原本 `NOT_SELECTED_FOR_HUMAN_REVIEW` 的檔案改為 `TARGETED`，其他檔案則加上這兩個原因。
+  - rename（`FILE_RENAMED`）與權限變更（`FILE_MODE_CHANGED`）即使內容等價也要求 review：原本 `NOT_SELECTED_FOR_HUMAN_REVIEW` 的檔案改為 `TARGETED`；其他經 analyzer 分析的檔案在原因後加上適用的代碼（`TARGETED` / `FULL` 不變）。沒有分析結果就判為 `FULL` 的檔案（上一點不送 analyzer 的檔案，以及 `BINARY_FILE`、`ANALYZER_ERROR`）不會加上。
   - PR 層級只有在**所有**檔案都是 `NOT_SELECTED_FOR_HUMAN_REVIEW` 時才是 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
   - 每個檔案使用 in-memory authority state，不寫入 CAS store，也不發布到 GitHub。
   - 用法、merge base 語意、選項、exit code、原因代碼與文字 / JSON 報表見 [PR Review CLI](review-cli.md)。
@@ -116,7 +116,7 @@ Analyzer 以 [nikic/php-parser](https://github.com/nikic/PHP-Parser) 5.9.0（版
 - `CallExtractor` / `CallFacts`：`CALL_ARGUMENT_CHANGED`（named argument）、`CALL_REMOVED` / `CALL_ADDED`（method、nullsafe method 與 static call，含 closure 內的巢狀 call 與鏈式 call）。
 - `StructuralDiff`：`BINARY_OPERATOR_CHANGED`、`GUARD_REMOVED` / `GUARD_ADDED`、`ARRAY_ITEM_REMOVED` / `ARRAY_ITEM_ADDED`、`LITERAL_CHANGED`、`EXPRESSION_NEGATED`、`RETURN_VALUE_CHANGED`、`CALL_ARGUMENTS_REORDERED`、`VARIABLE_CHANGED`。
 
-無法完整解釋時，analyzer 回報 `PARTIAL_PARSE`，`COV-PHP-001` 帶 reasonCode：
+下列情況 analyzer 回報 `PARTIAL_PARSE`，`COV-PHP-001` 帶 reasonCode：
 
 ```
 UNRECOGNIZED_PHP_CHANGE   有差異無法被目前支援的 fact 解釋
@@ -162,7 +162,7 @@ CALL_REMOVED（$this->authorize、$this->authorizeForUser、Gate::authorize）
 
 - 上面的 transaction interpreter 也處理 rollback 被移除（`TRANSACTION_ROLLBACK_REMOVED`），authorization interpreter 也處理 ability 字串改值（`AUTHORIZATION_ABILITY_CHANGED`）。
 - 另外三個 domain interpreter：middleware guard、row lock、payment signature verification。
-- 七個 generic interpreter，各對應一種結構性 fact：operator change、guard clause、negation、return value、argument order、variable change、constant value（`const` 宣告的值）。
+- 七個 generic interpreter：operator change（`BINARY_OPERATOR_CHANGED`）、guard clause（`GUARD_REMOVED` / `GUARD_ADDED`）、negation（`EXPRESSION_NEGATED`）、return value（`RETURN_VALUE_CHANGED`）、argument order（`CALL_ARGUMENTS_REORDERED`）、variable change（`VARIABLE_CHANGED`）、constant value（`const` 宣告值的 `LITERAL_CHANGED`）。
 - 兩個 Laravel interpreter：validation rules、model attributes（`$fillable` / `$guarded`、`$hidden` / `$visible`、`$casts` / `casts()`）。
 
 一個 fact 可以被多個 interpreter 處理，例如 `rules()` 的回傳值改變同時產生 `RETURN_VALUE_CHANGED` 與 `VALIDATION_RULE_CHANGED`。完整清單見 [README「已實作」](../README.md#已實作)，每個輸出代碼的意義見 [PR Review CLI「Domain 原因代碼」](review-cli.md#domain-原因代碼)。
@@ -175,7 +175,7 @@ Interpreter 必須有穩定 `id/version`，並被納入 `interpreterSetDigest`�
 FACT_UNHANDLED:<fact-id>
 ```
 
-`FACT_UNHANDLED` 仍要求 Human Review；因為變更已被 fact 解釋，fallback 是 `TARGETED` 而不是 `FULL`。Interpreter 丟出例外或回傳不合法結果時產生 `ANALYZER_FACT_INTERPRETER_FAILED` / `ANALYZER_FACT_INTERPRETER_INVALID_RESULT` blocker（`FULL`）。
+`FACT_UNHANDLED` 仍要求 Human Review。它本身不會讓 fallback 變成 `FULL`（不屬於 `COV-` / `COVERAGE_` / `ANALYZER_` 開頭的代碼，見 §5）：coverage 完整、每個變更都已被 fact 解釋時，原因只有 `FACT_UNHANDLED` 的檔案是 `TARGETED`；同一檔案有 `COV-PHP-001:*` 時仍是 `FULL`。例如位置參數的 fallback `CALL_ARGUMENT_CHANGED`（§3）沒有 interpreter 處理時會產生 `FACT_UNHANDLED`，但它只在有差異無法解釋時輸出，檔案一定帶 `COV-PHP-001:UNRECOGNIZED_PHP_CHANGE`，因此是 `FULL`。Interpreter 丟出例外或回傳不合法結果時產生 `ANALYZER_FACT_INTERPRETER_FAILED` / `ANALYZER_FACT_INTERPRETER_INVALID_RESULT` blocker（`FULL`）。
 
 ## 5. Decision Flow
 
