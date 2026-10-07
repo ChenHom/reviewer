@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
+import { rmSync } from 'node:fs';
 import { mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { availableParallelism, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import process from 'node:process';
 import { URL, fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -33,7 +34,8 @@ const USAGE = `用法：node evaluation/real-repo/cli.js <command> [options]
 
 exit code：0 通過；1 gate failure（evaluate / run / report）；2 參數或執行錯誤。
 gate：risky mutation 被判為 NOT_SELECTED、analyzer 錯誤或逾時、未變更且可解析的檔案
-沒有被判為 NOT_SELECTED、沒有任何一筆被實際分析。compare 只輸出差異，不影響 exit code。`;
+沒有被判為 NOT_SELECTED、沒有任何一筆（或某個 repo 沒有任何一筆）被實際分析。
+evaluate 只檢查 candidate；compare 只輸出差異，不影響 exit code。`;
 
 const DEFAULT_CONCURRENCY = Math.min(availableParallelism(), 8);
 
@@ -74,8 +76,22 @@ function numberOption(value, fallback, name, { integer = false, min = -Infinity,
 function executionOptions(values) {
   return {
     concurrency: numberOption(values.concurrency, DEFAULT_CONCURRENCY, 'concurrency', { integer: true, min: 1 }),
-    timeoutMs: numberOption(values['timeout-ms'], 30_000, 'timeout-ms', { integer: true, min: 1 }),
+    // setTimeout 上限為 2^31-1 ms；超過時 Node 會改成 1 ms。
+    timeoutMs: numberOption(values['timeout-ms'], 30_000, 'timeout-ms', { integer: true, min: 1, max: 2_147_483_647 }),
   };
+}
+
+/**
+ * 檢查可選的字串參數：給了就不可為空字串（例如 `--baseline-ref "$UNSET"`）。
+ *
+ * @param {object} values - parseArgs values。
+ * @param {string} name - 參數名稱。
+ * @returns {string|undefined} 參數值。
+ */
+function optionalString(values, name) {
+  const value = values[name];
+  if (value !== undefined && value.trim() === '') throw new Error(`OPTION_INVALID:--${name} 不可為空`);
+  return value;
 }
 
 /**
@@ -106,6 +122,7 @@ async function writeJsonl(path, rows) {
  * @returns {Promise<void>}
  */
 async function generateCorpus({ repos, seed, rate, out }) {
+  await mkdir(dirname(out), { recursive: true });
   const handle = await open(out, 'w');
   try {
     for (const [label, path] of repos) {
@@ -135,7 +152,8 @@ async function generateCorpus({ repos, seed, rate, out }) {
 }
 
 /**
- * 把 git ref 解開成暫存 snapshot 並執行 callback；不論成功或失敗都會移除 snapshot。
+ * 把 git ref 解開成暫存 snapshot 並執行 callback。正常結束、發生錯誤或收到
+ * SIGINT / SIGTERM 時都會移除 snapshot（SIGKILL 無法處理）。
  *
  * @param {string} ref - git ref。
  * @param {function(string): Promise<*>} callback - 以 snapshot 目錄執行的工作。
@@ -143,11 +161,19 @@ async function generateCorpus({ repos, seed, rate, out }) {
  */
 async function withSnapshot(ref, callback) {
   const snapshot = await mkdtemp(join(tmpdir(), 'reviewer-baseline-'));
+  const onSignal = (signal) => {
+    rmSync(snapshot, { recursive: true, force: true });
+    process.exit(signal === 'SIGINT' ? 130 : 143);
+  };
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
   try {
     const commit = await prepareBaseline({ reviewerRoot: REVIEWER_ROOT, ref, directory: snapshot });
     log(`baseline ${ref} = ${commit.slice(0, 12)}`);
     return await callback(snapshot);
   } finally {
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
     await rm(snapshot, { recursive: true, force: true });
   }
 }
@@ -174,6 +200,8 @@ function progress(name) {
  * @returns {Promise<object[]>} result rows。
  */
 async function runAndWrite({ corpus, repos, out, reviewerRoot, concurrency, timeoutMs, name }) {
+  // 先建立輸出目錄：路徑錯誤時在分析前就失敗。
+  await mkdir(dirname(out), { recursive: true });
   const results = await runCorpus(corpus, {
     repos,
     reviewerRoot,
@@ -268,6 +296,7 @@ const commands = {
     });
     const repos = parseRepoOptions(values.repo);
     if (repos.size === 0) throw new Error('OPTION_MISSING:--repo');
+    const baselineRef = optionalString(values, 'baseline-ref');
     const execution = executionOptions(values);
     const seed = numberOption(values.seed, 42, 'seed', { integer: true });
     const rate = numberOption(values.rate, 0.3, 'rate', { min: 0, max: 1 });
@@ -307,7 +336,7 @@ const commands = {
     };
 
     // baseline snapshot 先準備：ref 不存在或依賴安裝失敗時立即結束，不必等 candidate 跑完。
-    await (values['baseline-ref'] ? withSnapshot(values['baseline-ref'], evaluate) : evaluate(null));
+    await (baselineRef === undefined ? evaluate(null) : withSnapshot(baselineRef, evaluate));
   },
 
   async generate(args) {
@@ -343,7 +372,9 @@ const commands = {
       },
     });
     if (!values.corpus || !values.out) throw new Error('OPTION_MISSING:--corpus / --out');
-    if (values['baseline-ref'] && values.reviewer) {
+    const baselineRef = optionalString(values, 'baseline-ref');
+    const reviewer = optionalString(values, 'reviewer');
+    if (baselineRef !== undefined && reviewer !== undefined) {
       throw new Error('OPTION_CONFLICT:--baseline-ref 與 --reviewer 只能擇一');
     }
     const options = {
@@ -352,9 +383,9 @@ const commands = {
       repos: parseRepoOptions(values.repo),
       out: values.out,
     };
-    const results = values['baseline-ref']
-      ? await withSnapshot(values['baseline-ref'], (root) => runAndWrite({ ...options, reviewerRoot: root, name: 'baseline' }))
-      : await runAndWrite({ ...options, reviewerRoot: values.reviewer, name: values.reviewer ?? 'candidate' });
+    const results = baselineRef !== undefined
+      ? await withSnapshot(baselineRef, (root) => runAndWrite({ ...options, reviewerRoot: root, name: 'baseline' }))
+      : await runAndWrite({ ...options, reviewerRoot: reviewer, name: reviewer ?? 'candidate' });
     report(results, false);
   },
 

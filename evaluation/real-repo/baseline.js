@@ -60,11 +60,15 @@ export async function prepareBaseline({ reviewerRoot, ref, directory }) {
   });
   const extract = spawn('tar', ['-x', '-C', directory], { stdio: ['pipe', 'ignore', 'pipe'] });
   // pipeline 會把 tar 提早結束造成的 EPIPE 轉成 rejection，而不是未處理的 error 事件。
-  await Promise.all([
+  // 回報錯誤時優先使用 child process 的訊息（含 stderr），其次才是 pipe 的 EPIPE。
+  const [piped, archived, extracted] = await Promise.allSettled([
     pipeline(archive.stdout, extract.stdin),
     finished(archive, 'git archive', { captureStdout: false }),
     finished(extract, 'tar'),
   ]);
+  for (const outcome of [extracted, archived, piped]) {
+    if (outcome.status === 'rejected') throw outcome.reason;
+  }
 
   const analyzerDirectory = join(directory, 'analyzers/php');
   if (!existsSync(join(analyzerDirectory, 'composer.json'))) {

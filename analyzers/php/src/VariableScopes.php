@@ -10,7 +10,7 @@ use PhpParser\Node\Stmt;
 use PhpParser\NodeFinder;
 
 /**
- * 為 function-like scope 內的區域變數產生 canonical 名稱（`$__rv0`、`$__rv1`…），
+ * 為 function-like scope 內的區域變數產生 canonical 名稱（`"\0rv0"`、`"\0rv1"`…），
  * 依第一次出現的順序編號。兩個只差在區域變數一致改名的函式會得到相同的
  * canonical 名稱序列，而不一致的改名（合併兩個變數、只改部分出現處）不會。
  *
@@ -30,7 +30,7 @@ final class VariableScopes
         '_REQUEST', '_ENV', 'http_response_header', 'php_errormsg', 'argc', 'argv',
     ];
 
-    private const NAME_SENSITIVE_FUNCTIONS = ['compact', 'extract', 'get_defined_vars', 'parse_str', 'mb_parse_str'];
+    private const NAME_SENSITIVE_FUNCTIONS = ['compact', 'extract', 'get_defined_vars', 'parse_str', 'mb_parse_str', 'assert'];
 
     /** @var array<int, string> spl_object_id(Variable) → canonical name */
     private array $names = [];
@@ -173,7 +173,8 @@ final class VariableScopes
                 && is_string($node->name)
                 && !isset($preserved[$node->name])
             ) {
-                $state['map'][$node->name] ??= '__rv' . $state['next']++;
+                // 以 NUL 開頭：不可能是合法的 PHP 變數名稱，不會與保留原名的變數（參數等）碰撞。
+                $state['map'][$node->name] ??= "\0rv" . $state['next']++;
                 $this->names[spl_object_id($node)] = $state['map'][$node->name];
             }
 
@@ -184,6 +185,42 @@ final class VariableScopes
                 }
             }
         }
+    }
+
+    private static function hasUnpackedArgument(Expr\FuncCall $call): bool
+    {
+        foreach ($call->args as $arg) {
+            if (!$arg instanceof Node\Arg || $arg->unpack) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * assert() 的參數是否必定不是字串（比較、邏輯運算、instanceof、isset、empty、true / false）。
+     */
+    private static function isNonStringAssertion(mixed $arg): bool
+    {
+        if (!$arg instanceof Node\Arg || $arg->unpack) {
+            return false;
+        }
+        $value = $arg->value;
+        $booleanOperators = [
+            Expr\BinaryOp\Equal::class, Expr\BinaryOp\NotEqual::class, Expr\BinaryOp\Identical::class,
+            Expr\BinaryOp\NotIdentical::class, Expr\BinaryOp\Smaller::class, Expr\BinaryOp\SmallerOrEqual::class,
+            Expr\BinaryOp\Greater::class, Expr\BinaryOp\GreaterOrEqual::class, Expr\BinaryOp\BooleanAnd::class,
+            Expr\BinaryOp\BooleanOr::class, Expr\BinaryOp\LogicalAnd::class, Expr\BinaryOp\LogicalOr::class,
+            Expr\BinaryOp\LogicalXor::class,
+        ];
+
+        return in_array($value::class, $booleanOperators, true)
+            || $value instanceof Expr\BooleanNot
+            || $value instanceof Expr\Instanceof_
+            || $value instanceof Expr\Isset_
+            || $value instanceof Expr\Empty_
+            || ($value instanceof Expr\ConstFetch && in_array(strtolower($value->name->toString()), ['true', 'false'], true));
     }
 
     /**
@@ -231,8 +268,16 @@ final class VariableScopes
                 if ($function === null) {
                     return false;
                 }
-                // parse_str / mb_parse_str 只有單參數時才會寫入區域變數。
-                return !in_array($function, ['parse_str', 'mb_parse_str'], true) || count($node->args) < 2;
+                // parse_str / mb_parse_str 只有單參數時才會寫入區域變數（spread 可能讓實際參數只有一個）。
+                if (in_array($function, ['parse_str', 'mb_parse_str'], true)) {
+                    return count($node->args) < 2 || self::hasUnpackedArgument($node);
+                }
+                // PHP 7 的 assert() 會把字串參數當成程式碼在目前 scope 執行。
+                if ($function === 'assert') {
+                    return !self::isNonStringAssertion($node->args[0] ?? null);
+                }
+
+                return true;
             }
 
             return false;

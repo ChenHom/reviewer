@@ -164,6 +164,18 @@ test('validateResults：沒有任何一筆被實際分析時 gate 失敗', () =>
   }
 });
 
+test('validateResults：多個 repo 中任何一個完全沒有被分析時 gate 失敗', () => {
+  const rows = [
+    result({ index: 0, repo: 'shop' }),
+    result({ index: 1, repo: 'admin', outcome: 'SOURCE_MISSING' }),
+    result({ index: 2, repo: 'admin', outcome: 'SOURCE_MISSING' }),
+  ];
+  const gate = validateResults(rows);
+
+  assert.deepEqual(gate.failures.map(({ code, repo }) => [code, repo]), [['REPO_NOT_ANALYZED', 'admin']]);
+  assert.match(formatSummary(summarizeResults(rows), gate), /REPO_NOT_ANALYZED admin/);
+});
+
 test('summarizeResults 依 op 與 label 計算 reduced / targeted / full / specific', () => {
   const summary = summarizeResults([
     result({ index: 0 }),

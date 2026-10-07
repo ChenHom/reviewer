@@ -19,8 +19,9 @@ declare(strict_types=1);
  *
  * 標籤由本 script 獨立驗證：把 before / after 解析後去除所有 attributes 再 pretty print，
  * safe（改名除外）必須相同，risky 必須不同；不符合的 mutation 直接捨棄。比較前 `__LINE__`
- * 會換成實際行號、`__halt_compiler` 會帶上 byte offset（排版變更會改變它們的值），
- * `TRUE` / `true` 等常數名稱統一為小寫（大小寫不影響語意）。
+ * 會換成實際行號、`__halt_compiler` 會帶上 `__COMPILER_HALT_OFFSET__`（排版變更會改變它們
+ * 的值），`TRUE` / `true` 等常數名稱統一為小寫（大小寫不影響語意）。safe 必須在最新語法與
+ * PHP 7 視角（7.4 語法、`#[` 視為註解）下都成立。
  *
  * 每個檔案以 seed 與路徑決定自己的亂數序列：新增或刪除其他檔案不會改變該檔案的 mutation。
  * 這個驗證刻意不使用 analyzer 的 Canonicalizer，避免用受測程式碼替自己的結果背書。
@@ -44,7 +45,6 @@ use PhpParser\NodeFinder;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitor\CloningVisitor;
 use PhpParser\NodeVisitorAbstract;
-use PhpParser\Parser;
 use PhpParser\ParserFactory;
 use PhpParser\PhpVersion;
 use PhpParser\PrettyPrinter;
@@ -56,7 +56,7 @@ const PRESERVED_VARIABLES = [
     '_REQUEST', '_ENV', 'http_response_header', 'php_errormsg', 'argc', 'argv',
 ];
 
-const NAME_SENSITIVE_FUNCTIONS = ['compact', 'extract', 'get_defined_vars', 'parse_str', 'mb_parse_str'];
+const NAME_SENSITIVE_FUNCTIONS = ['compact', 'extract', 'get_defined_vars', 'parse_str', 'mb_parse_str', 'assert'];
 
 const OPERATOR_FLIPS = [
     Expr\BinaryOp\Smaller::class => '<=',
@@ -87,21 +87,26 @@ if ($rate < 0 || $rate > 1) {
 }
 
 /**
- * 列出 repo 內的 PHP 檔案：git repo 用 `git ls-files`（尊重 .gitignore），否則遞迴掃描。
+ * 列出 repo 內的 PHP 檔案。
  *
- * @return list<string> repo 相對路徑（排序後）
+ * - git work tree 內：`git ls-files`（只列 index 中的檔案）；失敗時直接結束（exit 2）。
+ * - 不是 git repo：遞迴掃描，略過 `.git`、`vendor`、`node_modules`。
+ * - git 本身出錯（例如 dubious ownership）時不改用目錄掃描，避免掃到不該掃的檔案。
+ *
+ * @return list<string> repo 相對路徑（排序、去重）
  */
 function listPhpFiles(string $root): array
 {
-    $insideWorkTree = trim((string) shell_exec('git -C ' . escapeshellarg($root) . ' rev-parse --is-inside-work-tree 2>/dev/null')) === 'true';
-    if ($insideWorkTree) {
-        exec('git -C ' . escapeshellarg($root) . " ls-files -z -- '*.php'", $lines, $status);
-        if ($status !== 0) {
+    exec('LC_ALL=C git -C ' . escapeshellarg($root) . ' rev-parse --show-toplevel 2>&1', $output, $status);
+    $message = implode("\n", $output);
+    if ($status === 0) {
+        exec('git -C ' . escapeshellarg($root) . " ls-files -z -- '*.php'", $lines, $listStatus);
+        if ($listStatus !== 0) {
             fwrite(STDERR, "git ls-files failed in {$root}\n");
             exit(2);
         }
-        $files = array_values(array_filter(explode("\0", implode("\n", $lines)), static fn (string $file) => $file !== ''));
-    } else {
+        $files = array_filter(explode("\0", implode("\n", $lines)), static fn (string $file) => $file !== '');
+    } elseif (str_contains($message, 'not a git repository') || ($status === 127 && !hasGitDirectory($root))) {
         $files = [];
         $iterator = new RecursiveIteratorIterator(new RecursiveCallbackFilterIterator(
             new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS),
@@ -112,39 +117,112 @@ function listPhpFiles(string $root): array
                 $files[] = substr($file->getPathname(), strlen(rtrim($root, '/')) + 1);
             }
         }
+    } else {
+        fwrite(STDERR, "git failed in {$root}: {$message}\n");
+        exit(2);
     }
+
+    // 未解決的 merge conflict 會讓同一路徑出現多次。
+    $files = array_values(array_unique($files));
     sort($files, SORT_STRING);
 
     return $files;
 }
 
 /**
- * 與 analyzer 相同的語法選擇：先用最新 PHP 語法，失敗再用 PHP 7.4。
- *
- * @return array{0: Parser, 1: list<Stmt>}|null
+ * root 或其上層是否有 `.git`（目錄或 worktree 的 `.git` 檔案）。
  */
-function parseWithFallback(string $source): ?array
+function hasGitDirectory(string $root): bool
 {
-    $factory = new ParserFactory();
-    foreach ([$factory->createForNewestSupportedVersion(), $factory->createForVersion(PhpVersion::fromString('7.4'))] as $parser) {
-        try {
-            return [$parser, $parser->parse($source) ?? []];
-        } catch (PhpParserError) {
-            continue;
+    for ($directory = realpath($root); is_string($directory); $directory = dirname($directory)) {
+        if (file_exists($directory . '/.git')) {
+            return true;
+        }
+        if (dirname($directory) === $directory) {
+            return false;
         }
     }
 
-    return null;
+    return false;
+}
+
+/**
+ * PHP 7 對 `#[` 的解讀：`#` 開始單行註解，直到換行或 close tag（與 analyzer 相同）。
+ */
+function php7View(string $source): string
+{
+    foreach (PhpToken::tokenize($source) as $token) {
+        if ($token->id !== T_ATTRIBUTE) {
+            continue;
+        }
+        $end = strlen($source);
+        foreach (["\n", "\r", '?' . '>'] as $terminator) {
+            $position = strpos($source, $terminator, $token->pos);
+            if ($position !== false && $position < $end) {
+                $end = $position;
+            }
+        }
+        $source = substr_replace($source, str_repeat(' ', $end - $token->pos), $token->pos, $end - $token->pos);
+    }
+
+    return $source;
+}
+
+/**
+ * 以最新 PHP 語法與 PHP 7 視角（7.4 語法 + `#[` 為註解）各解析一次。
+ *
+ * @return array{newest: list<Stmt>|null, php74: list<Stmt>|null}
+ */
+function parseBothGrammars(string $source): array
+{
+    $factory = new ParserFactory();
+    $parsed = [];
+    foreach (['newest', 'php74'] as $grammar) {
+        $parser = $grammar === 'newest'
+            ? $factory->createForNewestSupportedVersion()
+            : $factory->createForVersion(PhpVersion::fromString('7.4'));
+        try {
+            $parsed[$grammar] = $parser->parse($grammar === 'newest' ? $source : php7View($source)) ?? [];
+        } catch (PhpParserError) {
+            $parsed[$grammar] = null;
+        }
+    }
+
+    return $parsed;
+}
+
+/**
+ * 兩種語法下的 canonical print（無法解析或無法 print 時為 null）。
+ *
+ * @return array{newest: string|null, php74: string|null}
+ */
+function grammarPrints(string $source): array
+{
+    $prints = [];
+    foreach (parseBothGrammars($source) as $grammar => $statements) {
+        try {
+            $prints[$grammar] = $statements === null ? null : canonicalPrint($statements, $source);
+        } catch (Throwable) {
+            $prints[$grammar] = null;
+        }
+    }
+
+    return $prints;
 }
 
 /**
  * 去除所有 attributes（位置、註解、引號種類、array 語法…）後 pretty print，作為 AST 等價的獨立判斷。
  *
  * @param list<Stmt> $statements
+ * @param string $source 該 AST 的原始碼（計算 __COMPILER_HALT_OFFSET__）
  */
-function canonicalPrint(array $statements): string
+function canonicalPrint(array $statements, string $source): string
 {
-    $stripAttributes = new class () extends NodeVisitorAbstract {
+    $stripAttributes = new class (strlen($source)) extends NodeVisitorAbstract {
+        public function __construct(private readonly int $sourceLength)
+        {
+        }
+
         public function enterNode(Node $node): ?Node
         {
             // 值取決於位置的節點：保留其實際值，讓排版變更造成的差異可被看見。
@@ -152,7 +230,8 @@ function canonicalPrint(array $statements): string
                 return new Node\Scalar\Int_($node->getStartLine());
             }
             if ($node instanceof Stmt\HaltCompiler) {
-                return new Stmt\HaltCompiler($node->getStartFilePos() . ':' . $node->remaining);
+                // __COMPILER_HALT_OFFSET__：終止符之後的 byte 位置。
+                return new Stmt\HaltCompiler(($this->sourceLength - strlen($node->remaining)) . ':' . $node->remaining);
             }
             if (
                 $node instanceof Expr\ConstFetch
@@ -404,6 +483,11 @@ function candidateMutations(string $source, array $ast): array
 function renameMutations(string $source, Stmt\ClassMethod $method, array $sensitiveFunctions): array
 {
     $finder = new NodeFinder();
+    // 巢狀的 method / function（匿名 class、函式內宣告的函式）是獨立的變數 scope；
+    // 跨 scope 的改名可能其實無害，會讓 risky 標籤失真，因此整個 method 不產生改名 mutation。
+    if ($finder->findFirst($method->stmts, static fn (Node $n) => $n instanceof Stmt\ClassMethod || $n instanceof Stmt\Function_) !== null) {
+        return [];
+    }
     $sensitiveCalls = $finder->find($method, static fn (Node $n) => $n instanceof Expr\FuncCall
         && $n->name instanceof Node\Name
         && isset($sensitiveFunctions[strtolower($n->name->getLast())]));
@@ -499,26 +583,41 @@ function renameMutations(string $source, Stmt\ClassMethod $method, array $sensit
 }
 
 /**
- * 依 label 驗證 mutation：safe（改名除外）AST 必須不變、risky 必須改變、改名後必須可解析。
+ * 依 label 驗證 mutation。
+ *
+ * - safe（改名除外）：兩種語法下的可解析性都不變，且每種可解析的語法下 canonical print 都相同。
+ * - S_RENAME_LOCAL：兩種語法下的可解析性都不變，且主要語法下 print 不同（改名確實發生）。
+ * - risky：主要語法下 print 不同。
  *
  * @param array{op: string, label: string, edits: list<array{0: int, 1: int, 2: string}>} $mutation
+ * @param array{newest: string|null, php74: string|null} $basePrints
  */
-function validMutation(array $mutation, string $source, string $baselinePrint, Parser $parser): bool
+function validMutation(array $mutation, string $source, array $basePrints): bool
 {
-    try {
-        $afterPrint = canonicalPrint($parser->parse(applyEdits($source, $mutation['edits'])) ?? []);
-    } catch (Throwable) {
+    $afterPrints = grammarPrints(applyEdits($source, $mutation['edits']));
+    $primary = $basePrints['newest'] !== null ? 'newest' : 'php74';
+    if ($basePrints[$primary] === null || $afterPrints[$primary] === null) {
         return false;
     }
+    $sameParseability = ($basePrints['newest'] === null) === ($afterPrints['newest'] === null)
+        && ($basePrints['php74'] === null) === ($afterPrints['php74'] === null);
 
-    return match (true) {
-        $mutation['op'] === 'S_RENAME_LOCAL' => $afterPrint !== $baselinePrint,
-        $mutation['label'] === 'safe' => $afterPrint === $baselinePrint,
-        default => $afterPrint !== $baselinePrint,
-    };
+    if ($mutation['op'] === 'S_RENAME_LOCAL') {
+        return $sameParseability && $afterPrints[$primary] !== $basePrints[$primary];
+    }
+    if ($mutation['label'] === 'safe') {
+        return $sameParseability
+            && $afterPrints['newest'] === $basePrints['newest']
+            && $afterPrints['php74'] === $basePrints['php74'];
+    }
+
+    return $afterPrints[$primary] !== $basePrints[$primary];
 }
 
-$stats = ['files' => 0, 'unparsable' => 0, 'tooLarge' => 0, 'unchanged' => 0, 'safe' => 0, 'risky' => 0, 'rejected' => 0];
+$stats = [
+    'files' => 0, 'nonUtf8Path' => 0, 'unparsable' => 0, 'tooLarge' => 0,
+    'unchanged' => 0, 'safe' => 0, 'risky' => 0, 'rejected' => 0,
+];
 $emit = static function (array $row) use (&$stats): void {
     $line = json_encode($row, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     if ($line === false) {
@@ -529,8 +628,14 @@ $emit = static function (array $row) use (&$stats): void {
     $stats[$row['label']] += 1;
 };
 
-foreach (listPhpFiles($root) as $file) {
+$files = listPhpFiles($root);
+if ($files === []) {
+    fwrite(STDERR, "no PHP files found in {$root}\n");
+    exit(2);
+}
+foreach ($files as $file) {
     if (!mb_check_encoding($file, 'UTF-8')) {
+        $stats['nonUtf8Path'] += 1;
         continue;
     }
     // git index 中仍存在、但 working tree 已刪除的檔案直接略過。
@@ -546,13 +651,14 @@ foreach (listPhpFiles($root) as $file) {
     }
 
     $base = ['repo' => $label, 'path' => $file, 'sourceSha256' => hash('sha256', $source)];
-    $parsed = $source === '' ? null : parseWithFallback($source);
-    $emit($base + ['op' => 'S_UNCHANGED', 'label' => 'unchanged', 'parseable' => $parsed !== null, 'edits' => []]);
-    if ($parsed === null) {
+    // 與 analyzer 相同的主要語法：最新語法，無法解析時改用 PHP 7 視角。
+    $grammars = $source === '' ? ['newest' => null, 'php74' => null] : parseBothGrammars($source);
+    $ast = $grammars['newest'] ?? $grammars['php74'];
+    $emit($base + ['op' => 'S_UNCHANGED', 'label' => 'unchanged', 'parseable' => $ast !== null, 'edits' => []]);
+    if ($ast === null) {
         $stats['unparsable'] += 1;
         continue;
     }
-    [$parser, $ast] = $parsed;
 
     // 每個檔案以 seed 與路徑重設亂數；先抽樣再驗證，RNG 消耗只取決於檔案內容與 seed。
     mt_srand(crc32($seed . "\0" . $file));
@@ -564,16 +670,11 @@ foreach (listPhpFiles($root) as $file) {
         continue;
     }
 
-    try {
-        $baselinePrint = canonicalPrint($ast);
-    } catch (Throwable) {
-        $stats['rejected'] += count($sampled);
-        continue;
-    }
+    $basePrints = grammarPrints($source);
     foreach ($sampled as $mutation) {
         // edit 的 replacement 必須是合法 UTF-8 才能寫進 JSONL；否則捨棄（不轉碼，避免改變 bytes）。
         $encodable = array_reduce($mutation['edits'], static fn (bool $ok, array $edit) => $ok && mb_check_encoding($edit[2], 'UTF-8'), true);
-        if (!$encodable || !validMutation($mutation, $source, $baselinePrint, $parser)) {
+        if (!$encodable || !validMutation($mutation, $source, $basePrints)) {
             $stats['rejected'] += 1;
             continue;
         }

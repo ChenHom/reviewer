@@ -59,7 +59,9 @@ final class Canonicalizer
         if ($node instanceof Node\Scalar\MagicConst\Line) {
             $parts[] = 'line=' . $node->getStartLine();
         } elseif ($node instanceof Stmt\HaltCompiler) {
-            $parts[] = 'offset=' . $node->getStartFilePos();
+            // __COMPILER_HALT_OFFSET__ 是終止符（分號或 close tag）之後的位置；analyze.php 以
+            // strlen(source) - strlen(remaining) 寫入 haltOffset attribute。
+            $parts[] = 'offset=' . $node->getAttribute('haltOffset', $node->getEndFilePos() + 1);
         }
         foreach ($node->getSubNodeNames() as $name) {
             $child = $node->$name;

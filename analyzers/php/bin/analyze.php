@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use PhpParser\Error as PhpParserError;
+use PhpParser\Node\Stmt;
+use PhpParser\NodeFinder;
 use PhpParser\ParserFactory;
 use PhpParser\PhpVersion;
 use Reviewer\PhpAnalyzer\CallExtractor;
@@ -31,35 +33,67 @@ if (!is_file($autoload)) {
 require $autoload;
 
 /**
- * 先以最新 PHP 語法解析；任一側失敗時，兩側一起改用 PHP 7.4 語法重試
- * （支援 `$str{0}` 等 PHP 8 已移除的語法），確保 before / after 使用同一套語法。
- *
- * @return list<array{0: list<\PhpParser\Node\Stmt>, 1: list<\PhpParser\Token>}>
+ * PHP 7 對 `#[` 的解讀：`#` 開始單行註解，直到換行或 close tag。PHP-Parser 的 7.4 語法
+ * 不會還原這點（AttributeEmulator::reverseEmulate 尚未實作），所以先把每個 attribute
+ * 起點到行尾換成等長空白，byte 位置不變。
  */
-function parsePair(string $beforeSource, string $afterSource): array
+function php7View(string $source): string
 {
-    $factory = new ParserFactory();
-    $grammars = [
-        static fn () => $factory->createForNewestSupportedVersion(),
-        static fn () => $factory->createForVersion(PhpVersion::fromString('7.4')),
-    ];
-
-    foreach ($grammars as $index => $createParser) {
-        try {
-            $parsed = [];
-            foreach ([$beforeSource, $afterSource] as $source) {
-                $parser = $createParser();
-                $parsed[] = [$parser->parse($source) ?? [], $parser->getTokens()];
-            }
-            return $parsed;
-        } catch (PhpParserError $error) {
-            if ($index === count($grammars) - 1) {
-                throw $error;
+    foreach (PhpToken::tokenize($source) as $token) {
+        if ($token->id !== T_ATTRIBUTE) {
+            continue;
+        }
+        $end = strlen($source);
+        foreach (["\n", "\r", '?' . '>'] as $terminator) {
+            $position = strpos($source, $terminator, $token->pos);
+            if ($position !== false && $position < $end) {
+                $end = $position;
             }
         }
+        $source = substr_replace($source, str_repeat(' ', $end - $token->pos), $token->pos, $end - $token->pos);
     }
 
-    throw new LogicException('unreachable');
+    return $source;
+}
+
+/**
+ * 以指定語法解析；失敗時回傳 null。`__halt_compiler` 節點會記錄真實的
+ * `__COMPILER_HALT_OFFSET__`（終止符之後的 byte 位置）供 Canonicalizer 使用。
+ *
+ * @return array{0: list<\PhpParser\Node\Stmt>, 1: list<\PhpParser\Token>}|null
+ */
+function parseWithGrammar(string $grammar, string $source): ?array
+{
+    $factory = new ParserFactory();
+    $parser = $grammar === 'newest'
+        ? $factory->createForNewestSupportedVersion()
+        : $factory->createForVersion(PhpVersion::fromString('7.4'));
+    try {
+        $statements = $parser->parse($grammar === 'newest' ? $source : php7View($source)) ?? [];
+    } catch (PhpParserError) {
+        return null;
+    }
+    foreach ((new NodeFinder())->findInstanceOf($statements, Stmt\HaltCompiler::class) as $halt) {
+        $halt->setAttribute('haltOffset', strlen($source) - strlen($halt->remaining));
+    }
+
+    return [$statements, $parser->getTokens()];
+}
+
+/**
+ * 兩棵 AST 是否等價：原始變數名稱相同，或 scope-aware canonical 名稱相同。
+ *
+ * @param list<\PhpParser\Node\Stmt> $before
+ * @param list<\PhpParser\Node\Stmt> $after
+ */
+function astEquivalent(array $before, array $after): bool
+{
+    if ((new Canonicalizer())->hash($before) === (new Canonicalizer())->hash($after)) {
+        return true;
+    }
+
+    return (new Canonicalizer(VariableScopes::canonicalNames($before)))->hash($before)
+        === (new Canonicalizer(VariableScopes::canonicalNames($after)))->hash($after);
 }
 
 function sortedFacts(array $facts): array
@@ -100,15 +134,25 @@ $path = $input['path'];
 $beforeSource = $input['beforeSource'];
 $afterSource = $input['afterSource'];
 
-try {
-    [[$beforeAst, $beforeTokens], [$afterAst, $afterTokens]] = parsePair($beforeSource, $afterSource);
-} catch (PhpParserError) {
+// 主要語法：兩側都能以最新語法解析時使用最新語法，否則兩側一起改用 PHP 7.4 語法。
+$grammars = ['newest', 'php74'];
+$parsed = [
+    'newest' => [parseWithGrammar('newest', $beforeSource), parseWithGrammar('newest', $afterSource)],
+];
+if (in_array(null, $parsed['newest'], true)) {
+    $parsed['php74'] = [parseWithGrammar('php74', $beforeSource), parseWithGrammar('php74', $afterSource)];
+    $primary = in_array(null, $parsed['php74'], true) ? null : 'php74';
+} else {
+    $primary = 'newest';
+}
+if ($primary === null) {
     respond([
         'ok' => false,
         'code' => 'PHP_PARSE_ERROR',
         'phpVersion' => PHP_VERSION,
     ]);
 }
+[[$beforeAst, $beforeTokens], [$afterAst, $afterTokens]] = $parsed[$primary];
 
 /**
  * 以指定的變數命名方式分析一次：回傳 call facts、結構性 facts 與未解釋差異。
@@ -169,13 +213,29 @@ if ($analysis['unexplained'] !== []) {
 }
 
 $complete = $analysis['unexplained'] === [];
+$reasonCode = $complete ? null : 'UNRECOGNIZED_PHP_CHANGE';
+
+// 判為等價（COMPLETE 且無 fact）前，確認結論不依賴語法版本：專案可能跑在 PHP 7
+// （例如 `.` 與 `+` 的優先順序在 PHP 8 改變），也可能跑在 PHP 8。兩種語法下的
+// 可解析性必須一致，且兩側都能解析的語法下也必須等價；否則交給 Human Review。
+if ($complete && $analysis['facts'] === []) {
+    foreach ($grammars as $grammar) {
+        $parsed[$grammar] ??= [parseWithGrammar($grammar, $beforeSource), parseWithGrammar($grammar, $afterSource)];
+        [$before, $after] = $parsed[$grammar];
+        if (($before === null) !== ($after === null) || ($before !== null && !astEquivalent($before[0], $after[0]))) {
+            $complete = false;
+            $reasonCode = 'PHP_GRAMMAR_DIVERGENCE';
+            break;
+        }
+    }
+}
 
 respond([
     'ok' => true,
     'status' => $complete ? 'COMPLETE' : 'PARTIAL_PARSE',
     'complete' => $complete,
-    'reasonCode' => $complete ? null : 'UNRECOGNIZED_PHP_CHANGE',
-    'diagnostics' => $complete ? [] : ['UNRECOGNIZED_PHP_CHANGE'],
+    'reasonCode' => $reasonCode,
+    'diagnostics' => $complete ? [] : [$reasonCode],
     'facts' => sortedFacts(array_map(
         static function (array $fact): array {
             unset($fact['calleeKey']);

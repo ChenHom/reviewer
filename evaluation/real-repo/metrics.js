@@ -119,9 +119,18 @@ export function validateResults(rows) {
     }
   }
 
-  // 全部被略過（--repo 路徑錯誤、corpus 過期）或沒有任何資料時不可視為通過。
-  if (!rows.some((row) => row.outcome === 'ANALYZED')) {
+  // 全部被略過（--repo 路徑錯誤、corpus 過期）或沒有任何資料時不可視為通過；
+  // 多個 repo 時，任何一個 repo 完全沒有被分析也不可視為通過。
+  const analyzedByRepo = new Map();
+  for (const row of rows) {
+    analyzedByRepo.set(row.repo, (analyzedByRepo.get(row.repo) ?? 0) + (row.outcome === 'ANALYZED' ? 1 : 0));
+  }
+  if (![...analyzedByRepo.values()].some((count) => count > 0)) {
     failures.push({ code: 'NO_ROWS_ANALYZED', index: null, repo: null, path: null, op: null });
+  } else {
+    for (const [repo, count] of analyzedByRepo) {
+      if (count === 0) failures.push({ code: 'REPO_NOT_ANALYZED', index: null, repo, path: null, op: null });
+    }
   }
 
   return { failures, warnings };
@@ -258,8 +267,10 @@ export function formatSummary(summary, gate) {
     const counts = {};
     for (const failure of gate.failures) counts[failure.code] = (counts[failure.code] ?? 0) + 1;
     lines.push('', 'Gate failures:', ...Object.entries(counts).map(([code, count]) => `- ${code}: ${count}`));
-    lines.push(...gate.failures.filter((failure) => failure.index !== null).slice(0, 10).map((failure) => (
-      `  #${failure.index} ${failure.code} ${failure.op} ${failure.repo}/${failure.path}`
+    lines.push(...gate.failures.filter((failure) => failure.index !== null || failure.repo !== null).slice(0, 10).map((failure) => (
+      failure.index === null
+        ? `  ${failure.code} ${failure.repo}`
+        : `  #${failure.index} ${failure.code} ${failure.op} ${failure.repo}/${failure.path}`
     )));
   }
   if (gate.warnings.length > 0) {

@@ -1,13 +1,14 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { Buffer } from 'node:buffer';
 import { existsSync } from 'node:fs';
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { setTimeout } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
 import { prepareBaseline } from '../../evaluation/real-repo/baseline.js';
@@ -199,6 +200,62 @@ test('generator：use function 別名的 compact 被視為 name-sensitive，並�
     assert.deepEqual(rows.filter((row) => row.op === 'S_RENAME_LOCAL'), [], `seed ${seed}`);
     assert.ok(rows.some((row) => row.op === 'R_RENAME_COMPACT' && row.label === 'risky'), `seed ${seed}`);
   }
+});
+
+test('generate 在 git repo 中找不到被追蹤的 PHP 檔時失敗；輸出目錄會自動建立', async () => {
+  const repo = join(workDir, 'git-parent');
+  await mkdir(join(repo, 'untracked'), { recursive: true });
+  await run('git', ['init', '-q', repo]);
+  await writeFile(join(repo, 'untracked', 'a.php'), '<?php\n');
+  const failed = await cli(['generate', '--repo', `u=${join(repo, 'untracked')}`, '--out', join(workDir, 'u.jsonl')]);
+  assert.equal(failed.code, 2);
+  assert.match(failed.stderr, /no PHP files found/);
+
+  const nested = join(workDir, 'nested', 'deeper', 'corpus.jsonl');
+  const ok = await cli(['generate', '--repo', `fixtures=${FIXTURES}`, '--rate', '0', '--out', nested]);
+  assert.equal(ok.code, 0, ok.stderr);
+  assert.ok(existsSync(nested));
+});
+
+test('空字串的 --baseline-ref 與過大的 --timeout-ms 視為參數錯誤', async () => {
+  const corpus = join(workDir, 'nested', 'deeper', 'corpus.jsonl');
+  const empty = await cli(['run', '--corpus', corpus, '--repo', `fixtures=${FIXTURES}`, '--out', join(workDir, 'x.jsonl'), '--baseline-ref', '']);
+  assert.equal(empty.code, 2);
+  assert.match(empty.stderr, /OPTION_INVALID:--baseline-ref/);
+
+  const huge = await cli(['run', '--corpus', corpus, '--repo', `fixtures=${FIXTURES}`, '--out', join(workDir, 'x.jsonl'), '--timeout-ms', '3000000000']);
+  assert.equal(huge.code, 2);
+  assert.match(huge.stderr, /OPTION_INVALID:--timeout-ms/);
+});
+
+test('run --baseline-ref 收到 SIGTERM 時移除 snapshot', async () => {
+  const corpusPath = join(workDir, 'sigterm-corpus.jsonl');
+  assert.equal((await cli(['generate', '--repo', `fixtures=${FIXTURES}`, '--rate', '1', '--out', corpusPath])).code, 0);
+  const tmp = join(workDir, 'sigterm-tmp');
+  await mkdir(tmp, { recursive: true });
+
+  const child = spawn(process.execPath, [
+    CLI, 'run', '--corpus', corpusPath, '--repo', `fixtures=${FIXTURES}`,
+    '--baseline-ref', 'HEAD', '--concurrency', '1', '--out', join(workDir, 'sigterm.jsonl'),
+  ], { cwd: REVIEWER_ROOT, env: { ...process.env, TMPDIR: tmp }, stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk;
+  });
+  const exited = new Promise((resolve) => child.on('close', (code, signal) => resolve({ code, signal })));
+
+  // 等到 snapshot 建好、開始分析後再送 SIGTERM。
+  const deadline = Date.now() + 30_000;
+  while (!/baseline HEAD =/.test(stderr) && Date.now() < deadline) {
+    await setTimeout(50);
+  }
+  assert.match(stderr, /baseline HEAD =/);
+  assert.equal((await readdir(tmp)).filter((name) => name.startsWith('reviewer-baseline-')).length, 1);
+  child.kill('SIGTERM');
+
+  const { code } = await exited;
+  assert.equal(code, 143);
+  assert.deepEqual((await readdir(tmp)).filter((name) => name.startsWith('reviewer-baseline-')), []);
 });
 
 test('report 在 gate failure 時 exit code 為 1；未知指令回傳 2', async () => {

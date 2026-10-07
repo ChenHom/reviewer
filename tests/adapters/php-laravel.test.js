@@ -649,3 +649,80 @@ test('排版變更讓 __LINE__ 或 __halt_compiler offset 改變時不可判為�
   );
   assert.equal(halt.complete, false);
 });
+
+test('canonical 改名不可與保留原名的變數（如參數 $__rv0）碰撞', async () => {
+  const cases = [
+    ['function f($__rv0)\n{\n    $x = 2;\n    return $x;\n}', 'function f($__rv0)\n{\n    $x = 2;\n    return $__rv0;\n}'],
+    [
+      'function g($order)\n{\n    $amount = 100;\n    $doubled = array_map(function ($__rv0) {\n        return $__rv0 * 2;\n    }, [$amount]);\n    return $amount;\n}',
+      'function g($order)\n{\n    $amount = 100;\n    $doubled = array_map(function ($__rv0) {\n        return $__rv0 * 2;\n    }, [$amount]);\n    return $__rv0;\n}',
+    ],
+    [
+      'function refund($gateway, $__rv0)\n{\n    $amount = 5;\n    return $gateway->refund($amount);\n}',
+      'function refund($gateway, $__rv0)\n{\n    $amount = 5;\n    return $gateway->refund($__rv0);\n}',
+    ],
+  ];
+
+  for (const [before, after] of cases) {
+    const result = await inlineAnalyze(`<?php\n\n${before}\n`, `<?php\n\n${after}\n`);
+    assert.ok(result.complete === false || result.facts.length > 0, after);
+  }
+});
+
+test('__COMPILER_HALT_OFFSET__ 以終止符之後的位置比較', async () => {
+  const halt = (call) => `<?php\n\necho __COMPILER_HALT_OFFSET__;\n${call}data`;
+  for (const [before, after] of [
+    ['__halt_compiler();', '__halt_compiler( );'],
+    ['__halt_compiler();', '__halt_compiler(/*c*/);'],
+    ['__halt_compiler()?>', '__halt_compiler() ?>'],
+  ]) {
+    const result = await inlineAnalyze(halt(before), halt(after));
+    assert.equal(result.complete, false, after);
+  }
+
+  const same = await inlineAnalyze(halt('__halt_compiler();'), halt('__halt_compiler();'));
+  assert.equal(same.complete, true);
+});
+
+test('PHP 7 與 PHP 8 語法結論不同時不判為等價（PHP_GRAMMAR_DIVERGENCE）', async () => {
+  const precedence = await inlineAnalyze(
+    wrap('        return "total: " . $q + 1;'),
+    wrap('        return "total: " . ($q + 1);'),
+  );
+  assert.equal(precedence.complete, false);
+  assert.equal(precedence.reasonCode, 'PHP_GRAMMAR_DIVERGENCE');
+
+  // 單行 attribute 在 PHP 7 是註解：拆成兩行會讓 function 被定義。
+  const attribute = await inlineAnalyze(
+    '<?php\n\n#[Pure] function f() { return 1; }\n',
+    '<?php\n\n#[Pure]\nfunction f() { return 1; }\n',
+  );
+  assert.equal(attribute.complete, false);
+
+  // 兩種語法下都等價的排版變更仍可 reduce（含 attribute 的 PHP 8 檔案）。
+  const formatOnly = await inlineAnalyze(
+    '<?php\n\n#[Pure]\nfunction f()\n{\n    return 1;\n}\n',
+    '<?php\n\n// note\n#[Pure]\nfunction f() {\n  return 1;\n}\n',
+  );
+  assert.equal(formatOnly.complete, true);
+  assert.deepEqual(formatOnly.facts, []);
+});
+
+test('PHP 7 字串 assert() 與 spread 參數的 parse_str 視為 name-sensitive', async () => {
+  const notReduced = [
+    [method('', "        $amount = 1;\n        assert('$amount > 0');\n        return 1;"), method('', "        $total = 1;\n        assert('$amount > 0');\n        return 1;")],
+    [method('$s, $r', '        $total = 1;\n        parse_str($s, ...$r);\n        return $total;'), method('$s, $r', '        $sum = 1;\n        parse_str($s, ...$r);\n        return $sum;')],
+  ];
+  for (const [before, after] of notReduced) {
+    const result = await inlineAnalyze(before, after);
+    assert.ok(result.complete === false || result.facts.length > 0, after);
+  }
+
+  // 非字串的 assert 不影響改名正規化。
+  const reduced = await inlineAnalyze(
+    method('', '        $amount = 1;\n        assert($amount > 0);\n        return $amount;'),
+    method('', '        $total = 1;\n        assert($total > 0);\n        return $total;'),
+  );
+  assert.equal(reduced.complete, true);
+  assert.deepEqual(reduced.facts, []);
+});
