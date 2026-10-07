@@ -2,8 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  ARGUMENT_ORDER_INTERPRETER,
   AUTHORIZATION_GUARD_INTERPRETER,
+  CONSTANT_VALUE_INTERPRETER,
   GUARD_CLAUSE_INTERPRETER,
+  LARAVEL_MODEL_ATTRIBUTES_INTERPRETER,
+  LARAVEL_VALIDATION_INTERPRETER,
+  NEGATION_INTERPRETER,
+  RETURN_VALUE_INTERPRETER,
+  VARIABLE_CHANGE_INTERPRETER,
   OPERATOR_CHANGE_INTERPRETER,
   MIDDLEWARE_GUARD_INTERPRETER,
   PAYMENT_IDEMPOTENCY_INTERPRETER,
@@ -319,4 +326,86 @@ test('guard clause interpreter 處理 guard 的移除與新增', () => {
   assert.deepEqual(blockersOf(GUARD_CLAUSE_INTERPRETER, guard('GUARD_REMOVED')), ['GUARD_CLAUSE_REMOVED']);
   assert.deepEqual(blockersOf(GUARD_CLAUSE_INTERPRETER, guard('GUARD_ADDED')), ['GUARD_CLAUSE_ADDED']);
   assert.equal(blockersOf(GUARD_CLAUSE_INTERPRETER, removed('$a->b')), null);
+});
+
+function valueFact(kind, properties, subject = 'Service::run') {
+  return { id: 'php-8', kind, subject, properties: { changeSide: 'after', ...properties } };
+}
+
+test('literal 變更：middleware 名稱被換掉、authorize ability 改變、class 常數改值', () => {
+  const literal = (container, before, after) => valueFact('LITERAL_CHANGED', { container, before, after });
+
+  assert.deepEqual(blockersOf(MIDDLEWARE_GUARD_INTERPRETER, literal('$this->middleware#0', "'auth'", "'guest'")), ['MIDDLEWARE_GUARD_REMOVED']);
+  assert.deepEqual(blockersOf(MIDDLEWARE_GUARD_INTERPRETER, literal('Route::group#0[middleware]', "'auth'", "'authX'")), ['MIDDLEWARE_GUARD_REMOVED']);
+  // 不是 middleware container，或新值仍包含原本的名稱（只剩引號差異不會產生 fact）
+  assert.equal(blockersOf(MIDDLEWARE_GUARD_INTERPRETER, literal('$q->take#0', "'auth'", "'guest'")), null);
+  assert.equal(blockersOf(MIDDLEWARE_GUARD_INTERPRETER, literal('->middleware#0', '1', '2')), null);
+
+  assert.deepEqual(blockersOf(AUTHORIZATION_GUARD_INTERPRETER, literal('$this->authorize#0', "'update'", "'view'")), ['AUTHORIZATION_ABILITY_CHANGED']);
+  assert.deepEqual(blockersOf(AUTHORIZATION_GUARD_INTERPRETER, literal('\\Gate::authorize#0', "'update'", "'view'")), ['AUTHORIZATION_ABILITY_CHANGED']);
+  assert.equal(blockersOf(AUTHORIZATION_GUARD_INTERPRETER, literal('$this->authorize#1', '1', '2')), null);
+  assert.equal(blockersOf(AUTHORIZATION_GUARD_INTERPRETER, literal('$q->take#0', '1', '2')), null);
+  assert.equal(blockersOf(AUTHORIZATION_GUARD_INTERPRETER, valueFact('LITERAL_CHANGED', {})), null);
+
+  assert.deepEqual(blockersOf(CONSTANT_VALUE_INTERPRETER, literal('const:RATE', '3', '30')), ['CONSTANT_VALUE_CHANGED']);
+  assert.equal(blockersOf(CONSTANT_VALUE_INTERPRETER, literal('return', '3', '30')), null);
+  assert.equal(blockersOf(CONSTANT_VALUE_INTERPRETER, removed('$a->b')), null);
+});
+
+test('negation、回傳值、參數順序與變數變更各自對應 blocker', () => {
+  const negated = (container) => valueFact('EXPRESSION_NEGATED', { container, before: '$a', after: '!$a' });
+  for (const container of ['if', 'while', 'for', 'ternary', 'match', 'match-arm']) {
+    assert.deepEqual(blockersOf(NEGATION_INTERPRETER, negated(container)), ['CONDITION_NEGATED'], container);
+  }
+  assert.deepEqual(blockersOf(NEGATION_INTERPRETER, negated('return')), ['BOOLEAN_VALUE_NEGATED']);
+  assert.equal(blockersOf(NEGATION_INTERPRETER, removed('$a->b')), null);
+
+  assert.deepEqual(blockersOf(RETURN_VALUE_INTERPRETER, valueFact('RETURN_VALUE_CHANGED', { before: '$a', after: 'null' })), ['RETURN_VALUE_CHANGED']);
+  assert.equal(blockersOf(RETURN_VALUE_INTERPRETER, removed('$a->b')), null);
+
+  assert.deepEqual(
+    blockersOf(ARGUMENT_ORDER_INTERPRETER, valueFact('CALL_ARGUMENTS_REORDERED', { callee: 'max', before: '$a, $b', after: '$b, $a' })),
+    ['ARGUMENTS_REORDERED'],
+  );
+  assert.equal(blockersOf(ARGUMENT_ORDER_INTERPRETER, removed('$a->b')), null);
+
+  const variable = (container) => valueFact('VARIABLE_CHANGED', { container, before: '$a', after: '$b' });
+  assert.deepEqual(blockersOf(VARIABLE_CHANGE_INTERPRETER, variable('param')), ['PARAMETER_RENAMED']);
+  assert.deepEqual(blockersOf(VARIABLE_CHANGE_INTERPRETER, variable('return')), ['VARIABLE_REFERENCE_CHANGED']);
+  assert.equal(blockersOf(VARIABLE_CHANGE_INTERPRETER, removed('$a->b')), null);
+});
+
+test('Laravel validation rules：rules() 回傳值、$request->validate、Validator::make', () => {
+  const blockers = (fact) => blockersOf(LARAVEL_VALIDATION_INTERPRETER, fact);
+
+  assert.deepEqual(blockers(valueFact('LITERAL_CHANGED', { container: 'return[title]', before: "'max:255'", after: "'max:256'" }, 'TaskRequest::rules')), ['VALIDATION_RULE_CHANGED']);
+  assert.deepEqual(blockers(valueFact('ARRAY_ITEM_REMOVED', { container: 'return[email]', key: null, value: "'required'" }, 'LoginRequest::rules')), ['VALIDATION_RULE_CHANGED']);
+  assert.deepEqual(blockers(valueFact('RETURN_VALUE_CHANGED', { before: '[...]', after: '[]' }, 'TaskRequest::rules')), ['VALIDATION_RULE_CHANGED']);
+  assert.deepEqual(blockers(valueFact('ARRAY_ITEM_ADDED', { container: '$request->validate#0[name]', key: null, value: "'nullable'" })), ['VALIDATION_RULE_CHANGED']);
+  assert.deepEqual(blockers(valueFact('LITERAL_CHANGED', { container: '$this->validateWithBag#1[password]', before: "'min:8'", after: "'min:6'" })), ['VALIDATION_RULE_CHANGED']);
+  assert.deepEqual(blockers(valueFact('LITERAL_CHANGED', { container: '\\Illuminate\\Support\\Facades\\Validator::make#1[amount]', before: "'integer'", after: "'numeric'" })), ['VALIDATION_RULE_CHANGED']);
+
+  // 帳密驗證（Auth::guard()->validate）、rules() 以外的 method、rules() 中 return 以外的位置、非值變更的 fact
+  assert.equal(blockers(valueFact('LITERAL_CHANGED', { container: '->validate#0[email]', before: "'a'", after: "'b'" })), null);
+  assert.equal(blockers(valueFact('LITERAL_CHANGED', { container: 'return[title]', before: '1', after: '2' }, 'TaskRequest::messages')), null);
+  assert.equal(blockers(valueFact('LITERAL_CHANGED', { container: 'assign:$rules', before: '1', after: '2' }, 'TaskRequest::rules')), null);
+  assert.equal(blockers(valueFact('LITERAL_CHANGED', { container: 'Validator::make#0', before: '1', after: '2' })), null);
+  assert.equal(blockers(removed('$request->validate')), null);
+});
+
+test('Laravel model attributes：fillable / guarded / hidden / casts', () => {
+  const blockers = (fact) => blockersOf(LARAVEL_MODEL_ATTRIBUTES_INTERPRETER, fact);
+  const item = (kind, container, subject) => valueFact(kind, { container, key: null, value: "'role'" }, subject);
+
+  assert.deepEqual(blockers(item('ARRAY_ITEM_ADDED', 'property:$fillable')), ['MASS_ASSIGNMENT_CHANGED']);
+  assert.deepEqual(blockers(item('ARRAY_ITEM_REMOVED', 'property:$guarded')), ['MASS_ASSIGNMENT_CHANGED']);
+  assert.deepEqual(blockers(item('ARRAY_ITEM_REMOVED', 'property:$hidden')), ['SERIALIZED_ATTRIBUTES_CHANGED']);
+  assert.deepEqual(blockers(item('ARRAY_ITEM_ADDED', 'property:$visible')), ['SERIALIZED_ATTRIBUTES_CHANGED']);
+  assert.deepEqual(blockers(valueFact('LITERAL_CHANGED', { container: 'property:$casts', before: "'datetime'", after: "'date'" })), ['ATTRIBUTE_CAST_CHANGED']);
+  assert.deepEqual(blockers(item('LITERAL_CHANGED', 'return[password]', 'User::casts')), ['ATTRIBUTE_CAST_CHANGED']);
+
+  assert.equal(blockers(item('ARRAY_ITEM_ADDED', 'property:$appends')), null);
+  assert.equal(blockers(item('ARRAY_ITEM_ADDED', 'property:constructor')), null);
+  assert.equal(blockers(item('ARRAY_ITEM_ADDED', 'return', 'User::toArray')), null);
+  assert.equal(blockers(removed('$a->b')), null);
 });

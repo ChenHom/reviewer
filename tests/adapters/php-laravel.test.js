@@ -128,8 +128,8 @@ test('沒有對應 fact 的 PHP semantic change 必須 PARTIAL_PARSE 而不是�
   const result = await adapter.analyze({
     identity,
     path: 'app/Services/ExampleService.php',
-    beforeSource: "<?php\n\nfunction label() {\n    return 'paid';\n}\n",
-    afterSource: "<?php\n\nfunction label() {\n    return 'refunded';\n}\n",
+    beforeSource: "<?php\n\nfunction label() {\n    return strtoupper('paid');\n}\n",
+    afterSource: "<?php\n\nfunction label() {\n    return strtolower('paid');\n}\n",
   });
 
   assert.deepEqual(validateAdapterResult(result), { valid: true, errors: [] });
@@ -272,7 +272,7 @@ function inlineAnalyze(beforeSource, afterSource) {
 }
 
 function wrap(body) {
-  return `<?php\n\nclass InlineService\n{\n    public function run($q)\n    {\n${body}\n    }\n}\n`;
+  return `<?php\n\nclass InlineService\n{\n    public function run($q, $a = 1, $b = 2)\n    {\n${body}\n    }\n}\n`;
 }
 
 test('closure 內的巢狀 call 會被抽出，unwrap transaction 只留下 CALL_REMOVED', async () => {
@@ -317,8 +317,8 @@ test('屬性鏈 receiver 會保留完整名稱', async () => {
 
 test('無法被更細 fact 解釋的位置參數變更輸出 #index fallback fact，維持 PARTIAL_PARSE', async () => {
   const result = await inlineAnalyze(
-    wrap("        $q->update(['amount' => 1]);"),
-    wrap("        $q->update(['amount' => 2]);"),
+    wrap("        $q->update(['amount' => floor($q->amount)]);"),
+    wrap("        $q->update(['amount' => ceil($q->amount)]);"),
   );
 
   assert.equal(result.complete, false);
@@ -328,8 +328,8 @@ test('無法被更細 fact 解釋的位置參數變更輸出 #index fallback fac
   assert.deepEqual(result.facts[0].properties, {
     callee: '$q->update',
     argument: '#0',
-    before: "['amount' => 1]",
-    after: "['amount' => 2]",
+    before: "['amount' => floor($q->amount)]",
+    after: "['amount' => ceil($q->amount)]",
     changeSide: 'after',
   });
 });
@@ -348,8 +348,8 @@ test('位置參數內的運算子變更由 BINARY_OPERATOR_CHANGED 解釋，不�
 
 test('含 closure 的位置參數不輸出 argument fact', async () => {
   const result = await inlineAnalyze(
-    wrap('        $q->each(function ($row) { return 1; });'),
-    wrap('        $q->each(function ($row) { return 2; });'),
+    wrap('        $q->each(function ($row) { return floor($row); });'),
+    wrap('        $q->each(function ($row) { return ceil($row); });'),
   );
 
   assert.equal(result.complete, false);
@@ -450,10 +450,10 @@ test('兩種語法都無法解析時回傳 PHP_PARSE_ERROR', async () => {
   assert.equal(result.reasonCode, 'PHP_PARSE_ERROR');
 });
 
-test('mask 後 source 無法 tokenize 時判為 PARTIAL_PARSE 而不是 crash', async () => {
+test('回傳值換成另一個非常數運算式時判為 PARTIAL_PARSE', async () => {
   const result = await inlineAnalyze(
     wrap('        return $q ? 1 : $this->fallback();'),
-    wrap('        return null;'),
+    wrap('        return floor($q);'),
   );
 
   assert.equal(result.complete, false);
@@ -526,6 +526,172 @@ test('Route::group middleware 移除輸出帶 key path 的 ARRAY_ITEM_REMOVED', 
     result.facts.map(({ kind, properties }) => [kind, properties.container, properties.value]),
     [['ARRAY_ITEM_REMOVED', 'Route::group#0[middleware]', "'auth:admin'"]],
   );
+});
+
+function factSummary(result) {
+  return result.facts.map(({ kind, properties }) => {
+    const { changeSide, ...rest } = properties;
+    assert.equal(changeSide, kind === 'CALL_REMOVED' ? 'before' : 'after');
+    return [kind, rest];
+  });
+}
+
+test('字面值變更輸出帶 container 的 LITERAL_CHANGED 並判為完整', async () => {
+  const cases = [
+    ['        return $q->take(10);', '        return $q->take(11);', { container: '$q->take#0', before: '10', after: '11' }],
+    ["        return 'paid';", "        return \"refunded\";", { container: 'return', before: "'paid'", after: '"refunded"' }],
+    ['        return $q->limit(-1);', '        return $q->limit(1);', { container: '$q->limit#0', before: '-1', after: '1' }],
+    ['        $q->active = true;', '        $q->active = null;', { container: 'file', before: 'true', after: 'null' }],
+    ["        return ['fee' => 1.5];", "        return ['fee' => '1.5'];", { container: 'return[fee]', before: '1.5', after: "'1.5'" }],
+  ];
+  for (const [before, after, properties] of cases) {
+    const result = await inlineAnalyze(wrap(before), wrap(after));
+    assert.equal(result.complete, true, after);
+    assert.deepEqual(factSummary(result), [['LITERAL_CHANGED', properties]], after);
+  }
+
+  const constant = await inlineAnalyze(
+    "<?php\n\nclass Fee\n{\n    const RATE = 3;\n}\n",
+    "<?php\n\nclass Fee\n{\n    const RATE = 30;\n}\n",
+  );
+  assert.deepEqual(factSummary(constant), [['LITERAL_CHANGED', { container: 'const:RATE', before: '3', after: '30' }]]);
+});
+
+test('條件或布林值被反轉時輸出 EXPRESSION_NEGATED', async () => {
+  const negated = await inlineAnalyze(
+    wrap("        if ($q->paid()) {\n            $q->ship();\n        }"),
+    wrap("        if (!($q->paid())) {\n            $q->ship();\n        }"),
+  );
+  assert.equal(negated.complete, true);
+  assert.deepEqual(factSummary(negated), [['EXPRESSION_NEGATED', { container: 'if', before: '$q->paid()', after: '!($q->paid())' }]]);
+
+  const unnegated = await inlineAnalyze(wrap('        return !$q;'), wrap('        return $q;'));
+  assert.deepEqual(factSummary(unnegated), [['EXPRESSION_NEGATED', { container: 'return', before: '!$q', after: '$q' }]]);
+
+  const ternary = await inlineAnalyze(wrap('        return $q ? 1 : 2;'), wrap('        return !$q ? 1 : 2;'));
+  assert.deepEqual(ternary.facts.map(({ properties }) => properties.container), ['ternary']);
+});
+
+test('回傳值換成常數（或從常數換掉）時輸出 RETURN_VALUE_CHANGED', async () => {
+  const toNull = await inlineAnalyze(wrap('        return $q->total() + 1;'), wrap('        return null;'));
+  assert.equal(toNull.complete, true);
+  assert.deepEqual(factSummary(toNull), [
+    ['CALL_REMOVED', { callee: '$q->total' }],
+    ['RETURN_VALUE_CHANGED', { before: '$q->total() + 1', after: 'null' }],
+  ]);
+
+  const cases = [
+    ['        return $q->rows();', '        return [];'],
+    ['        return $q->status;', '        return Status::Paid;'],
+    ["        return ['a' => 1, 'b' => [true]];", '        return $q->all();'],
+    ['        return $q->total();', '        return;'],
+    ['        return;', '        return $q;'],
+  ];
+  for (const [before, after] of cases) {
+    const result = await inlineAnalyze(wrap(before), wrap(after));
+    assert.equal(result.complete, true, after);
+    assert.ok(result.facts.some(({ kind }) => kind === 'RETURN_VALUE_CHANGED'), after);
+  }
+
+  // 兩邊都不是常數：維持未解釋。
+  for (const after of ['        return ceil($q);', '        return [$q];', '        return $q->total();']) {
+    const result = await inlineAnalyze(wrap('        return floor($q);'), wrap(after));
+    assert.equal(result.complete, false, after);
+  }
+});
+
+test('參數只有順序不同時輸出 CALL_ARGUMENTS_REORDERED', async () => {
+  const cases = [
+    ['        return $q->between($a, $b);', '        return $q->between($b, $a);', '$q->between', '$a, $b', '$b, $a'],
+    ['        return max($a, $b, 1);', '        return max(1, $b, $a);', 'max', '$a, $b, 1', '1, $b, $a'],
+    ['        return new Money($a, $b);', '        return new Money($b, $a);', 'new Money', '$a, $b', '$b, $a'],
+    ['        return $q->pay(to: $a, from: $b);', '        return $q->pay(from: $b, to: $a);', '$q->pay', 'to: $a, from: $b', 'from: $b, to: $a'],
+  ];
+  for (const [before, after, callee, argsBefore, argsAfter] of cases) {
+    const result = await inlineAnalyze(wrap(before), wrap(after));
+    assert.equal(result.complete, true, after);
+    assert.deepEqual(factSummary(result), [['CALL_ARGUMENTS_REORDERED', { callee, before: argsBefore, after: argsAfter }]], after);
+  }
+
+  // 內容不同（不只是順序）時不是 reorder。
+  const changed = await inlineAnalyze(wrap('        return max($a, $b);'), wrap('        return max($b, $b);'));
+  assert.ok(!changed.facts.some(({ kind }) => kind === 'CALL_ARGUMENTS_REORDERED'));
+});
+
+test('同一位置換成另一個 method 時由 CALL_REMOVED / CALL_ADDED 解釋', async () => {
+  const result = await inlineAnalyze(
+    wrap('        return $q->where($a)->first();'),
+    wrap('        return $q->where($a)->firstOrFail();'),
+  );
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.facts.map(({ kind, properties }) => [kind, properties.callee]), [
+    ['CALL_ADDED', '->firstOrFail'],
+    ['CALL_REMOVED', '->first'],
+  ]);
+
+  // method 換掉的同時參數也變了：參數照常比較。
+  const withArgument = await inlineAnalyze(wrap('        return $q->find($a);'), wrap('        return $q->findOrFail(floor($a));'));
+  assert.equal(withArgument.complete, false);
+});
+
+test('鏈中移除或新增的 call 與鄰近 call 同類型時仍由 CALL_REMOVED / CALL_ADDED 解釋', async () => {
+  const cases = [
+    ['        return Curl::to($a)->withData($q)->asJson()->post();', '        return Curl::to($a)->withData($q)->post();', 'CALL_REMOVED', '->asJson'],
+    ["        return $q->where('a', 1)->orWhere('b', 2)->orWhere('c', 3);", "        return $q->where('a', 1)->orWhere('c', 3);", 'CALL_REMOVED', '->orWhere'],
+    ['        return $q->select($a)->first();', '        return $q->select($a)->lockForUpdate()->first();', 'CALL_ADDED', '->lockForUpdate'],
+  ];
+  for (const [before, after, kind, callee] of cases) {
+    const result = await inlineAnalyze(wrap(before), wrap(after));
+    assert.equal(result.complete, true, after);
+    assert.deepEqual(result.facts.map((fact) => [fact.kind, fact.properties.callee]), [[kind, callee]], after);
+  }
+});
+
+test('運算式 list 中一對一替換的運算式直接比較（for 條件、echo）', async () => {
+  const loop = await inlineAnalyze(
+    wrap('        for ($i = 0; $i <= $q; $i++) {\n            $a->x();\n        }'),
+    wrap('        for ($i = 0; $i < $q; $i++) {\n            $a->x();\n        }'),
+  );
+  assert.equal(loop.complete, true);
+  assert.deepEqual(loop.facts.map(({ kind, properties }) => [kind, properties.operatorAfter]), [['BINARY_OPERATOR_CHANGED', '<']]);
+
+  const negatedLoop = await inlineAnalyze(wrap('        while ($q) {\n            $a->x();\n        }'), wrap('        while (!$q) {\n            $a->x();\n        }'));
+  assert.deepEqual(negatedLoop.facts.map(({ properties }) => properties.container), ['while']);
+
+  const echo = await inlineAnalyze(wrap('        echo $a, $b;'), wrap('        echo $a, floor($b);'));
+  assert.equal(echo.complete, false);
+});
+
+test('變數名稱的差異無法以 scope 內改名解釋時輸出 VARIABLE_CHANGED', async () => {
+  const partial = await inlineAnalyze(
+    wrap('        $x = $a;\n        return $x + $x;'),
+    wrap('        $x = $a;\n        return $x + $xRenamed;'),
+  );
+  assert.equal(partial.complete, true);
+  assert.deepEqual(factSummary(partial), [['VARIABLE_CHANGED', { container: 'return', before: '$x', after: '$xRenamed' }]]);
+
+  const parameter = await inlineAnalyze(method('$amount', '        return $amount;'), method('$value', '        return $value;'));
+  assert.equal(parameter.complete, true);
+  assert.deepEqual(parameter.facts.map(({ properties }) => [properties.container, properties.before, properties.after]), [
+    ['param', '$amount', '$value'],
+    ['return', '$amount', '$value'],
+  ]);
+
+  // 一致的區域變數改名仍以 canonical 名稱判為等價，不輸出 fact。
+  const consistent = await inlineAnalyze(
+    method('$id', '        $cash = Cash::find($id);\n        return $cash->amount;'),
+    method('$id', '        $row = Cash::find($id);\n        return $row->amount;'),
+  );
+  assert.equal(consistent.complete, true);
+  assert.deepEqual(consistent.facts, []);
+
+  // 變數變更以外仍有未解釋的差異時，不採用 VARIABLE_CHANGED 的結果。
+  const mixed = await inlineAnalyze(
+    wrap('        $x = $a;\n        return floor($x);'),
+    wrap('        $x = $a;\n        return ceil($y);'),
+  );
+  assert.equal(mixed.complete, false);
+  assert.ok(!mixed.facts.some(({ kind }) => kind === 'VARIABLE_CHANGED'));
 });
 
 test('soundness：沒有 fact 時 COMPLETE 只發生在 AST 完全相同', async () => {

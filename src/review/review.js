@@ -40,6 +40,19 @@ export function lineLocator(source) {
   };
 }
 
+const MAX_SNIPPET = 80;
+
+/**
+ * 把原始碼片段壓成一行並截斷，避免多行運算式破壞輸出格式。
+ *
+ * @param {unknown} value - 原始碼片段。
+ * @returns {string} 單行片段。
+ */
+function snippet(value) {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  return text.length > MAX_SNIPPET ? `${text.slice(0, MAX_SNIPPET - 1)}…` : text;
+}
+
 /**
  * 產生 fact 的簡短描述，讓 reviewer 不必讀 JSON 也知道變更內容。
  *
@@ -47,7 +60,11 @@ export function lineLocator(source) {
  * @returns {string} 描述。
  */
 export function describeFact(fact) {
-  const p = fact.properties ?? {};
+  const raw = fact.properties ?? {};
+  const p = Object.fromEntries(Object.entries(raw).map(([key, value]) => [
+    key,
+    ['before', 'after', 'value', 'condition'].includes(key) && value !== null ? snippet(value) : value,
+  ]));
   switch (fact.kind) {
     case 'CALL_REMOVED':
       return `移除呼叫 ${p.callee}`;
@@ -65,6 +82,16 @@ export function describeFact(fact) {
       return `${p.container} 移除元素 ${p.key === null ? '' : `${p.key} => `}${p.value}`;
     case 'ARRAY_ITEM_ADDED':
       return `${p.container} 新增元素 ${p.key === null ? '' : `${p.key} => `}${p.value}`;
+    case 'LITERAL_CHANGED':
+      return `值 ${p.before} → ${p.after}（${p.container}）`;
+    case 'EXPRESSION_NEGATED':
+      return `反轉：${p.before} → ${p.after}`;
+    case 'RETURN_VALUE_CHANGED':
+      return `回傳值 ${p.before || '（無）'} → ${p.after || '（無）'}`;
+    case 'CALL_ARGUMENTS_REORDERED':
+      return `${p.callee} 的參數順序：(${p.before}) → (${p.after})`;
+    case 'VARIABLE_CHANGED':
+      return `${p.container === 'param' ? '參數' : '變數'} ${p.before} → ${p.after}`;
     default:
       return fact.kind;
   }

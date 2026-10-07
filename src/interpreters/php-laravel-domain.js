@@ -114,8 +114,17 @@ const authorizationCallees = new Set([
 
 export const AUTHORIZATION_GUARD_INTERPRETER = Object.freeze({
   id: 'php-laravel-authorization-guard',
-  version: '1.1.0',
+  version: '1.2.0',
   interpret(fact) {
+    // `$this->authorize('update', $post)` 的 ability 字串被改成另一個值。
+    const container = fact?.properties?.container;
+    if (fact?.kind === 'LITERAL_CHANGED' && typeof container === 'string') {
+      const match = /^(.*)#0$/.exec(container);
+      return match && authorizationCallees.has(calleeParts(match[1])?.normalized)
+        ? { handled: true, blockers: ['AUTHORIZATION_ABILITY_CHANGED'] }
+        : { handled: false };
+    }
+
     if (
       fact?.kind !== 'CALL_REMOVED'
       || !authorizationCallees.has(calleeParts(fact?.properties?.callee)?.normalized)
@@ -147,10 +156,29 @@ function isMiddlewareContainer(container) {
   return /\[middleware\]$/.test(container) || /(->|::)middleware#\d+$/.test(container);
 }
 
+/**
+ * before 中有、after 中沒有的字串 literal。
+ *
+ * @param {unknown} before - 變更前的 PHP 片段。
+ * @param {unknown} after - 變更後的 PHP 片段。
+ * @returns {string[]} 被移除的字串。
+ */
+function removedStrings(before, after) {
+  const remaining = new Set(stringLiterals(String(after ?? '')));
+  return stringLiterals(String(before ?? '')).filter((name) => !remaining.has(name));
+}
+
 export const MIDDLEWARE_GUARD_INTERPRETER = Object.freeze({
   id: 'php-laravel-middleware-guard',
-  version: '1.1.0',
+  version: '1.2.0',
   interpret(fact) {
+    // middleware 名稱被改成另一個字串（`'auth'` → `'guest'`）：原本的 middleware 不再套用。
+    if (fact?.kind === 'LITERAL_CHANGED' && isMiddlewareContainer(fact?.properties?.container)) {
+      return removedStrings(fact.properties.before, fact.properties.after).length > 0
+        ? { handled: true, blockers: ['MIDDLEWARE_GUARD_REMOVED'] }
+        : { handled: false };
+    }
+
     // `Route::group(['middleware' => [...]])`、`->middleware([...])` 或
     // `$middleware` / `$beforeActionList` property 中移除一個元素，
     // 或整個 `'middleware' => ...` 設定被移除。
@@ -178,8 +206,7 @@ export const MIDDLEWARE_GUARD_INTERPRETER = Object.freeze({
     const after = String(fact.properties.after ?? '');
     let removed;
     if (parts.method === 'middleware') {
-      const remaining = new Set(stringLiterals(after));
-      removed = stringLiterals(before).filter((name) => !remaining.has(name));
+      removed = removedStrings(before, after);
     } else if (parts.normalized === 'Route::group' && fact.properties.argument === '#0') {
       const remaining = new Set(groupMiddlewares(after));
       removed = groupMiddlewares(before).filter((name) => !remaining.has(name));
@@ -282,6 +309,125 @@ export const GUARD_CLAUSE_INTERPRETER = Object.freeze({
   },
 });
 
+const conditionContainers = new Set(['if', 'while', 'for', 'ternary', 'match', 'match-arm']);
+
+export const NEGATION_INTERPRETER = Object.freeze({
+  id: 'php-negation',
+  version: '1.0.0',
+  interpret(fact) {
+    if (fact?.kind !== 'EXPRESSION_NEGATED') return { handled: false };
+
+    return {
+      handled: true,
+      blockers: [conditionContainers.has(fact?.properties?.container) ? 'CONDITION_NEGATED' : 'BOOLEAN_VALUE_NEGATED'],
+    };
+  },
+});
+
+export const RETURN_VALUE_INTERPRETER = Object.freeze({
+  id: 'php-return-value',
+  version: '1.0.0',
+  interpret(fact) {
+    return fact?.kind === 'RETURN_VALUE_CHANGED'
+      ? { handled: true, blockers: ['RETURN_VALUE_CHANGED'] }
+      : { handled: false };
+  },
+});
+
+export const ARGUMENT_ORDER_INTERPRETER = Object.freeze({
+  id: 'php-argument-order',
+  version: '1.0.0',
+  interpret(fact) {
+    return fact?.kind === 'CALL_ARGUMENTS_REORDERED'
+      ? { handled: true, blockers: ['ARGUMENTS_REORDERED'] }
+      : { handled: false };
+  },
+});
+
+export const VARIABLE_CHANGE_INTERPRETER = Object.freeze({
+  id: 'php-variable-change',
+  version: '1.0.0',
+  interpret(fact) {
+    if (fact?.kind !== 'VARIABLE_CHANGED') return { handled: false };
+
+    // 參數改名會改變 named argument 的 API；其他位置是改用另一個變數（資料流改變）。
+    return {
+      handled: true,
+      blockers: [fact?.properties?.container === 'param' ? 'PARAMETER_RENAMED' : 'VARIABLE_REFERENCE_CHANGED'],
+    };
+  },
+});
+
+export const CONSTANT_VALUE_INTERPRETER = Object.freeze({
+  id: 'php-constant-value',
+  version: '1.0.0',
+  interpret(fact) {
+    const container = fact?.properties?.container;
+    return fact?.kind === 'LITERAL_CHANGED' && typeof container === 'string' && container.startsWith('const:')
+      ? { handled: true, blockers: ['CONSTANT_VALUE_CHANGED'] }
+      : { handled: false };
+  },
+});
+
+const valueFactKinds = new Set(['LITERAL_CHANGED', 'ARRAY_ITEM_REMOVED', 'ARRAY_ITEM_ADDED', 'RETURN_VALUE_CHANGED']);
+
+/**
+ * fact 是否位於 method `name` 的回傳值中（例如 FormRequest 的 `rules()`、Model 的 `casts()`）。
+ *
+ * @param {object} fact - semantic fact。
+ * @param {string} name - method 名稱。
+ * @returns {boolean} 是否在該 method 的 return 中。
+ */
+function inReturnOf(fact, name) {
+  const container = fact?.properties?.container;
+  return typeof fact?.subject === 'string'
+    && fact.subject.endsWith(`::${name}`)
+    && (fact.kind === 'RETURN_VALUE_CHANGED' || (typeof container === 'string' && container.startsWith('return')));
+}
+
+export const LARAVEL_VALIDATION_INTERPRETER = Object.freeze({
+  id: 'laravel-validation-rules',
+  version: '1.0.0',
+  interpret(fact) {
+    if (!valueFactKinds.has(fact?.kind)) return { handled: false };
+
+    // FormRequest::rules() 的回傳值、`$request->validate([...])`、`Validator::make($data, [...])`。
+    // `Auth::guard()->validate([...])` 是驗證帳密而不是規則，因此只認 `$this` 與 request 變數。
+    const container = String(fact?.properties?.container ?? '');
+    if (
+      inReturnOf(fact, 'rules')
+      || /^\$(this|\w*request\w*)->validate(WithBag)?#\d+/i.test(container)
+      || /^\\?(Illuminate\\Support\\Facades\\)?Validator::make#1/.test(container)
+    ) {
+      return { handled: true, blockers: ['VALIDATION_RULE_CHANGED'] };
+    }
+
+    return { handled: false };
+  },
+});
+
+const modelAttributeProperties = Object.freeze({
+  'property:$fillable': 'MASS_ASSIGNMENT_CHANGED',
+  'property:$guarded': 'MASS_ASSIGNMENT_CHANGED',
+  'property:$hidden': 'SERIALIZED_ATTRIBUTES_CHANGED',
+  'property:$visible': 'SERIALIZED_ATTRIBUTES_CHANGED',
+  'property:$casts': 'ATTRIBUTE_CAST_CHANGED',
+});
+
+export const LARAVEL_MODEL_ATTRIBUTES_INTERPRETER = Object.freeze({
+  id: 'laravel-model-attributes',
+  version: '1.0.0',
+  interpret(fact) {
+    if (!valueFactKinds.has(fact?.kind)) return { handled: false };
+
+    const blocker = Object.hasOwn(modelAttributeProperties, fact?.properties?.container)
+      ? modelAttributeProperties[fact.properties.container]
+      : inReturnOf(fact, 'casts') ? 'ATTRIBUTE_CAST_CHANGED' : null;
+
+    return blocker ? { handled: true, blockers: [blocker] } : { handled: false };
+  },
+});
+
 export const PHP_LARAVEL_DOMAIN_INTERPRETERS = Object.freeze([
   PAYMENT_IDEMPOTENCY_INTERPRETER,
   TRANSACTION_BOUNDARY_INTERPRETER,
@@ -291,4 +437,11 @@ export const PHP_LARAVEL_DOMAIN_INTERPRETERS = Object.freeze([
   SIGNATURE_VERIFICATION_INTERPRETER,
   OPERATOR_CHANGE_INTERPRETER,
   GUARD_CLAUSE_INTERPRETER,
+  NEGATION_INTERPRETER,
+  RETURN_VALUE_INTERPRETER,
+  ARGUMENT_ORDER_INTERPRETER,
+  VARIABLE_CHANGE_INTERPRETER,
+  CONSTANT_VALUE_INTERPRETER,
+  LARAVEL_VALIDATION_INTERPRETER,
+  LARAVEL_MODEL_ATTRIBUTES_INTERPRETER,
 ]);

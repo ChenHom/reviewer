@@ -94,10 +94,15 @@ Review：HUMAN_REVIEW_REQUIRED（2/4 個檔案需要 review；TARGETED 1、FULL 
 - 判為等價前同時檢查 PHP 8 與 PHP 7 的解讀（7.4 語法，`#[` 視為註解）：兩邊的可解析性必須一致、且兩種語法下都等價，否則回報 `PHP_GRAMMAR_DIVERGENCE`（例如 `.` 與 `+` 的優先順序在 PHP 8 改變）。舊版 PHP 不支援的新語法（例如參數 trailing comma）不在檢查範圍，請以目標版本的 `php -l` 檢查
 - Generic facts：
   - `CALL_ARGUMENT_CHANGED`（named argument；位置參數只在無法被更細 fact 解釋時以 `#index` 輸出，且不視為已解釋）
-  - `CALL_REMOVED` / `CALL_ADDED`（含 closure 內的巢狀 call 與鏈式 call，如 `->lockForUpdate`；receiver 保留完整名稱，如 `$this->adminDB->transaction`）
+  - `CALL_REMOVED` / `CALL_ADDED`（含 closure 內的巢狀 call 與鏈式 call，如 `->lockForUpdate`；receiver 保留完整名稱，如 `$this->adminDB->transaction`）；同一位置換成另一個 method（`->first()` → `->firstOrFail()`）由這兩個 fact 一起解釋
   - `BINARY_OPERATOR_CHANGED`（左右運算元不變，只有運算子改變）
   - `GUARD_REMOVED` / `GUARD_ADDED`（body 只有 throw / return / exit 的 if）
   - `ARRAY_ITEM_REMOVED` / `ARRAY_ITEM_ADDED`（帶 container，如 `property:$beforeActionList`、`Route::group#0[middleware]`）
+  - `LITERAL_CHANGED`（數字、字串、true / false / null 換成另一個字面值；帶 container，如 `const:RATE`、`$q->take#0`、`return[title]`）
+  - `EXPRESSION_NEGATED`（`X` ↔ `!X`；container 標示位置，如 `if`、`while`、`ternary`、`return`）
+  - `RETURN_VALUE_CHANGED`（回傳值換成常數或從常數換掉，如 `return null;`、`return [];`、`return;`；兩邊都不是常數時維持未解釋）
+  - `CALL_ARGUMENTS_REORDERED`（參數內容相同、只有順序改變；method / function call 與 `new`）
+  - `VARIABLE_CHANGED`（改用另一個變數，如部分改名、合併變數、參數改名；只在 scope 內一致改名也無法解釋差異時才輸出，container `param` 表示參數）
 - Deterministic PHP/Laravel interpreters（callee 會先正規化 fully-qualified 前導 `\`）：
   - Payment idempotency identity change
   - Transaction boundary / rollback removal（`DB::transaction`、`beginTransaction`、`commit`、`rollBack`，含 `\DB::` 與 DB connection receiver）
@@ -107,6 +112,10 @@ Review：HUMAN_REVIEW_REQUIRED（2/4 個檔案需要 review；TARGETED 1、FULL 
   - Payment signature verification removal（`verifySign`、`verificationSign`、`checkSign` 等）
   - Operator change（comparison / arithmetic / logical）
   - Guard clause removal / addition
+  - Condition negation（`CONDITION_NEGATED`；條件以外的反轉為 `BOOLEAN_VALUE_NEGATED`）、回傳值改變（`RETURN_VALUE_CHANGED`）、參數順序（`ARGUMENTS_REORDERED`）、參數改名（`PARAMETER_RENAMED`，named argument API）、改用另一個變數（`VARIABLE_REFERENCE_CHANGED`）、class 常數改值（`CONSTANT_VALUE_CHANGED`）
+  - Authorization ability 改變（`$this->authorize('update')` → `'view'`）、middleware 名稱被換掉（`'auth'` → `'guest'`）
+  - Laravel validation rules（`rules()` 回傳值、`$request->validate`、`Validator::make` 的規則增減或改值 → `VALIDATION_RULE_CHANGED`）
+  - Laravel model attributes（`$fillable` / `$guarded` → `MASS_ASSIGNMENT_CHANGED`、`$hidden` / `$visible` → `SERIALIZED_ATTRIBUTES_CHANGED`、`$casts` / `casts()` → `ATTRIBUTE_CAST_CHANGED`）
 - persisted authority / stale analysis protection
 - Summary / candidate digest binding
 - Mutation Evaluation Harness
@@ -120,25 +129,25 @@ Mutation corpus：
 ```
 Critical Recall               100.0%
 False Negative Rate             0.0%
-Critical Direct Fact Coverage  93.8%
+Critical Direct Fact Coverage 100.0%
 Safe Reduction Rate           100.0%
-Partial Coverage Rate          25.0%
+Partial Coverage Rate          15.0%
 Analysis Failure Rate           0.0%
-Full Review Fallback Rate      25.0%
+Full Review Fallback Rate      15.0%
 ```
 
-Real-repo evaluation（[說明](evaluation/real-repo/README.md)；兩個真實 PHP 金流專案、3,033 個檔案，seed 42、rate 0.3，共 12,062 筆：3,033 unchanged、3,576 safe、5,453 risky）。`npm run eval:real-repo -- evaluate` 的摘要輸出：
+Real-repo evaluation（[說明](evaluation/real-repo/README.md)；兩個真實 PHP 金流專案與一個 Laravel 11 專案、3,093 個檔案，seed 42、rate 0.3，共 12,283 筆：3,093 unchanged、3,648 safe、5,542 risky）。`npm run eval:real-repo -- evaluate` 的摘要輸出：
 
 ```
-Rows                         12062 (analyzed 12062, skipped 0, errors 0)
+Rows                         12283 (analyzed 12283, skipped 0, errors 0)
 Risky reduced (must be 0)    0
-Risky targeted rate          34.4%
-Risky specific reason rate   9.4%
+Risky targeted rate          99.3%
+Risky specific reason rate   53.4%
 Safe reduction rate          100.0%
 Unchanged reduction rate     99.9%
 ```
 
-未被 reduce 的 3 個 unchanged 都是空檔（`parseable: false`）。Risky targeted rate 是 risky mutation 以 `TARGETED`（變更已被具體 fact 完整解釋）而非 `FULL` 送 Human Review 的比例。
+未被 reduce 的 3 個 unchanged 都是空檔（`parseable: false`）。Risky targeted rate 是 risky mutation 以 `TARGETED`（變更已被具體 fact 完整解釋）而非 `FULL` 送 Human Review 的比例；加入 `LITERAL_CHANGED` 等 facts 前為 34.6%（specific 9.3%）。仍為 `FULL` 的主要是移除含 closure body 的 call（closure 內可能有任意邏輯）與改變運算子優先順序的 `&&` / `||` 互換。
 
 Historical PR evaluator 的 CI pilot：
 

@@ -42,7 +42,7 @@ before(async () => {
   await write('src/Format.php', php('        return $q->total(1, 2);'));
   await write('src/Guard.php', php("        $this->authorize('update', $q);\n        return $q->save();"));
   await write('src/Op.php', php('        return $q->amount < 10;'));
-  await write('src/Unknown.php', php("        return 'paid';"));
+  await write('src/Unknown.php', php('        return foo($q);'));
   await write('src/Moved.php', php('        return 1;'));
   await write('src/Exec.php', php('        return 2;'));
   await write('src/Deleted.php', '<?php\n\nfunction legacy_report_export(array $rows): string\n{\n    return implode("\\n", array_map(\'json_encode\', $rows));\n}\n');
@@ -60,7 +60,7 @@ before(async () => {
 
   await write('src/Guard.php', php('        return $q->save();'));
   await write('src/Op.php', php('        return $q->amount <= 10;'));
-  await write('src/Unknown.php', php("        return 'refunded';"));
+  await write('src/Unknown.php', php('        return bar($q);'));
   await git('mv', 'src/Moved.php', 'src/Renamed.php');
   await chmod(join(repo, 'src/Exec.php'), 0o755);
   await unlink(join(repo, 'src/Deleted.php'));
@@ -133,6 +133,18 @@ test('describeFact 為每種 fact 產生可讀描述', () => {
   assert.equal(describe('GUARD_ADDED', { condition: '$x', exit: 'return' }), '新增 guard：if ($x) return');
   assert.equal(describe('ARRAY_ITEM_REMOVED', { container: 'property:$m', key: null, value: "'auth'" }), "property:$m 移除元素 'auth'");
   assert.equal(describe('ARRAY_ITEM_ADDED', { container: 'c', key: "'k'", value: '1' }), "c 新增元素 'k' => 1");
+  assert.equal(describe('LITERAL_CHANGED', { container: 'const:RATE', before: '3', after: '30' }), '值 3 → 30（const:RATE）');
+  assert.equal(describe('EXPRESSION_NEGATED', { container: 'if', before: '$ok', after: '!$ok' }), '反轉：$ok → !$ok');
+  assert.equal(describe('RETURN_VALUE_CHANGED', { before: '$q->total()', after: '' }), '回傳值 $q->total() → （無）');
+  assert.equal(describe('RETURN_VALUE_CHANGED', { before: '', after: 'null' }), '回傳值 （無） → null');
+  assert.equal(describe('CALL_ARGUMENTS_REORDERED', { callee: 'max', before: '$a, $b', after: '$b, $a' }), 'max 的參數順序：($a, $b) → ($b, $a)');
+  assert.equal(describe('VARIABLE_CHANGED', { container: 'param', before: '$amount', after: '$value' }), '參數 $amount → $value');
+  assert.equal(describe('VARIABLE_CHANGED', { container: 'return', before: '$a', after: '$b' }), '變數 $a → $b');
+  // 多行、過長的片段壓成一行並截斷
+  const long = `[\n    'a' => ${'1, '.repeat(40)}\n]`;
+  const described = describe('RETURN_VALUE_CHANGED', { before: long, after: 'null' });
+  assert.ok(!described.includes('\n'));
+  assert.match(described, /^回傳值 \[ 'a' => 1, .{60,}… → null$/u);
   assert.equal(describeFact({ kind: 'SOMETHING_NEW' }), 'SOMETHING_NEW');
 });
 

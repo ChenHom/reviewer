@@ -171,6 +171,7 @@ function analyzePair(
     array $afterTokens,
     array $beforeNames,
     array $afterNames,
+    bool $explainVariables = false,
 ): array {
     $beforeHasher = new Canonicalizer($beforeNames);
     $afterHasher = new Canonicalizer($afterNames);
@@ -187,6 +188,7 @@ function analyzePair(
         $callFacts,
         $beforeHasher,
         $afterHasher,
+        $explainVariables,
     ))->run($beforeAst, $afterAst);
 
     return ['facts' => [...$callFacts, ...$diff['facts']], 'unexplained' => $diff['unexplained']];
@@ -209,6 +211,24 @@ if ($analysis['unexplained'] !== []) {
     );
     if ($renamed['unexplained'] === []) {
         $analysis = $renamed;
+    } else {
+        // 兩種比較都不完整時，再以原始名稱比較一次，把變數名稱的差異描述成 VARIABLE_CHANGED
+        // （部分改名、合併變數、參數改名等）。只有能完整解釋時才採用。
+        $variables = analyzePair(
+            $path,
+            $beforeSource,
+            $afterSource,
+            $beforeAst,
+            $afterAst,
+            $beforeTokens,
+            $afterTokens,
+            [],
+            [],
+            true,
+        );
+        if ($variables['unexplained'] === []) {
+            $analysis = $variables;
+        }
     }
 }
 
