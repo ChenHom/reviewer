@@ -2,6 +2,8 @@
 
 Status: `IMPLEMENTED`
 
+> 歷史紀錄：本文記錄 PR-D 合入 `master` 時（2026-10-06）的設計，之後不再更新。目前的 evaluator 與 CI pilot 數字見 [README「目前驗證基準」](../../README.md#目前驗證基準) 與 [Current State](../current-state.md)；對真實 PR 逐檔做 review scope 決策的 CLI 見 [PR Review CLI](../review-cli.md)。
+
 Base: PR-C `feat/mutation-evaluation`
 
 ## Goal

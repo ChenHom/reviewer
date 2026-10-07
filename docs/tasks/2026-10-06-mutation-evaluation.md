@@ -2,6 +2,8 @@
 
 Status: `IMPLEMENTED`
 
+> 歷史紀錄：本文記錄 PR-C 合入 `master` 時（2026-10-06）的設計與初始 corpus，之後不再更新。目前的 corpus 與 baseline 見 [README「目前驗證基準」](../../README.md#目前驗證基準) 與 [Current State](../current-state.md)。
+
 Base: PR-B `feat/php-laravel-adapter`
 
 ## Goal
@@ -33,12 +35,14 @@ Critical:
 - MUT-001 — payment idempotency named argument change。
 - MUT-002 — transaction boundary removed。
 - MUT-003 — authorization guard removed。
-- MUT-004 — wallet balance condition `< → <=`，刻意維持 unsupported，用來量測 fallback-only safety。
+- MUT-004 — wallet balance condition `< → <=`；PR-C 當時刻意維持 unsupported，用來量測 fallback-only safety。之後已改由 `BINARY_OPERATOR_CHANGED` → `COMPARISON_OPERATOR_CHANGED` 直接偵測。
 
 Safe:
 
 - SAFE-001 — formatting/comment-only。
-- SAFE-002 — local variable rename，語意安全但目前 analyzer 尚未支援，用來量測 reduction miss。
+- SAFE-002 — local variable rename，語意安全但 PR-C 當時 analyzer 尚未支援，用來量測 reduction miss。加入 scope-aware 區域變數改名後已可 reduce（預期 `NOT_SELECTED_FOR_HUMAN_REVIEW`）。
+
+目前 corpus 已擴充為 MUT-001～MUT-016、SAFE-001～SAFE-004，見 `evaluation/mutations/cases.json`；目前數字見 [README「目前驗證基準」](../../README.md#目前驗證基準)。
 
 ## Interpreter Profile
 

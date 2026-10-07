@@ -29,7 +29,7 @@ npm run eval:real-repo -- evaluate \
 npm run eval:real-repo -- evaluate --repo shop=/path/to/shop-api --baseline-ref <base ref>   # 例如 origin/master、HEAD~1
 ```
 
-`--baseline-ref` 以 `git archive` 取出該 ref 的 snapshot（不動目前的 working tree），執行前先準備好，ref 不存在時立即失敗。snapshot 的 `composer.lock` 與目前相同時直接複製 `vendor/`；不同時會執行 `composer install`，此時需要 `composer` 與網路。snapshot 在正常結束、發生錯誤或收到 Ctrl-C / SIGTERM 時都會被刪除；被 SIGKILL 強制結束時可能留在 `$TMPDIR/reviewer-baseline-*`，需手動刪除。
+`--baseline-ref` 以 `git archive` 取出 reviewer repo 該 ref 的 snapshot（不動目前的 working tree），執行前先準備好，ref 不存在時立即失敗。snapshot 的 `composer.lock` 與目前相同、且目前已安裝 `analyzers/php/vendor/` 時直接複製 `vendor/`；否則執行 `composer install`，此時需要 `composer` 與網路。早於 AST analyzer 的版本（snapshot 沒有 `analyzers/php/composer.json`，即 PR #6 之前的 token-based analyzer）不需要安裝依賴。snapshot 在正常結束、發生錯誤或收到 Ctrl-C / SIGTERM 時都會被刪除；被 SIGKILL 強制結束時可能留在 `$TMPDIR/reviewer-baseline-*`，需手動刪除。
 
 ## 標籤與 gate
 
@@ -37,7 +37,35 @@ npm run eval:real-repo -- evaluate --repo shop=/path/to/shop-api --baseline-ref 
 |---|---|---|
 | `unchanged` | 每個檔案一筆，before = after | 必須 `NOT_SELECTED`；只有 generator 自己也無法解析（`parseable: false`，含空檔）時例外 |
 | `safe` | 加註解、改縮排、參數換行、trailing comma、引號、method 內一致的區域變數改名 | 越多被 reduce 越好（Safe reduction rate） |
-| `risky` | 移除 call / guard / 陣列元素、反轉運算子、改字串或數字、交換參數、部分改名、合併變數、參數改名、改名 `compact()` 引用的變數、改名 `global` 變數… | 絕不能 `NOT_SELECTED` |
+| `risky` | 移除 call / guard / 陣列元素、替換運算子、否定 `if` 條件、改字串或數字、交換參數、`return` 改成 `null`、在 `__LINE__` 所在行之前插入一行、部分改名、合併變數、參數改名、改名 `compact()` 引用的變數、改名 `global` 變數 | 絕不能 `NOT_SELECTED` |
+
+報表 `op` 欄顯示的是 generator 的 op 名稱。每種 op 在每個檔案最多產生一筆，再依 `--rate` 抽樣；改名類 op 只在隨機挑選的一個 method 內產生，該 method 內有巢狀 method / function（例如匿名 class）時不產生。
+
+| op | label | 變更 |
+|---|---|---|
+| `S_UNCHANGED` | unchanged | 不修改 |
+| `S_COMMENT` | safe | 在某個敘述的那一行之前插入一行註解 |
+| `S_REINDENT` | safe | 以 4 個空白開頭的每一行，把這 4 個空白改成 tab |
+| `S_WRAP_ARGS` | safe | 在 call 的第二個參數前換行 |
+| `S_TRAILING_COMMA` | safe | 在陣列最後一個元素後加逗號 |
+| `S_QUOTE_STYLE` | safe | 只含英數字、空白與 `_ . : -` 的單引號字串改成雙引號 |
+| `S_RENAME_LOCAL` | safe | 一致改名 method 內的一個區域變數（加上 `Renamed`）；method 用到 `compact()`、`extract()` 等依賴變數名稱的函式、可變變數、`eval`、`include` / `require` 或 `global` 時不產生 |
+| `R_REMOVE_CALL_STMT` | risky | 移除一個 method / static call 敘述 |
+| `R_REMOVE_CHAINED_CALL` | risky | 移除鏈式呼叫的中間一段：`X->inner()->outer()` → `X->outer()` |
+| `R_REMOVE_GUARD` | risky | 移除只含一個 `return` / `throw` / `exit` 的 `if`（沒有 `else` / `elseif`） |
+| `R_REMOVE_ARRAY_ITEM` | risky | 移除陣列中最後一個以外的某個元素 |
+| `R_FLIP_OPERATOR` | risky | 換成另一個運算子：`<`↔`<=`、`>`↔`>=`、`+`↔`-`、`&&`↔`\|\|`、`===`↔`!==`、`==`→`!=` |
+| `R_NEGATE_CONDITION` | risky | 把 `if` 條件包成 `!(…)` |
+| `R_CHANGE_STRING` | risky | 在字串的結束引號前加上 `X` |
+| `R_CHANGE_INT` | risky | 整數字面值 +1 |
+| `R_SWAP_ARGS` | risky | 交換 call 的前兩個參數（兩者都必須是位置參數，不是具名參數或 `...` 展開） |
+| `R_RETURN_NULL` | risky | `return <expr>;` 改成 `return null;` |
+| `R_SHIFT_LINE` | risky | 在含 `__LINE__` 的那一行之前插入一行註解。和 `S_COMMENT` 一樣只是註解，但 `__LINE__` 的值改變，所以是 risky |
+| `R_RENAME_PARTIAL` | risky | 區域變數只改名其中一處 |
+| `R_RENAME_MERGE` | risky | 把一個區域變數全部改名成同一 method 內的另一個區域變數 |
+| `R_RENAME_PARAM` | risky | method 參數改名（宣告與 method 內的使用處一起改） |
+| `R_RENAME_COMPACT` | risky | 一致改名被 `compact()` 以字串引用的變數（字串不變） |
+| `R_RENAME_GLOBAL` | risky | 一致改名 `global` 宣告的變數（改指向另一個全域變數） |
 
 標籤由 `generate.php` 獨立驗證：before / after 解析後去除所有 attributes 再 pretty print，safe（改名除外）必須相同、risky 必須不同，不符合的 mutation 直接捨棄。比較時 `__LINE__` 以實際行號、`__halt_compiler` 以 `__COMPILER_HALT_OFFSET__` 表示（排版變更會改變它們的值），`TRUE` / `true` 等常數名稱視為相同。safe 必須同時在最新 PHP 語法與 PHP 7 視角（7.4 語法、`#[` 視為註解）下成立，因為目標專案可能跑在任一版本。這個驗證刻意不使用 analyzer 的 `Canonicalizer`。
 
@@ -59,9 +87,10 @@ Gate（任一項不為 0 時 gate 失敗）：
 |---|---|
 | 0 | 通過 |
 | 1 | gate failure。`run`、`report` 檢查該指令產出或讀入的結果，所以 `run --baseline-ref` 在舊版本未通過 gate 時也會回傳 1；`evaluate` 只檢查 `candidate.jsonl`，baseline 的 gate 請用 `report --results baseline.jsonl` 檢查 |
-| 2 | 參數錯誤、找不到 repo 路徑、generator / snapshot / composer 失敗等執行錯誤 |
+| 2 | 參數錯誤、找不到 repo 路徑、analyzer 依賴未安裝、generator / snapshot / composer 失敗等執行錯誤 |
+| 130 / 143 | 被 Ctrl-C（SIGINT）/ SIGTERM 中斷；使用 `--baseline-ref` 時會先刪除 snapshot 再結束 |
 
-`compare` 只輸出差異，不影響 exit code。
+`compare` 的差異不影響 exit code（兩份結果的筆數或各 index 的 path / op 對不上、不是來自同一份 corpus 時，以 `COMPARE_CORPUS_MISMATCH` 結束，exit 2）。
 
 ## 掃描範圍
 
@@ -69,7 +98,7 @@ Gate（任一項不為 0 時 gate 失敗）：
 - git 本身出錯（例如 dubious ownership、`git ls-files` 失敗）或找不到任何 PHP 檔時直接結束（exit 2），不會改用目錄掃描。
 - 超過 300,000 bytes 的檔案與非 UTF-8 的路徑會略過，不產生任何資料列，只出現在 stderr 統計的 `tooLarge` 與 `nonUtf8Path`。
 - `--rate`：每種 mutation 在每個檔案被抽樣的機率（預設 0.3）；`unchanged` 不抽樣。
-- `--seed`：每個檔案以 seed 與路徑決定自己的亂數，相同 seed 與相同原始檔會產生完全相同的 mutation；新增或刪除其他檔案不影響既有檔案的 mutation。
+- `--seed`：整數，預設 42。每個檔案以 seed 與路徑決定自己的亂數，相同 seed 與相同原始檔會產生完全相同的 mutation；新增或刪除其他檔案不影響既有檔案的 mutation。
 
 ## 報表欄位
 
@@ -79,10 +108,12 @@ Gate（任一項不為 0 時 gate 失敗）：
 |---|---|
 | reduced | `NOT_SELECTED_FOR_HUMAN_REVIEW` 的比例 |
 | targeted | Human Review、變更已被具體 fact 完整解釋（`TARGETED`）的比例 |
-| full | Human Review、需要完整 review（`FULL`）的比例 |
+| full | Human Review、有無法自動解釋的變更或 analyzer 無法完整分析（`FULL`）的比例 |
 | specific | decision reasons 含具體 domain blocker（不是 `COV-…`、`FACT_UNHANDLED:…` 等 generic fallback）的比例 |
 
-摘要中的 Risky targeted rate 是 risky mutation 以 `TARGETED`（而非 `FULL`）送 Human Review 的比例。
+`TARGETED` 與 `FULL` 都仍需 review 整個檔案；`TARGETED` 標示的位置只是 review 的起點。目前的 reduction 只到檔案層級（見 [README「目前能力邊界」](../../README.md#目前能力邊界)），只有 reduced（`NOT_SELECTED_FOR_HUMAN_REVIEW`）代表 review 範圍真的縮小。
+
+摘要中的 Risky targeted rate 是 risky mutation 以 `TARGETED`（而非 `FULL`）送 Human Review 的比例，衡量的是變更被具體 fact 解釋的程度，不是 review 工作量的減少。
 
 ## 個別指令
 
@@ -100,6 +131,10 @@ $CLI inspect --corpus $OUT/corpus.jsonl --repo shop=/path/to/shop-api \
 ```
 
 - 每個指令都可加 `--help`；`--out` 的上層目錄不存在時會自動建立。
+- `--repo` 格式為 `label=path`，可重複指定多個 repo：label 只能含英數字與 `.` `_` `-`，path 不可為空（否則 `REPO_OPTION_INVALID`）；label 不可重複（`REPO_LABEL_DUPLICATED`）。
+- `run --reviewer <dir>`：改用另一份 reviewer checkout（例如另一個 worktree）執行 corpus，不建立 `git archive` snapshot。該 checkout 必須已執行 `npm run analyzer:install`，否則以 `ANALYZER_DEPENDENCY_MISSING` 結束（exit 2）。`--reviewer` 與 `--baseline-ref` 只能擇一，同時指定時為 `OPTION_CONFLICT`（exit 2）。
+- `report --json`、`compare --json`：改以 JSON 輸出到 stdout。`report` 輸出 `{summary, gate}`，gate 失敗時 exit code 仍為 1；`compare` 輸出比較結果（`total`、`identical`、`categories`、`transitions`、`newReductions`、`lostReductions`）。
+- `evaluate` 在 gate 失敗時，會在報表後自動對前 3 筆有 index 的失敗（`RISKY_REDUCED`、`ANALYZER_ERROR`、`UNCHANGED_NOT_REDUCED`）印出 `inspect` 結果，只含 candidate 的結果；`NO_ROWS_ANALYZED`、`REPO_NOT_ANALYZED` 沒有 index，不會印出。其餘失敗請用 `inspect` 指令查看。
 - `--concurrency`：同時執行的 analyzer 數（預設為 CPU 數，最多 8）。
 - `compare` 以「第一個不同的欄位」分類，依序為 `outcome`、`decision`、`fallback`、`complete`（含 reasonCode）、`reasons`、`facts`、`subjects`，並列出 decision 轉換與新增 / 失去的 reduction。
 - `inspect` 顯示 edit 前後的原始碼片段與各版本的結果，用來追查 gate failure 或比較差異；`--repo` 可省略（只顯示結果），原始檔已被修改時不顯示片段。
