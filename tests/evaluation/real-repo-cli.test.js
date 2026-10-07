@@ -1,8 +1,9 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { Buffer } from 'node:buffer';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
@@ -10,8 +11,8 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { prepareBaseline } from '../../evaluation/real-repo/baseline.js';
-import { parseJsonl } from '../../evaluation/real-repo/corpus.js';
-import { REVIEWER_ROOT, runCorpus } from '../../evaluation/real-repo/run.js';
+import { parseJsonl, sha256 } from '../../evaluation/real-repo/corpus.js';
+import { REVIEWER_ROOT, loadReviewer, runCorpus } from '../../evaluation/real-repo/run.js';
 
 const run = promisify(execFile);
 const CLI = fileURLToPath(new URL('../../evaluation/real-repo/cli.js', import.meta.url));
@@ -88,9 +89,13 @@ test('原始檔案在產生 corpus 後被修改時標為 SOURCE_CHANGED 而不�
 
 test('runCorpus 在缺少 repo root 或 corpus 格式錯誤時拒絕執行', async () => {
   const row = {
-    repo: 'local', path: 'a.php', sourceSha256: 'a'.repeat(64), op: 'S_UNCHANGED', label: 'unchanged', edits: [],
+    repo: 'local', path: 'a.php', sourceSha256: 'a'.repeat(64), op: 'S_UNCHANGED', label: 'unchanged', parseable: true, edits: [],
   };
   await assert.rejects(runCorpus([row], { repos: new Map() }), /REPO_ROOT_MISSING:local/);
+  await assert.rejects(
+    runCorpus([row], { repos: new Map([['local', join(workDir, 'no-such-dir')]]) }),
+    /REPO_ROOT_NOT_FOUND:local=/,
+  );
   await assert.rejects(
     runCorpus([{ ...row, label: 'maybe' }], { repos: new Map([['local', workDir]]) }),
     /CORPUS_ROW_INVALID:0:CORPUS_LABEL_INVALID/,
@@ -121,6 +126,81 @@ test('prepareBaseline 從 git ref 建立可執行的 snapshot', async () => {
   );
 });
 
+test('analyzer 超過 timeout 時被終止並記為 ERROR（gate failure），不會卡住', async () => {
+  // 以 symlink 共用 src/，搭配一個不會結束的 fake analyzer。
+  const reviewerRoot = join(workDir, 'slow-reviewer');
+  await mkdir(join(reviewerRoot, 'analyzers/php/bin'), { recursive: true });
+  await symlink(join(REVIEWER_ROOT, 'src'), join(reviewerRoot, 'src'));
+  await writeFile(join(reviewerRoot, 'analyzers/php/bin/analyze.php'), '<?php\nsleep(30);\n');
+  const repo = join(workDir, 'slow-repo');
+  await mkdir(repo, { recursive: true });
+  await writeFile(join(repo, 'a.php'), '<?php\n');
+  const row = {
+    repo: 'local',
+    path: 'a.php',
+    sourceSha256: sha256(Buffer.from('<?php\n')),
+    op: 'S_UNCHANGED',
+    label: 'unchanged',
+    parseable: true,
+    edits: [],
+  };
+
+  const started = Date.now();
+  const [result] = await runCorpus([row], { repos: new Map([['local', repo]]), reviewerRoot, timeoutMs: 300 });
+  assert.ok(Date.now() - started < 10_000);
+  assert.equal(result.outcome, 'ERROR');
+  assert.match(result.error, /PHP_ANALYZER_ABORTED/);
+});
+
+test('reviewer checkout 缺少 PHP 依賴時立即失敗', async () => {
+  const reviewerRoot = join(workDir, 'no-vendor');
+  await mkdir(join(reviewerRoot, 'analyzers/php'), { recursive: true });
+  await cp(join(REVIEWER_ROOT, 'analyzers/php/composer.json'), join(reviewerRoot, 'analyzers/php/composer.json'));
+  await assert.rejects(loadReviewer(reviewerRoot), /ANALYZER_DEPENDENCY_MISSING/);
+});
+
+test('generator：每個檔案的 mutation 不受其他檔案影響；__LINE__ 之前的換行只會是 risky', async () => {
+  const repo = join(workDir, 'stable-repo');
+  await mkdir(repo, { recursive: true });
+  const service = "<?php\n\nclass Service\n{\n    public function run($a, $b)\n    {\n        $total = max($a, $b);\n        return [$total < 10, 'ok', $a + $b];\n    }\n}\n";
+  await writeFile(join(repo, 'Service.php'), service);
+  await writeFile(join(repo, 'Where.php'), "<?php\n\nfunction where()\n{\n    return __LINE__;\n}\n");
+  const first = join(workDir, 'stable-1.jsonl');
+  assert.equal((await cli(['generate', '--repo', `local=${repo}`, '--rate', '1', '--out', first])).code, 0);
+
+  await writeFile(join(repo, 'Added.php'), "<?php\n\nfunction added($x)\n{\n    return $x * 2;\n}\n");
+  const second = join(workDir, 'stable-2.jsonl');
+  assert.equal((await cli(['generate', '--repo', `local=${repo}`, '--rate', '1', '--out', second])).code, 0);
+
+  const rowsFor = async (path, file) => parseJsonl(await readFile(path, 'utf8')).filter((row) => row.path === file);
+  assert.deepEqual(await rowsFor(second, 'Service.php'), await rowsFor(first, 'Service.php'));
+  assert.ok((await rowsFor(first, 'Service.php')).length > 3);
+
+  const where = await rowsFor(first, 'Where.php');
+  assert.deepEqual(where.filter((row) => ['S_COMMENT', 'S_WRAP_ARGS'].includes(row.op)), []);
+  assert.deepEqual(where.filter((row) => row.label === 'unchanged').map((row) => row.parseable), [true]);
+
+  // 讓 __LINE__ 值改變的換行是 risky，analyzer 不可 reduce。
+  const shift = where.filter((row) => row.op === 'R_SHIFT_LINE');
+  assert.equal(shift.length, 1);
+  const [result] = await runCorpus(shift, { repos: new Map([['local', repo]]) });
+  assert.equal(result.outcome, 'ANALYZED');
+  assert.equal(result.decision, 'HUMAN_REVIEW_REQUIRED');
+});
+
+test('generator：use function 別名的 compact 被視為 name-sensitive，並產生 R_RENAME_COMPACT', async () => {
+  const repo = join(workDir, 'compact-repo');
+  await mkdir(repo, { recursive: true });
+  await writeFile(join(repo, 'Report.php'), "<?php\n\nnamespace App;\n\nuse function compact as pack_vars;\n\nclass Report\n{\n    public function payload($amount)\n    {\n        $total = $amount * 2;\n        $label = 'x';\n        return pack_vars('total');\n    }\n}\n");
+  const corpusPath = join(workDir, 'compact.jsonl');
+  for (const seed of ['1', '2', '3']) {
+    assert.equal((await cli(['generate', '--repo', `local=${repo}`, '--rate', '1', '--seed', seed, '--out', corpusPath])).code, 0);
+    const rows = parseJsonl(await readFile(corpusPath, 'utf8'));
+    assert.deepEqual(rows.filter((row) => row.op === 'S_RENAME_LOCAL'), [], `seed ${seed}`);
+    assert.ok(rows.some((row) => row.op === 'R_RENAME_COMPACT' && row.label === 'risky'), `seed ${seed}`);
+  }
+});
+
 test('report 在 gate failure 時 exit code 為 1；未知指令回傳 2', async () => {
   const results = join(workDir, 'bad-results.jsonl');
   await writeFile(results, `${JSON.stringify({
@@ -142,7 +222,13 @@ test('report 在 gate failure 時 exit code 為 1；未知指令回傳 2', async
 
   const unknown = await cli(['frobnicate']);
   assert.equal(unknown.code, 2);
-  assert.match(unknown.stderr, /用法/);
+  assert.match(unknown.stderr, /未知的指令：frobnicate/);
+
+  for (const args of [[], ['help'], ['--help'], ['evaluate', '--help'], ['run', '-h']]) {
+    const help = await cli(args);
+    assert.equal(help.code, 0, args.join(' '));
+    assert.match(help.stdout, /--baseline-ref/);
+  }
 
   const missing = await cli(['report']);
   assert.equal(missing.code, 2);

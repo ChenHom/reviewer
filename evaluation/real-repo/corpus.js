@@ -78,6 +78,9 @@ export function validateCorpusRow(row) {
   } else if (row.label === 'unchanged' ? row.edits.length !== 0 : row.edits.length === 0) {
     errors.push('CORPUS_EDITS_LABEL_MISMATCH');
   }
+  if (row.label === 'unchanged' && typeof row.parseable !== 'boolean') {
+    errors.push('CORPUS_PARSEABLE_INVALID');
+  }
 
   return errors;
 }

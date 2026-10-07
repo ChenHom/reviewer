@@ -1,3 +1,4 @@
+import { existsSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { URL, fileURLToPath, pathToFileURL } from 'node:url';
@@ -15,6 +16,10 @@ export const REVIEWER_ROOT = fileURLToPath(new URL('../../', import.meta.url));
  * @returns {Promise<object>} pipeline 依賴。
  */
 export async function loadReviewer(reviewerRoot = REVIEWER_ROOT) {
+  const analyzerDirectory = join(reviewerRoot, 'analyzers/php');
+  if (existsSync(join(analyzerDirectory, 'composer.json')) && !existsSync(join(analyzerDirectory, 'vendor/autoload.php'))) {
+    throw new Error(`ANALYZER_DEPENDENCY_MISSING:${analyzerDirectory}（請先執行 npm run analyzer:install）`);
+  }
   const load = (relative) => import(pathToFileURL(join(reviewerRoot, relative)).href);
   const [adapterModule, contracts, domain, publication, runner] = await Promise.all([
     load('src/adapters/php-laravel/adapter.js'),
@@ -43,7 +48,7 @@ export async function loadReviewer(reviewerRoot = REVIEWER_ROOT) {
  * @param {number} index - corpus index。
  * @param {string} beforeSource - 原始檔案。
  * @param {string} afterSource - 套用 edits 後的檔案。
- * @param {number} timeoutMs - pipeline timeout。
+ * @param {number} timeoutMs - analyzer deadline；逾時 analyzer 會被終止並記為 ERROR。
  * @returns {Promise<object>} result row。
  */
 async function analyzeRow(reviewer, row, index, beforeSource, afterSource, timeoutMs) {
@@ -56,7 +61,9 @@ async function analyzeRow(reviewer, row, index, beforeSource, afterSource, timeo
     runnerVersion: '1',
   };
   const request = { identity, path: row.path, beforeSource, afterSource };
-  const adapterResult = await reviewer.adapter.analyze(request);
+  const adapterResult = await reviewer.adapter.analyze(request, {
+    signal: globalThis.AbortSignal.timeout(timeoutMs),
+  });
 
   // pipeline 內部會再呼叫一次 adapter；共用同一份結果，避免每筆 mutation 跑兩次 analyzer。
   const replay = {
@@ -102,7 +109,7 @@ async function analyzeRow(reviewer, row, index, beforeSource, afterSource, timeo
  * @param {Map<string, string>} options.repos - repo label → path。
  * @param {string} [options.reviewerRoot] - reviewer checkout（預設為本 repo）。
  * @param {number} [options.concurrency=4] - 同時執行的 analyzer 數。
- * @param {number} [options.timeoutMs=30000] - 單筆 pipeline timeout。
+ * @param {number} [options.timeoutMs=30000] - 單筆 analyzer deadline；逾時記為 ERROR（gate failure）。
  * @param {function} [options.onProgress] - (done, total) 進度回呼。
  * @returns {Promise<object[]>} 依 corpus 順序排列的 result rows。
  */
@@ -118,6 +125,9 @@ export async function runCorpus(corpus, {
     if (errors.length > 0) throw new Error(`CORPUS_ROW_INVALID:${index}:${errors.join(',')}`);
     if (!repos?.has(row.repo)) throw new Error(`REPO_ROOT_MISSING:${row.repo}（請用 --repo ${row.repo}=<path> 指定）`);
   });
+  for (const [label, path] of repos ?? []) {
+    if (!existsSync(path) || !statSync(path).isDirectory()) throw new Error(`REPO_ROOT_NOT_FOUND:${label}=${path}`);
+  }
 
   const reviewer = await loadReviewer(reviewerRoot);
   const sources = new Map();
@@ -140,7 +150,14 @@ export async function runCorpus(corpus, {
       const index = next;
       next += 1;
       const row = corpus[index];
-      const base = { index, repo: row.repo, path: row.path, op: row.op, label: row.label };
+      const base = {
+        index,
+        repo: row.repo,
+        path: row.path,
+        op: row.op,
+        label: row.label,
+        ...(row.label === 'unchanged' ? { parseable: row.parseable } : {}),
+      };
       const source = await readSource(row);
 
       if (source === null) {

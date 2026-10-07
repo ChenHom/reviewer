@@ -159,11 +159,22 @@ final class StructuralDiff
             $this->function = $before->name->toString();
         }
 
+        $progress = $this->progress();
         foreach ($before->getSubNodeNames() as $name) {
             $this->compare($before->$name, $after->$name, $this->childContainer($before, $name, $container));
         }
+        // hash 不同、但子節點比較沒有找到任何差異：差異來自 hash 額外納入的資料
+        // （canonical 變數名稱、`__LINE__` 行號等），必須視為未解釋。
+        if ($this->progress() === $progress) {
+            $this->unexplained('hash-only', $before);
+        }
 
         [$this->class, $this->function] = [$savedClass, $savedFunction];
+    }
+
+    private function progress(): string
+    {
+        return count($this->unexplained) . ':' . count($this->facts) . ':' . $this->consumed;
     }
 
     private function subject(): string

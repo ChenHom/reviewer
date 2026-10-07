@@ -54,6 +54,13 @@ final class Canonicalizer
     private function serialize(Node $node): string
     {
         $parts = [$node::class];
+        // 值取決於原始碼位置的節點：`__LINE__` 的行號、`__halt_compiler` 的 byte offset
+        // （`__COMPILER_HALT_OFFSET__`）。排版變更讓它們改變時不可視為等價。
+        if ($node instanceof Node\Scalar\MagicConst\Line) {
+            $parts[] = 'line=' . $node->getStartLine();
+        } elseif ($node instanceof Stmt\HaltCompiler) {
+            $parts[] = 'offset=' . $node->getStartFilePos();
+        }
         foreach ($node->getSubNodeNames() as $name) {
             $child = $node->$name;
             if ($name === 'name' && $node instanceof Node\Expr\Variable && isset($this->variableNames[spl_object_id($node)])) {

@@ -71,7 +71,11 @@ test('parseJsonl 略過空行並回報錯誤行號', () => {
 
 test('validateCorpusRow 檢查欄位、edits 格式與 label 一致性', () => {
   assert.deepEqual(validateCorpusRow(corpusRow()), []);
-  assert.deepEqual(validateCorpusRow(corpusRow({ op: 'S_UNCHANGED', label: 'unchanged', edits: [] })), []);
+  assert.deepEqual(validateCorpusRow(corpusRow({ op: 'S_UNCHANGED', label: 'unchanged', parseable: true, edits: [] })), []);
+  assert.deepEqual(
+    validateCorpusRow(corpusRow({ op: 'S_UNCHANGED', label: 'unchanged', edits: [] })),
+    ['CORPUS_PARSEABLE_INVALID'],
+  );
   assert.deepEqual(validateCorpusRow(null), ['CORPUS_ROW_NOT_OBJECT']);
   assert.deepEqual(validateCorpusRow(corpusRow({ label: 'unknown' })), ['CORPUS_LABEL_INVALID']);
   assert.deepEqual(validateCorpusRow(corpusRow({ sourceSha256: 'abc' })), ['CORPUS_SOURCE_HASH_INVALID']);
@@ -81,7 +85,7 @@ test('validateCorpusRow 檢查欄位、edits 格式與 label 一致性', () => {
   }
   assert.deepEqual(validateCorpusRow(corpusRow({ edits: [] })), ['CORPUS_EDITS_LABEL_MISMATCH']);
   assert.deepEqual(
-    validateCorpusRow(corpusRow({ label: 'unchanged', edits: [[0, 0, 'x']] })),
+    validateCorpusRow(corpusRow({ label: 'unchanged', parseable: true, edits: [[0, 0, 'x']] })),
     ['CORPUS_EDITS_LABEL_MISMATCH'],
   );
 });
@@ -127,24 +131,37 @@ test('isSpecificReason 只把 domain blocker 視為具體原因；normalizeReaso
 });
 
 test('validateResults：risky 被 reduce、analyzer 錯誤、未變更檔案未 reduce 都是 gate failure', () => {
+  const unchanged = (overrides) => result({ op: 'S_UNCHANGED', label: 'unchanged', parseable: true, ...overrides });
   const { failures, warnings } = validateResults([
     result({ index: 0 }),
     result({ index: 1, decision: 'NOT_SELECTED_FOR_HUMAN_REVIEW', fallback: null }),
-    result({ index: 2, outcome: 'ERROR', error: 'PHP_ANALYZER_EXIT_255' }),
-    result({ index: 3, op: 'S_UNCHANGED', label: 'unchanged', decision: 'NOT_SELECTED_FOR_HUMAN_REVIEW' }),
-    result({ index: 4, op: 'S_UNCHANGED', label: 'unchanged', reasonCode: 'PHP_PARSE_ERROR', fallback: 'FULL' }),
-    result({ index: 5, op: 'S_UNCHANGED', label: 'unchanged', reasonCode: 'PHP_FILE_DELETION_UNSUPPORTED' }),
-    result({ index: 6, op: 'S_UNCHANGED', label: 'unchanged', reasonCode: 'UNRECOGNIZED_PHP_CHANGE' }),
-    result({ index: 7, op: 'S_COMMENT', label: 'safe' }),
-    result({ index: 8, outcome: 'SOURCE_CHANGED' }),
+    result({ index: 2, outcome: 'ERROR', error: 'PHP_ANALYZER_ABORTED' }),
+    unchanged({ index: 3, decision: 'NOT_SELECTED_FOR_HUMAN_REVIEW' }),
+    // generator 自己也無法解析（或空檔）時才允許不 reduce
+    unchanged({ index: 4, parseable: false, reasonCode: 'PHP_PARSE_ERROR', fallback: 'FULL' }),
+    unchanged({ index: 5, parseable: false, reasonCode: 'PHP_FILE_DELETION_UNSUPPORTED' }),
+    unchanged({ index: 6, reasonCode: 'UNRECOGNIZED_PHP_CHANGE' }),
+    // analyzer 宣稱 parse error，但 generator 能解析：analyzer regression
+    unchanged({ index: 7, reasonCode: 'PHP_PARSE_ERROR', fallback: 'FULL' }),
+    result({ index: 8, op: 'S_COMMENT', label: 'safe' }),
+    result({ index: 9, outcome: 'SOURCE_CHANGED' }),
   ]);
 
   assert.deepEqual(failures.map(({ code, index }) => [code, index]), [
     ['RISKY_REDUCED', 1],
     ['ANALYZER_ERROR', 2],
     ['UNCHANGED_NOT_REDUCED', 6],
+    ['UNCHANGED_NOT_REDUCED', 7],
   ]);
-  assert.deepEqual(warnings.map(({ code, index }) => [code, index]), [['SOURCE_CHANGED', 8]]);
+  assert.deepEqual(warnings.map(({ code, index }) => [code, index]), [['SOURCE_CHANGED', 9]]);
+});
+
+test('validateResults：沒有任何一筆被實際分析時 gate 失敗', () => {
+  for (const rows of [[], [result({ outcome: 'SOURCE_MISSING' }), result({ index: 1, outcome: 'SOURCE_CHANGED' })]]) {
+    const { failures } = validateResults(rows);
+    assert.deepEqual(failures.map(({ code }) => code), ['NO_ROWS_ANALYZED']);
+    assert.match(formatSummary(summarizeResults(rows), { failures, warnings: [] }), /- NO_ROWS_ANALYZED: 1/);
+  }
 });
 
 test('summarizeResults 依 op 與 label 計算 reduced / targeted / full / specific', () => {

@@ -598,6 +598,16 @@ test('不安全的改名絕不判為無 fact 的 COMPLETE', async () => {
     ['頂層變數是 global', "<?php\n\n$config = 1;\nreturn $config;\n", "<?php\n\n$settings = 1;\nreturn $settings;\n"],
     ['只改賦值處，字串內仍用舊名', method('$key', '        $token = substr($key, -4);\n        return "token={$token}";'), method('$key', '        $tokenRenamed = substr($key, -4);\n        return "token={$token}";')],
     ['合併成另一個既有變數', method('', "        $config = load();\n        $payObject = make();\n        return [$config['v'], $payObject];"), method('', "        $payObject = load();\n        $payObject = make();\n        return [$payObject['v'], $payObject];")],
+    [
+      'use function 別名的 compact 依賴變數名稱',
+      "<?php\n\nnamespace App;\n\nuse function compact as pack_vars;\n\nclass Report\n{\n    public function payload(int $amount)\n    {\n        $total = $amount * 2;\n        return pack_vars('total');\n    }\n}\n",
+      "<?php\n\nnamespace App;\n\nuse function compact as pack_vars;\n\nclass Report\n{\n    public function payload(int $amount)\n    {\n        $sum = $amount * 2;\n        return pack_vars('total');\n    }\n}\n",
+    ],
+    [
+      'group use 別名的 extract 寫入區域變數',
+      "<?php\n\nuse function Helpers\\{format, extract as unpack_vars};\n\nfunction run($data)\n{\n    unpack_vars($data);\n    return $total;\n}\n",
+      "<?php\n\nuse function Helpers\\{format, extract as unpack_vars};\n\nfunction run($data)\n{\n    unpack_vars($data);\n    return $sum;\n}\n",
+    ],
     ['頂層 closure 的 use 綁定 global', "<?php\n\nreturn function () use ($config) {\n    return $config;\n};\n", "<?php\n\nreturn function () use ($settings) {\n    return $settings;\n};\n"],
   ];
 
@@ -618,4 +628,24 @@ test('改名同時有其他變更時仍輸出對應 fact', async () => {
     result.facts.map(({ kind, properties }) => [kind, properties.callee ?? properties.operatorAfter]),
     [['CALL_REMOVED', '$cash->lock'], ['BINARY_OPERATOR_CHANGED', '<=']],
   );
+});
+
+
+test('排版變更讓 __LINE__ 或 __halt_compiler offset 改變時不可判為無 fact 的 COMPLETE', async () => {
+  const lineBefore = "<?php\n\nfunction where()\n{\n    return __LINE__;\n}\n";
+  const lineAfter = "<?php\n\n// moved down\nfunction where()\n{\n    return __LINE__;\n}\n";
+  const shifted = await inlineAnalyze(lineBefore, lineAfter);
+  assert.equal(shifted.complete, false);
+  assert.deepEqual(shifted.facts, []);
+
+  // __LINE__ 之後的排版變更不影響其值，仍可 reduce。
+  const below = await inlineAnalyze(lineBefore, `${lineBefore}// trailing comment\n`);
+  assert.equal(below.complete, true);
+  assert.deepEqual(below.facts, []);
+
+  const halt = await inlineAnalyze(
+    "<?php\n\necho __COMPILER_HALT_OFFSET__;\n__halt_compiler();data",
+    "<?php\n\n// shifted\necho __COMPILER_HALT_OFFSET__;\n__halt_compiler();data",
+  );
+  assert.equal(halt.complete, false);
 });

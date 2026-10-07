@@ -12,12 +12,17 @@ declare(strict_types=1);
  * 讓 runner 能偵測 corpus 產生後原始檔案已被修改。
  *
  * label：
- * - unchanged：每個檔案一筆，before 與 after 相同，必須判為 NOT_SELECTED（無法解析或空檔除外）。
+ * - unchanged：每個檔案一筆，before 與 after 相同，必須判為 NOT_SELECTED。`parseable` 記錄本 script
+ *   能否解析該檔案（空檔或兩種語法都無法解析時為 false），只有 false 時才允許不被 reduce。
  * - safe：AST 不變的格式變更（註解、縮排、換行、trailing comma、引號），或 method 內一致的區域變數改名。
- * - risky：AST 改變的語意變更，絕不能被判為 NOT_SELECTED。
+ * - risky：AST 改變的語意變更（含讓 `__LINE__` 值改變的換行），絕不能被判為 NOT_SELECTED。
  *
  * 標籤由本 script 獨立驗證：把 before / after 解析後去除所有 attributes 再 pretty print，
- * safe（改名除外）必須相同，risky 必須不同；不符合的 mutation 直接捨棄。
+ * safe（改名除外）必須相同，risky 必須不同；不符合的 mutation 直接捨棄。比較前 `__LINE__`
+ * 會換成實際行號、`__halt_compiler` 會帶上 byte offset（排版變更會改變它們的值），
+ * `TRUE` / `true` 等常數名稱統一為小寫（大小寫不影響語意）。
+ *
+ * 每個檔案以 seed 與路徑決定自己的亂數序列：新增或刪除其他檔案不會改變該檔案的 mutation。
  * 這個驗證刻意不使用 analyzer 的 Canonicalizer，避免用受測程式碼替自己的結果背書。
  */
 
@@ -80,7 +85,6 @@ if ($rate < 0 || $rate > 1) {
     fwrite(STDERR, "--rate must be between 0 and 1\n");
     exit(2);
 }
-mt_srand($seed);
 
 /**
  * 列出 repo 內的 PHP 檔案：git repo 用 `git ls-files`（尊重 .gitignore），否則遞迴掃描。
@@ -89,9 +93,14 @@ mt_srand($seed);
  */
 function listPhpFiles(string $root): array
 {
-    $output = shell_exec('git -C ' . escapeshellarg($root) . " ls-files -z -- '*.php' 2>/dev/null");
-    if (is_string($output) && $output !== '') {
-        $files = explode("\0", rtrim($output, "\0"));
+    $insideWorkTree = trim((string) shell_exec('git -C ' . escapeshellarg($root) . ' rev-parse --is-inside-work-tree 2>/dev/null')) === 'true';
+    if ($insideWorkTree) {
+        exec('git -C ' . escapeshellarg($root) . " ls-files -z -- '*.php'", $lines, $status);
+        if ($status !== 0) {
+            fwrite(STDERR, "git ls-files failed in {$root}\n");
+            exit(2);
+        }
+        $files = array_values(array_filter(explode("\0", implode("\n", $lines)), static fn (string $file) => $file !== ''));
     } else {
         $files = [];
         $iterator = new RecursiveIteratorIterator(new RecursiveCallbackFilterIterator(
@@ -138,6 +147,19 @@ function canonicalPrint(array $statements): string
     $stripAttributes = new class () extends NodeVisitorAbstract {
         public function enterNode(Node $node): ?Node
         {
+            // 值取決於位置的節點：保留其實際值，讓排版變更造成的差異可被看見。
+            if ($node instanceof Node\Scalar\MagicConst\Line) {
+                return new Node\Scalar\Int_($node->getStartLine());
+            }
+            if ($node instanceof Stmt\HaltCompiler) {
+                return new Stmt\HaltCompiler($node->getStartFilePos() . ':' . $node->remaining);
+            }
+            if (
+                $node instanceof Expr\ConstFetch
+                && in_array(strtolower($node->name->toString()), ['true', 'false', 'null'], true)
+            ) {
+                return new Expr\ConstFetch(new Node\Name(strtolower($node->name->toString())));
+            }
             $node->setAttributes([]);
             return null;
         }
@@ -194,6 +216,28 @@ function isGuard(Stmt\If_ $if): bool
 
     return $only instanceof Stmt\Return_
         || ($only instanceof Stmt\Expression && ($only->expr instanceof Expr\Throw_ || $only->expr instanceof Expr\Exit_));
+}
+
+/**
+ * 檔案內指向 name-sensitive 函式的名稱（含 `use function compact as x` 的別名與 group use）。
+ *
+ * @param list<Stmt> $ast
+ * @return array<string, string> 小寫名稱 → 原始函式名稱
+ */
+function sensitiveFunctionNames(array $ast): array
+{
+    $names = array_combine(NAME_SENSITIVE_FUNCTIONS, NAME_SENSITIVE_FUNCTIONS);
+    foreach ((new NodeFinder())->find($ast, static fn (Node $n) => $n instanceof Stmt\Use_ || $n instanceof Stmt\GroupUse) as $use) {
+        foreach ($use->uses as $item) {
+            $type = $use->type !== Stmt\Use_::TYPE_UNKNOWN ? $use->type : $item->type;
+            $function = strtolower($item->name->getLast());
+            if ($type === Stmt\Use_::TYPE_FUNCTION && in_array($function, NAME_SENSITIVE_FUNCTIONS, true)) {
+                $names[strtolower($item->getAlias()->toString())] = $function;
+            }
+        }
+    }
+
+    return $names;
 }
 
 /**
@@ -328,6 +372,12 @@ function candidateMutations(string $source, array $ast): array
         ]);
     }
 
+    // 在 `__LINE__` 所在行之前插入一行：語法上只是註解，但 `__LINE__` 的值改變。
+    if ($line = pick($finder->findInstanceOf($ast, Node\Scalar\MagicConst\Line::class))) {
+        $at = lineStart($source, $line->getStartFilePos());
+        $add('R_SHIFT_LINE', 'risky', [[$at, $at, "// reviewer mutation shifts __LINE__\n"]]);
+    }
+
     if ($return = pick($finder->find($ast, static fn (Node $n) => $n instanceof Stmt\Return_ && $n->expr !== null))) {
         [$start, $end] = span($return);
         $add('R_RETURN_NULL', 'risky', [[$start, $end, 'return null;']]);
@@ -336,7 +386,7 @@ function candidateMutations(string $source, array $ast): array
     // ---- 區域變數改名 ----
     $methods = $finder->find($ast, static fn (Node $n) => $n instanceof Stmt\ClassMethod && $n->stmts !== null && $n->stmts !== []);
     if ($method = pick($methods)) {
-        foreach (renameMutations($source, $method) as $mutation) {
+        foreach (renameMutations($source, $method, sensitiveFunctionNames($ast)) as $mutation) {
             $add(...$mutation);
         }
     }
@@ -345,17 +395,39 @@ function candidateMutations(string $source, array $ast): array
 }
 
 /**
- * 在單一 method 內產生改名 mutation：一致改名（safe）、部分改名、合併變數、參數改名（risky）。
+ * 在單一 method 內產生改名 mutation：一致改名（safe）；部分改名、合併變數、參數改名、
+ * compact() 以字串引用的變數改名、global 變數改名（risky）。
  *
+ * @param array<string, string> $sensitiveFunctions sensitiveFunctionNames() 結果
  * @return list<array{0: string, 1: string, 2: list<array{0: int, 1: int, 2: string}>}>
  */
-function renameMutations(string $source, Stmt\ClassMethod $method): array
+function renameMutations(string $source, Stmt\ClassMethod $method, array $sensitiveFunctions): array
 {
     $finder = new NodeFinder();
-    $nameSensitive = $finder->findFirst($method, static fn (Node $n) => ($n instanceof Expr\Variable && !is_string($n->name))
-        || $n instanceof Expr\Eval_ || $n instanceof Expr\Include_ || $n instanceof Stmt\Global_
-        || ($n instanceof Expr\FuncCall && $n->name instanceof Node\Name
-            && in_array(strtolower($n->name->getLast()), NAME_SENSITIVE_FUNCTIONS, true))) !== null;
+    $sensitiveCalls = $finder->find($method, static fn (Node $n) => $n instanceof Expr\FuncCall
+        && $n->name instanceof Node\Name
+        && isset($sensitiveFunctions[strtolower($n->name->getLast())]));
+    $nameSensitive = $sensitiveCalls !== [] || $finder->findFirst($method, static fn (Node $n) => ($n instanceof Expr\Variable && !is_string($n->name))
+        || $n instanceof Expr\Eval_ || $n instanceof Expr\Include_ || $n instanceof Stmt\Global_) !== null;
+
+    // compact('name', ['name2']) 以字串引用的變數名稱
+    $compactNames = [];
+    foreach ($sensitiveCalls as $call) {
+        if ($sensitiveFunctions[strtolower($call->name->getLast())] !== 'compact') {
+            continue;
+        }
+        foreach ($finder->findInstanceOf($call->args, Node\Scalar\String_::class) as $string) {
+            $compactNames[$string->value] = true;
+        }
+    }
+    $globalNames = [];
+    foreach ($finder->findInstanceOf($method->stmts, Stmt\Global_::class) as $global) {
+        foreach ($global->vars as $var) {
+            if ($var instanceof Expr\Variable && is_string($var->name)) {
+                $globalNames[$var->name] = true;
+            }
+        }
+    }
 
     $parameters = [];
     foreach ($finder->findInstanceOf($method, Node\Param::class) as $parameter) {
@@ -380,12 +452,18 @@ function renameMutations(string $source, Stmt\ClassMethod $method): array
     $methodText = substr($source, $method->getStartFilePos(), $method->getEndFilePos() - $method->getStartFilePos() + 1);
     $locals = array_values(array_filter(array_keys($occurrences), static fn (string $name) => $plain[$name]
         && !isset($parameters[$name])
+        && !isset($globalNames[$name])
         && !in_array($name, PRESERVED_VARIABLES, true)
         && !str_contains($methodText, $name . 'Renamed')));
     $renameAll = static fn (string $from, string $to): array => array_map(
         static fn (array $range) => [$range[0], $range[1], '$' . $to],
         $occurrences[$from],
     );
+
+    $renamable = static fn (string $name): bool => ($plain[$name] ?? false)
+        && !isset($parameters[$name])
+        && !in_array($name, PRESERVED_VARIABLES, true)
+        && !str_contains($methodText, $name . 'Renamed');
 
     $mutations = [];
     if (!$nameSensitive && ($variable = pick($locals))) {
@@ -409,6 +487,12 @@ function renameMutations(string $source, Stmt\ClassMethod $method): array
             [$start, $end, '$' . $name . 'Renamed'],
             ...array_map(static fn (array $range) => [$range[0], $range[1], '$' . $name . 'Renamed'], $occurrences[$name] ?? []),
         ]];
+    }
+    if ($variable = pick(array_filter(array_keys($compactNames), static fn ($name) => isset($occurrences[$name]) && $renamable($name)))) {
+        $mutations[] = ['R_RENAME_COMPACT', 'risky', $renameAll($variable, $variable . 'Renamed')];
+    }
+    if ($variable = pick(array_filter(array_keys($globalNames), static fn ($name) => isset($occurrences[$name]) && $renamable($name)))) {
+        $mutations[] = ['R_RENAME_GLOBAL', 'risky', $renameAll($variable, $variable . 'Renamed')];
     }
 
     return $mutations;
@@ -462,16 +546,16 @@ foreach (listPhpFiles($root) as $file) {
     }
 
     $base = ['repo' => $label, 'path' => $file, 'sourceSha256' => hash('sha256', $source)];
-    $emit($base + ['op' => 'S_UNCHANGED', 'label' => 'unchanged', 'edits' => []]);
-
     $parsed = $source === '' ? null : parseWithFallback($source);
+    $emit($base + ['op' => 'S_UNCHANGED', 'label' => 'unchanged', 'parseable' => $parsed !== null, 'edits' => []]);
     if ($parsed === null) {
         $stats['unparsable'] += 1;
         continue;
     }
     [$parser, $ast] = $parsed;
 
-    // 先抽樣再驗證：RNG 消耗只取決於檔案內容與 seed，結果可重現。
+    // 每個檔案以 seed 與路徑重設亂數；先抽樣再驗證，RNG 消耗只取決於檔案內容與 seed。
+    mt_srand(crc32($seed . "\0" . $file));
     $sampled = array_filter(
         candidateMutations($source, $ast),
         static fn () => mt_rand() / mt_getrandmax() <= $rate,

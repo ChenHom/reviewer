@@ -57,7 +57,8 @@ Authoritative Candidate / Summary / Check
 - JSON-safe deterministic Fact properties
 - PHP CLI analyzer，以 [nikic/php-parser](https://github.com/nikic/PHP-Parser) 5.9.0（版本鎖定）解析 AST；先用最新 PHP 語法，失敗時 before / after 一起改用 PHP 7.4 語法
 - AST 結構比對判定 completeness：排版、註解、trailing comma、引號種類、`array()` / `[]`、多餘括號不影響結果；每個被「解釋」的差異都必須對應一個 fact，因此沒有 fact 的 COMPLETE 只會發生在兩棵 AST 完全相同時（區域變數以 canonical 名稱比較，見下）
-- Scope-aware 區域變數改名：method / function 內一致的區域變數改名視為等價（可安全減少 Review）。參數（named argument API）、`$this`、superglobal、magic local、`global` 變數與頂層變數不改名；scope 內出現 `compact`、`extract`、`get_defined_vars`、`$$x`、`eval`、`include` / `require`、單參數 `parse_str` 時整個 scope 不做改名正規化
+- Scope-aware 區域變數改名：method / function 內一致的區域變數改名視為等價（可安全減少 Review）。參數（named argument API）、`$this`、superglobal、magic local、`global` 變數與頂層變數不改名；scope 內出現 `compact`、`extract`、`get_defined_vars`、`$$x`、`eval`、`include` / `require`、單參數 `parse_str` 時整個 scope 不做改名正規化（含 `use function compact as x` 等別名）
+- `__LINE__` 的行號與 `__halt_compiler` 的位置納入 AST 比較：排版變更讓它們的值改變時不視為等價
 - Generic facts：
   - `CALL_ARGUMENT_CHANGED`（named argument；位置參數只在無法被更細 fact 解釋時以 `#index` 輸出，且不視為已解釋）
   - `CALL_REMOVED` / `CALL_ADDED`（含 closure 內的巢狀 call 與鏈式 call，如 `->lockForUpdate`；receiver 保留完整名稱，如 `$this->adminDB->transaction`）
@@ -93,15 +94,18 @@ Analysis Failure Rate           0.0%
 Full Review Fallback Rate      25.0%
 ```
 
-Real-repo evaluation（[說明](evaluation/real-repo/README.md)；兩個真實 PHP 金流專案、3,033 個檔案，seed 42、rate 0.3，共 12,155 筆 mutation）：
+Real-repo evaluation（[說明](evaluation/real-repo/README.md)；兩個真實 PHP 金流專案、3,033 個檔案，seed 42、rate 0.3，共 12,062 筆：3,033 unchanged、3,576 safe、5,453 risky）。`npm run eval:real-repo -- evaluate` 的摘要輸出：
 
 ```
-Risky reduced (must be 0)       0
-Analyzer errors                 0
-Safe reduction rate         100.0%
-Unchanged reduction rate     99.9%   （其餘為空檔）
-Risky targeted rate          35.5%
+Rows                         12062 (analyzed 12062, skipped 0, errors 0)
+Risky reduced (must be 0)    0
+Risky targeted rate          34.4%
+Risky specific reason rate   9.4%
+Safe reduction rate          100.0%
+Unchanged reduction rate     99.9%
 ```
+
+未被 reduce 的 3 個 unchanged 都是空檔（`parseable: false`）。Risky targeted rate 是 risky mutation 以 `TARGETED`（只需看指定位置）而非 `FULL` 送 Human Review 的比例。
 
 Historical PR evaluator 的 CI pilot：
 

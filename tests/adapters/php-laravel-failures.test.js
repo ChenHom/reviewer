@@ -197,3 +197,16 @@ test('analyzer 缺少 Composer 依賴時以 PHP_ANALYZER_DEPENDENCY_MISSING fail
   assert.equal(result.reasonCode, 'PHP_ANALYZER_DEPENDENCY_MISSING');
   assert.equal(result.obligations[0].status, 'FAILED');
 });
+
+test('analyzer 未讀取 stdin 就結束時，大型 payload 不會因 EPIPE 讓 process crash', async () => {
+  const adapter = await fakeAnalyzerAdapter(
+    'exit-without-reading.js',
+    `process.stdout.write(JSON.stringify({ ok: false, code: 'PHP_ANALYZER_DEPENDENCY_MISSING' }));
+process.exit(0);`,
+  );
+  const large = `<?php\n${'$x = 1;\n'.repeat(400_000)}`;
+  const result = await adapter.analyze({ ...request, beforeSource: large, afterSource: large });
+
+  assert.equal(result.complete, false);
+  assert.equal(result.reasonCode, 'PHP_ANALYZER_DEPENDENCY_MISSING');
+});

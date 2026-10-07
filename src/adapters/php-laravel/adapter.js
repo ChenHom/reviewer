@@ -129,6 +129,9 @@ function executePhpAnalyzer({
       }
     });
 
+    // analyzer 可能在讀完 stdin 前就結束（例如缺少依賴時直接回報錯誤）。寫入失敗（EPIPE）
+    // 不可成為未處理的 error 事件；結果一律由 close 時的 exit code 與 stdout 決定。
+    child.stdin.on('error', () => {});
     child.stdin.end(JSON.stringify(payload));
   });
 }

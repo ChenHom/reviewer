@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { cp, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 
 /**
  * 等待 child process 結束；非 0 exit code 時 reject 並帶出 stderr。
@@ -58,8 +59,9 @@ export async function prepareBaseline({ reviewerRoot, ref, directory }) {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const extract = spawn('tar', ['-x', '-C', directory], { stdio: ['pipe', 'ignore', 'pipe'] });
-  archive.stdout.pipe(extract.stdin);
+  // pipeline 會把 tar 提早結束造成的 EPIPE 轉成 rejection，而不是未處理的 error 事件。
   await Promise.all([
+    pipeline(archive.stdout, extract.stdin),
     finished(archive, 'git archive', { captureStdout: false }),
     finished(extract, 'tar'),
   ]);

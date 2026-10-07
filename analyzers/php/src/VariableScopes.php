@@ -36,12 +36,20 @@ final class VariableScopes
     private array $names = [];
 
     /**
+     * 小寫的可呼叫名稱 → 原始的 name-sensitive 函式名稱；包含 `use function compact as x` 的別名。
+     *
+     * @var array<string, string>
+     */
+    private array $sensitiveFunctions = [];
+
+    /**
      * @param list<Stmt> $statements
      * @return array<int, string> spl_object_id(Variable) → canonical name
      */
     public static function canonicalNames(array $statements): array
     {
         $scopes = new self();
+        $scopes->sensitiveFunctions = self::sensitiveFunctionNames($statements);
         $scopes->walkList($statements, false);
 
         return $scopes->names;
@@ -106,7 +114,7 @@ final class VariableScopes
     {
         $body = $root->getStmts() ?? [];
         $preserved = array_fill_keys([...self::PRESERVED, ...$extraPreserved], true);
-        $renamable = !self::isNameSensitive($root);
+        $renamable = !$this->isNameSensitive($root);
 
         foreach ((new NodeFinder())->find($root, static fn (Node $n): bool => $n instanceof Node\Param) as $param) {
             if ($param->var instanceof Expr\Variable && is_string($param->var->name)) {
@@ -179,11 +187,39 @@ final class VariableScopes
     }
 
     /**
+     * 收集檔案內所有指向 name-sensitive 函式的名稱（含 `use function` 別名與 group use）。
+     *
+     * @param list<Stmt> $statements
+     * @return array<string, string> 小寫名稱 → 原始函式名稱
+     */
+    private static function sensitiveFunctionNames(array $statements): array
+    {
+        $names = array_combine(self::NAME_SENSITIVE_FUNCTIONS, self::NAME_SENSITIVE_FUNCTIONS);
+        $uses = (new NodeFinder())->find(
+            $statements,
+            static fn (Node $node): bool => $node instanceof Stmt\Use_ || $node instanceof Stmt\GroupUse,
+        );
+        foreach ($uses as $use) {
+            foreach ($use->uses as $item) {
+                $type = $use->type !== Stmt\Use_::TYPE_UNKNOWN ? $use->type : $item->type;
+                $function = strtolower($item->name->getLast());
+                if ($type === Stmt\Use_::TYPE_FUNCTION && in_array($function, self::NAME_SENSITIVE_FUNCTIONS, true)) {
+                    $names[strtolower($item->getAlias()->toString())] = $function;
+                }
+            }
+        }
+
+        return $names;
+    }
+
+    /**
      * scope 內是否有以字串存取變數名稱的機制。
      */
-    private static function isNameSensitive(Node $root): bool
+    private function isNameSensitive(Node $root): bool
     {
-        return (new NodeFinder())->findFirst($root, static function (Node $node): bool {
+        $sensitive = $this->sensitiveFunctions;
+
+        return (new NodeFinder())->findFirst($root, static function (Node $node) use ($sensitive): bool {
             if ($node instanceof Expr\Variable && !is_string($node->name)) {
                 return true;
             }
@@ -191,8 +227,8 @@ final class VariableScopes
                 return true;
             }
             if ($node instanceof Expr\FuncCall && $node->name instanceof Node\Name) {
-                $function = strtolower($node->name->getLast());
-                if (!in_array($function, self::NAME_SENSITIVE_FUNCTIONS, true)) {
+                $function = $sensitive[strtolower($node->name->getLast())] ?? null;
+                if ($function === null) {
                     return false;
                 }
                 // parse_str / mb_parse_str 只有單參數時才會寫入區域變數。

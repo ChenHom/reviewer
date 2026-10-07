@@ -1,8 +1,5 @@
 const NOT_SELECTED = 'NOT_SELECTED_FOR_HUMAN_REVIEW';
 
-// unchanged 檔案允許不被 reduce 的原因：檔案本身無法解析，或是空檔（被視為刪除）。
-const UNCHANGED_ALLOWED_REASON_CODES = new Set(['PHP_PARSE_ERROR', 'PHP_FILE_DELETION_UNSUPPORTED']);
-
 const GENERIC_REASON_PREFIXES = ['COV-', 'COVERAGE_', 'ANALYZER_', 'FACT_UNHANDLED:', 'ELIGIB'];
 
 /**
@@ -96,7 +93,11 @@ export function summarizeResults(rows) {
 }
 
 /**
- * 檢查 evaluation gate：risky 不可被 reduce、analyzer 不可 crash、未變更檔案必須 reduce。
+ * 檢查 evaluation gate：risky 不可被 reduce、analyzer 不可 crash、未變更檔案必須 reduce、
+ * 至少要有一筆實際分析。
+ *
+ * 未變更檔案只有在 corpus 記錄 `parseable: false`（generator 自己無法解析或空檔）時
+ * 才允許不被 reduce；不採信受測 analyzer 自己回報的 parse error。
  *
  * @param {object[]} rows - runner 輸出的結果。
  * @returns {{failures: object[], warnings: object[]}} gate failures 與 warnings。
@@ -113,13 +114,14 @@ export function validateResults(rows) {
       warnings.push(describe(row.outcome, row));
     } else if (row.label === 'risky' && row.decision === NOT_SELECTED) {
       failures.push(describe('RISKY_REDUCED', row));
-    } else if (
-      row.label === 'unchanged'
-      && row.decision !== NOT_SELECTED
-      && !UNCHANGED_ALLOWED_REASON_CODES.has(row.reasonCode)
-    ) {
+    } else if (row.label === 'unchanged' && row.decision !== NOT_SELECTED && row.parseable !== false) {
       failures.push(describe('UNCHANGED_NOT_REDUCED', row));
     }
+  }
+
+  // 全部被略過（--repo 路徑錯誤、corpus 過期）或沒有任何資料時不可視為通過。
+  if (!rows.some((row) => row.outcome === 'ANALYZED')) {
+    failures.push({ code: 'NO_ROWS_ANALYZED', index: null, repo: null, path: null, op: null });
   }
 
   return { failures, warnings };
@@ -256,7 +258,7 @@ export function formatSummary(summary, gate) {
     const counts = {};
     for (const failure of gate.failures) counts[failure.code] = (counts[failure.code] ?? 0) + 1;
     lines.push('', 'Gate failures:', ...Object.entries(counts).map(([code, count]) => `- ${code}: ${count}`));
-    lines.push(...gate.failures.slice(0, 10).map((failure) => (
+    lines.push(...gate.failures.filter((failure) => failure.index !== null).slice(0, 10).map((failure) => (
       `  #${failure.index} ${failure.code} ${failure.op} ${failure.repo}/${failure.path}`
     )));
   }
