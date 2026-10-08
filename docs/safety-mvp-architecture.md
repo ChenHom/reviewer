@@ -9,8 +9,9 @@
 ```mermaid
 flowchart LR
     V["PR Review CLI<br/>bin/review.js"] --> W{"git diff -M<br/>merge base → head<br/>逐檔分類"}
-    W -->|".php 修改 / rename"| A["Git / before-after source"]
+    W -->|".php 修改 / rename"| A["before / after source"]
     W -->|"新增、刪除、非 PHP、binary、<br/>symlink、submodule、type change"| X["FULL（不送 analyzer）"]
+    SP["runStoredAdapterPipeline<br/>（注入的 adapter request；目前只有測試呼叫）"] --> A
 
     A --> B["PHP/Laravel Adapter<br/>（nikic/php-parser AST）"]
     B --> C["Changed Regions + Runtime Context"]
@@ -35,13 +36,13 @@ flowchart LR
     M --> N["HUMAN_REVIEW_REQUIRED<br/>（TARGETED / FULL）"]
     M --> O["NOT_SELECTED_FOR_HUMAN_REVIEW"]
 
-    N --> Y["PR 層級彙整<br/>（所有檔案都 NOT_SELECTED<br/>才 NOT_SELECTED）"]
-    O --> Y
+    N -->|"CLI"| Y["PR 層級彙整<br/>（所有檔案都 NOT_SELECTED<br/>才 NOT_SELECTED）"]
+    O -->|"CLI"| Y
     X --> Y
     Y --> Z["文字 / JSON 報表"]
 
-    N --> P["CAS Authority"]
-    O --> P
+    N -->|"只有 runStoredAdapterPipeline"| P["CAS Authority"]
+    O -->|"只有 runStoredAdapterPipeline"| P
     P --> Q["Summary / Candidate Digest"]
     Q --> R["Status Check"]
     R --> S["Optional GitHub Sink"]
@@ -62,7 +63,9 @@ flowchart LR
   - PR 層級只有在**所有**檔案都是 `NOT_SELECTED_FOR_HUMAN_REVIEW` 時才是 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
   - 每個檔案使用 in-memory authority state，不寫入 CAS store，也不發布到 GitHub。
   - 用法、merge base 語意、選項、exit code、原因代碼與文字 / JSON 報表見 [PR Review CLI](review-cli.md)。
-- **Stored pipeline**（`runStoredAdapterPipeline`）：CAS Authority → Summary / Candidate Digest → Status Check → optional GitHub Sink。GitHub transport 需注入；目前只有測試呼叫，沒有 CLI 或 workflow 使用。
+- **Stored pipeline**（`runStoredAdapterPipeline`）：CAS Authority → Summary / Candidate Digest → Status Check → optional GitHub Sink。輸入是注入的 adapter 與 adapter request，不經過 CLI 的 git diff 與逐檔分類；CLI 的結果也不會進入這條路徑。GitHub transport 需注入；目前只有測試呼叫，沒有 CLI 或 workflow 使用。
+
+圖中的 evaluation（虛線）也不經過 CLI 的 git diff 步驟：harness 直接把 before / after source 交給 Adapter，以 in-memory authority state 執行 pipeline。
 
 `TARGETED` / `FULL` 的判定見 §5。reduction 是 file-level：`TARGETED` 列出的原因與位置只是 review 的起點，整個檔案仍需 review。
 
@@ -92,7 +95,7 @@ interpreterSetDigest
 
 Node process 透過 PHP CLI 執行 analyzer（`analyzers/php/bin/analyze.php`），以 stdin 傳入 path 與 before / after source，讀回 JSON。Adapter 只輸出 changed region（整個 head 檔案）、runtime context、coverage obligation `COV-PHP-001` 與 facts，不產生 review decision。
 
-Analyzer 以 [nikic/php-parser](https://github.com/nikic/PHP-Parser) 5.9.0（版本鎖定於 `analyzers/php/composer.lock`）解析 AST。執行 analyzer 需要 PATH 上的 `php`（PHP CLI ≥ 8.3，`analyzers/php/composer.json` 的要求；CI 使用 8.4），依賴以 `npm run analyzer:install`（Composer 2）安裝。這是執行 analyzer 的 PHP 版本，不限制被分析專案的 PHP 版本：
+Analyzer 以 [nikic/php-parser](https://github.com/nikic/PHP-Parser) 5.9.0（版本鎖定於 `analyzers/php/composer.lock`）解析 AST。執行 analyzer 需要 PATH 上的 `php`（PHP CLI ≥ 8.3，`analyzers/php/composer.json` 的要求；CI 使用 8.4），依賴以 `npm run analyzer:install`（Composer 2）安裝。這是執行 analyzer 的 PHP 版本，與被分析專案的目標版本無關。被分析的程式碼以最新語法或 PHP 7.4 語法解析，判為等價前只檢查 PHP 7 與 PHP 8 的解讀，PHP 5 的語意不在檢查範圍。解析方式：
 
 - 被分析的程式碼先以最新 PHP 語法解析；任一側失敗時 before / after 一起改用 PHP 7.4 語法（`#[` 視為註解，與 PHP 7 相同）。
 - PHP 7.4 語法下仍有任一側無法解析時回報 `PHP_PARSE_ERROR`。
@@ -109,7 +112,7 @@ Analyzer 以 [nikic/php-parser](https://github.com/nikic/PHP-Parser) 5.9.0（版
 2. 以 scope-aware canonical 名稱比較（`VariableScopes`）：method / function 內一致的區域變數改名視為等價。參數、`$this`、superglobal、`global` 變數與頂層變數不改名；scope 內有 `compact`、`extract`、`get_defined_vars`、`$$x`、`eval`、`include` / `require` 等以字串存取變數名的機制時，整個 scope 不做改名正規化（完整條件見 [README「已實作」](../README.md#已實作)）。
 3. 以原始名稱比較，並把變數差異描述成 `VARIABLE_CHANGED`（部分改名、合併變數、參數改名等）。
 
-判為等價（`COMPLETE` 且沒有 fact）前，再以最新語法與 PHP 7.4 語法分別解析 before / after：同一語法下兩側的可解析性必須一致，兩側都能解析的語法下也必須等價，否則回報 `PHP_GRAMMAR_DIVERGENCE`（例如 `.` 與 `+` 的優先順序在 PHP 8 改變）。舊版 PHP 不支援的新語法（例如參數 trailing comma）不在這項檢查範圍內。
+判為等價（`COMPLETE` 且沒有 fact）前，再以最新語法與 PHP 7.4 語法分別解析 before / after：同一語法下兩側的可解析性必須一致，兩側都能解析的語法下也必須等價，否則回報 `PHP_GRAMMAR_DIVERGENCE`（例如 `.` 與 `+` 的優先順序在 PHP 8 改變）。舊版 PHP 不支援的新語法（例如參數 trailing comma）不在這項檢查範圍內，請以目標 PHP 版本的 `php -l` 檢查。PHP 5 的語意也不在檢查範圍：例如 `$$foo['bar']` 在 PHP 5 是 `${$foo['bar']}`，在 PHP 7 / 8 是 `${$foo}['bar']`，兩者互換會被判為等價。
 
 目前輸出 13 種 generic facts（各 fact 的細節與 container 格式見 [README「已實作」](../README.md#已實作)）：
 
@@ -165,7 +168,7 @@ CALL_REMOVED（$this->authorize、$this->authorizeForUser、Gate::authorize）
 - 七個 generic interpreter：operator change（`BINARY_OPERATOR_CHANGED`）、guard clause（`GUARD_REMOVED` / `GUARD_ADDED`）、negation（`EXPRESSION_NEGATED`）、return value（`RETURN_VALUE_CHANGED`）、argument order（`CALL_ARGUMENTS_REORDERED`）、variable change（`VARIABLE_CHANGED`）、constant value（`const` 宣告值的 `LITERAL_CHANGED`）。
 - 兩個 Laravel interpreter：validation rules、model attributes（`$fillable` / `$guarded`、`$hidden` / `$visible`、`$casts` / `casts()`）。
 
-一個 fact 可以被多個 interpreter 處理，例如 `rules()` 的回傳值改變同時產生 `RETURN_VALUE_CHANGED` 與 `VALIDATION_RULE_CHANGED`。完整清單見 [README「已實作」](../README.md#已實作)，每個輸出代碼的意義見 [PR Review CLI「Domain 原因代碼」](review-cli.md#domain-原因代碼)。
+一個 fact 可以被多個 interpreter 處理，例如 `rules()` 的整個回傳值換成常數或從常數換掉（`RETURN_VALUE_CHANGED` fact，如 `return self::RULES;` → `return [];`）時，同時產生 `RETURN_VALUE_CHANGED` 與 `VALIDATION_RULE_CHANGED`；只改陣列內的規則（`LITERAL_CHANGED`、`ARRAY_ITEM_*`，如 `'required'` 改成 `'nullable'`）時只產生 `VALIDATION_RULE_CHANGED`。完整清單見 [README「已實作」](../README.md#已實作)，每個輸出代碼的意義見 [PR Review CLI「Domain 原因代碼」](review-cli.md#domain-原因代碼)。
 
 Interpreter 必須有穩定 `id/version`，並被納入 `interpreterSetDigest`。
 
@@ -303,7 +306,7 @@ Safe reduction rate          100.0%
 Unchanged reduction rate     99.9%
 ```
 
-未被 reduce 的 3 筆 unchanged 都是空檔（`parseable: false`）。目標專案不在本 repo 內，這些數字無法只靠本 repo 重現。Real-repo evaluation 需要外部專案，不在 `npm run test:all` 與 CI 中，不屬於 release gate，是修改 analyzer / interpreter 後在本機執行的驗證；資料是自動產生的 mutation，不是真實 PR。說明見 [Real-repo Evaluation](../evaluation/real-repo/README.md)。
+未被 reduce 的 3 筆 unchanged 都是空檔（`parseable: false`）。目標專案不在本 repo 內，這些數字無法只靠本 repo 重現。對真實目標專案執行的 Real-repo evaluation 不在 `npm run test:all` 與 CI 中，不屬於 release gate，是修改 analyzer / interpreter 後在本機執行的驗證（`npm run test:all` 只以 `tests/evaluation/real-repo-cli.test.js` 在 repo 內的 `fixtures/php-laravel` 上執行 `evaluate`，測試工具本身與 gate）；資料是自動產生的 mutation，不是真實 PR。說明見 [Real-repo Evaluation](../evaluation/real-repo/README.md)。
 
 Historical CI pilot：
 
@@ -349,7 +352,7 @@ Human / AI Reviewer
 3. 提高 risky 變更的具體原因比例（real-repo 的 Risky specific reason rate 目前 53.4%，其餘只有 `FACT_UNHANDLED` 等 generic 原因），並減少仍為 `FULL` 的情況。Safe Reduction Rate 在 mutation corpus 與 real-repo 都已是 100.0%，但 safe 案例只涵蓋排版、註解、引號、trailing comma、區域變數改名等變更；真實 PR 的 reduction 需以第 1 項的 corpus 衡量。
 4. 正式的 Review Scope Plan：可安裝的 `reviewer plan` 指令，以及有版本的 JSON schema（`schemaVersion`、`reviewScope`、metrics、Reviewer 版本與 analysis identity），見 [Agent Work Harness Integration](integrations/agent-work-harness.md) §5。`bin/review.js` 已提供 PR 層級的逐檔決策與位置提示，但只能以 `node bin/review.js` 呼叫，`--json` 報表也沒有 schema 版本，不是該文件提案的 Review Scope Plan 格式。
 5. Harness `review <workId>` integration。
-6. GitHub PR Review Scope workflow（目前 CI 沒有執行 `bin/review.js`，GitHub sink 也沒有 workflow 使用）。
+6. GitHub PR Review Scope workflow（目前 CI 只在測試中執行 `bin/review.js`，不會用它 review PR；GitHub sink 也沒有 workflow 使用）。
 7. region-level blocker → fact → provenance contract。在此之前，`TARGETED` 的位置只是 review 起點。
 8. optional impact provider，例如 code-review-graph。
 9. LLM 僅作 hypothesis / explanation，不取得 reduction authority。

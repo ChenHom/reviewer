@@ -51,7 +51,7 @@ Authoritative Candidate / Summary / Check
 
 ## Review 一個 PR
 
-需要 `git`、PATH 上的 `php`（PHP CLI ≥ 8.3，CI 使用 8.4）與 Composer 2。這是執行 analyzer 的 PHP 版本，不限制被分析專案的 PHP 版本（見「已實作」）。
+需要 Node.js（CI 使用 24）、`git`、PATH 上的 `php`（PHP CLI ≥ 8.3，CI 使用 8.4）與 Composer 2；完整前置需求見 [Review CLI](docs/review-cli.md#前置需求)。這是執行 analyzer 的 PHP 版本，與被分析專案的目標版本無關：被分析的程式碼以最新語法或 PHP 7.4 語法解析，判為等價前只檢查 PHP 7 與 PHP 8 的解讀，PHP 5 的語意不在檢查範圍；兩種語法都無法解析時為 `FULL`（`PHP_PARSE_ERROR`），見「已實作」。
 
 ```bash
 npm run analyzer:install   # 第一次需要安裝 PHP analyzer 依賴（執行 composer install）
@@ -59,7 +59,7 @@ npm run analyzer:install   # 第一次需要安裝 PHP analyzer 依賴（執行 
 node bin/review.js --repo /path/to/project --base origin/master --head HEAD
 ```
 
-與 GitHub PR 相同，比較的是 head 相對於 `git merge-base <base> <head>` 的變更：base 分支在 head 分出後的新 commit 不會被列入；兩者沒有共同歷史時以 `GIT_NO_MERGE_BASE` 結束（exit code 2）。每個變更檔案逐一決策，列出需要 Human Review 的檔案、原因與行號：
+與 GitHub PR 相同，比較的是 head 相對於 `git merge-base <base> <head>` 的變更：base 分支在 head 分出後的新 commit 不會被列入；兩者沒有共同歷史（或 shallow clone 中缺少 merge base，例如 CI 的 `fetch-depth: 1`）時以 `GIT_NO_MERGE_BASE` 結束（exit code 2）。每個變更檔案逐一決策，列出需要 Human Review 的檔案、原因與行號：
 
 ```
 Review：HUMAN_REVIEW_REQUIRED（3/4 個檔案需要 review；TARGETED 2、FULL 1）
@@ -122,7 +122,7 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
   - Authorization guard removal（`$this->authorize`、`$this->authorizeForUser`、`Gate::authorize`、`Illuminate\Support\Facades\Gate::authorize` → `AUTHORIZATION_GUARD_REMOVED`）；第一個參數的 ability 字串改值（如 `'update'` 改成 `'view'` → `AUTHORIZATION_ABILITY_CHANGED`）
   - Middleware guard removal（`$this->middleware(...)` / `->middleware(...)` 整個 call 被移除或少了 middleware、`Route::group` 的 `'middleware'` 被移除或少了 middleware、`$middleware` / `$middlewares` / `$beforeActionList` property 移除元素、middleware 名稱被換掉（如 `'auth'` 改成 `'guest'`）→ `MIDDLEWARE_GUARD_REMOVED`；只新增 middleware 時為 `FACT_UNHANDLED`）
   - Row lock removal（`lockForUpdate`、`sharedLock` → `ROW_LOCK_REMOVED`）
-  - Payment signature verification removal（method 名稱含 `verif…sign`、`check…sign`、`validate…sign` 或 `sign…verif` / `check` / `valid`，不分大小寫，如 `verifySign`、`verificationSign`、`checkSign` → `SIGNATURE_VERIFICATION_REMOVED`）
+  - Payment signature verification removal（method 名稱含 `verif…sign`、`check…sign`、`validate…sign`、`sign…verif`、`sign…check` 或 `sign…valid`（不分大小寫），如 `verifySign`、`verificationSign`、`checkSign` → `SIGNATURE_VERIFICATION_REMOVED`）
   - Operator change（同類別內改變 → `COMPARISON_OPERATOR_CHANGED` / `ARITHMETIC_OPERATOR_CHANGED` / `LOGICAL_OPERATOR_CHANGED`；跨類別或其他運算子 → `OPERATOR_CHANGED`）
   - Guard clause removal / addition（`GUARD_CLAUSE_REMOVED` / `GUARD_CLAUSE_ADDED`）
   - Condition negation（`CONDITION_NEGATED`；條件以外的反轉為 `BOOLEAN_VALUE_NEGATED`）、回傳值改變（`RETURN_VALUE_CHANGED`）、參數順序（`ARGUMENTS_REORDERED`）、參數改名（`PARAMETER_RENAMED`，named argument API）、改用另一個變數（`VARIABLE_REFERENCE_CHANGED`）、class 常數改值（`CONSTANT_VALUE_CHANGED`）
@@ -263,7 +263,7 @@ blocker → factId → provenance
 
 的完整 region-level selection contract，因此目前不應宣稱能安全縮減到「某檔只有哪幾行需要看」。`TARGETED` 列出的位置只是 review 的起點，整個檔案仍需 review。
 
-判定 AST 等價時刻意接受、不視為行為差異的情況：排版變更讓例外訊息、backtrace 與匿名 class 名稱中的行號改變；一致改名的 closure `use` 變數與 `static` 變數名稱（可透過 reflection 讀到）；舊版 PHP 不支援的新語法（請以目標 PHP 版本的 `php -l` 檢查）。詳見 [Real-repo Evaluation](evaluation/real-repo/README.md)。
+判定 AST 等價時刻意接受、不視為行為差異的情況：排版變更讓例外訊息、backtrace 與匿名 class 名稱中的行號改變；一致改名的 closure `use` 變數與 `static` 變數名稱（可透過 reflection 讀到）；舊版 PHP 不支援的新語法（請以目標 PHP 版本的 `php -l` 檢查）；PHP 5 的語意（只檢查 PHP 7 與 PHP 8 的解讀）。詳見 [Real-repo Evaluation](evaluation/real-repo/README.md)。
 
 後續優先方向：
 

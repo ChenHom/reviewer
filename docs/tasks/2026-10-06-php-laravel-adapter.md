@@ -32,7 +32,7 @@ PR-B 合入時（`token_get_all` 遮罩版）可宣告 `COMPLETE`：
 - named argument expression change，且遮罩已辨識 expression 後 before/after significant token signature 完全一致。
 - 單純新增或移除可辨識的 standalone call statement，且遮罩後其餘 significant token 完全一致。
 
-> 註：之後 analyzer 已改用 nikic/php-parser 5.9.0 的 AST，`COMPLETE` 改由 AST 結構比對判定：排版、註解、trailing comma、引號種類、`array()` / `[]`、多餘括號，以及 method / function 內一致的區域變數改名（有例外）都視為等價；其餘每個差異都必須由 fact 解釋。無法被更細 fact 解釋的位置參數改變會以 `#index` 輸出 fallback `CALL_ARGUMENT_CHANGED`，但不算已解釋。沒有 fact 的 `COMPLETE` 還要確認最新 PHP 語法與 PHP 7.4 語法的解讀一致，否則以 `PARTIAL_PARSE` + `PHP_GRAMMAR_DIVERGENCE` 回報。fact 種類也已增加（運算子、guard、陣列元素、字面值、運算式反轉（`X` ↔ `!X`）、回傳值、參數順序、變數等），並會抽出 closure 內的巢狀 call 與鏈式 call。目前行為與完整 fact 清單見 [README「已實作」](../../README.md#已實作)。
+> 註：之後 analyzer 已改用 nikic/php-parser 5.9.0 的 AST，`COMPLETE` 改由 AST 結構比對判定：排版、註解、trailing comma、引號種類、`array()` / `[]`、多餘括號，以及 method / function 內一致的區域變數改名都視為等價，但有例外：這些變更讓 `__LINE__` / `__COMPILER_HALT_OFFSET__` 的值改變時不視為等價，區域變數改名另有例外（見 README）；其餘每個差異都必須由 fact 解釋。位置參數只在無法被更細 fact 解釋時以 `#index` 輸出 fallback `CALL_ARGUMENT_CHANGED`，且只限 method / nullsafe method / static call、參數數量不變、參數不含 closure 或 arrow function（function call 與 `new` 不輸出），也不算已解釋。沒有 fact 的 `COMPLETE` 還要確認最新 PHP 語法與 PHP 7.4 語法的解讀一致，否則以 `PARTIAL_PARSE` + `PHP_GRAMMAR_DIVERGENCE` 回報。fact 種類也已增加（運算子、guard、陣列元素、字面值、運算式反轉（`X` ↔ `!X`）、回傳值、參數順序、變數等），並會抽出 closure 內的巢狀 call 與鏈式 call。目前行為與完整 fact 清單見 [README「已實作」](../../README.md#已實作)。
 
 例如 `DB::transaction(...)` wrapper 被移除時，Adapter 只輸出 generic `CALL_REMOVED`。若 unwrap 後 closure body 仍存在，遮罩後 signature 不相等，因此保持 `PARTIAL_PARSE`（AST 版中，移到外層的 closure body 是沒有 fact 能解釋的結構差異，結果同樣是 `PARTIAL_PARSE` + `UNRECOGNIZED_PHP_CHANGE`）。`DB::transaction` 或 `authorize` 的 domain 意義由後續 interpreter 決定。
 

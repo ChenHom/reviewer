@@ -23,7 +23,7 @@ Adapter、evidence、impact、invariant 與 GitHub sink 都不能直接改寫 re
 `bin/review.js` 是目前唯一的產品入口（`bin/` 下只有它；`evaluation/` 下的 runner 是驗證工具）：對一個 PR 的每個變更檔案做 review scope 決策，比較範圍與 GitHub PR 相同，從 `git merge-base <base> <head>` 算到 head。用法、選項、exit code、原因代碼、JSON 報表與 CI 用法見 [PR Review CLI](../review-cli.md)。這裡只記錄它和上面 authoritative 流程的差別：
 
 - 只有修改或 rename 的 `.php` 檔會送進 analyzer。每個檔案各自執行一次 `runAdapterPipeline`，搭配當次建立、用完即丟的記憶體 authority state（`createAuthorityState`，本地 identity：`policyId: 'pr-review'`，`baseSha` 為 merge base），只取 candidate 的 decision。
-- CLI **不經過** `SqliteAuthorityStore` 的 persisted CAS，不產生 authoritative Summary 或 Status Check，也不呼叫 GitHub sink；結果只輸出到 stdout 與 `--out` 的檔案。本文「Authority 與 CAS」「Summary、status check 與 sink」兩節的保證不適用於 CLI 報表，`AUTHORITY_CAS_*` 與 `GITHUB_PUBLICATION_FAILED` 也只屬於 authoritative 流程。
+- CLI **不經過** `SqliteAuthorityStore` 的 persisted CAS，也不呼叫 GitHub sink；每個檔案的 pipeline 在一次性 state 中建立的 Summary 與 check 會直接丟棄，不輸出、不保存，也不發布成 Status Check。結果只輸出到 stdout 與 `--out` 的檔案。本文「Authority 與 CAS」「Summary、status check 與 sink」兩節的保證不適用於 CLI 報表，`AUTHORITY_CAS_*` 與 `GITHUB_PUBLICATION_FAILED` 也只屬於 authoritative 流程。
 - 新增、刪除、非 PHP、binary、symlink、submodule 與 type change 的檔案不經 analyzer，一律 `FULL`。rename 與權限變更即使內容等價也要求 review（`FILE_RENAMED` / `FILE_MODE_CHANGED`）。CLI 只會把 pipeline 的決策往更嚴格的方向調整，不會放寬。
 - 決策是 file-level。`TARGETED` 表示檔案中每個變更都已被具體 fact 解釋（或內容等價、只有 rename / 權限改變），列出的位置是 review 的起點；`FULL` 表示至少有一個變更無法解釋，或檔案沒有（或無法）分析。兩者都要 review 整個檔案。PR 層級只有在**所有**檔案都是 `NOT_SELECTED_FOR_HUMAN_REVIEW` 時才不需要 review。
 - analyzer 的問題（找不到 `php`、缺少依賴、逾時）不會讓 CLI 以 exit code 2 結束，而是讓該檔變成 `FULL`；在 CI 中使用時需另外檢查（見下方「Incident handling」與 [PR Review CLI「在 CI 中使用」](../review-cli.md#在-ci-中使用)）。
@@ -39,7 +39,7 @@ npm run analyzer:install   # composer install --working-dir=analyzers/php --no-i
 npm run test:all
 ```
 
-- 需要 PATH 上的 `php`（PHP CLI ≥ 8.3，`analyzers/php/composer.json` 的要求）、Composer 2，以及 `git`（review CLI 的測試會建立暫時的 git repository）。analyzer 依賴為 `nikic/php-parser` 5.9.0，版本鎖定在 `analyzers/php/composer.lock`；`analyzers/php/vendor/` 不進版控。
+- 需要 PATH 上的 `php`（PHP CLI ≥ 8.3，`analyzers/php/composer.json` 的要求）、Composer 2，以及 `git` 與 `tar`。review CLI 的測試會建立暫時的 git repository；real-repo evaluation 工具的測試（`tests/evaluation/real-repo-cli.test.js`，屬於 `test:safety`）會對本 repo 的 `HEAD` 執行 `git archive` 並以 `tar` 解開，所以本 repo 必須是有 commit 的 git checkout，不能是解壓縮的原始碼（例如 GitHub 的「Download ZIP」）。analyzer 依賴為 `nikic/php-parser` 5.9.0，版本鎖定在 `analyzers/php/composer.lock`；`analyzers/php/vendor/` 不進版控。
 - 缺少 `analyzers/php/vendor/autoload.php` 時 analyzer 以 `PHP_ANALYZER_DEPENDENCY_MISSING` fail-closed。PHP adapter 測試、`eval:mutations` 與 `eval:historical` 都使用真實 analyzer，因此沒有安裝依賴時 release gate 無法通過。
 
 `test:all` 依序執行 `lint`（ESLint，只檢查 JS）、`test:safety`、`test:e2e`、`test:coverage`、`eval:mutations`、`eval:historical`。`test:safety` 使用遞迴 `node --test`，`test:e2e` 明確執行 `tests/e2e/*.test.js`（Node.js 24.3 不接受目錄作為 test input），`test:coverage` 的最低門檻為 lines/functions/statements 90%、branches 85%。`test:all` 執行時不依賴網路、LLM、真實 GitHub token 或 production credential；只有 `npm ci` 與 `npm run analyzer:install` 安裝依賴時需要網路。

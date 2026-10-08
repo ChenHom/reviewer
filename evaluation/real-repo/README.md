@@ -6,7 +6,9 @@ corpus 不保存完整檔案，但 edits 會包含目標 repo 的原始碼片段
 
 ## 快速開始
 
-需要 PATH 上的 `php`（PHP CLI ≥ 8.3，generator 與 analyzer 都以 `php` 執行；找不到時 `evaluate` / `generate` 立即失敗（exit 2），單獨執行 `run` 時每筆都是 `ANALYZER_ERROR`）與 Composer 2（前置需求見 [PR Review CLI](../../docs/review-cli.md#前置需求)）。目標專案不在本 repo 內，這項評估不在 `npm run test:all` 與 CI 中；最近一次的量測結果見 [README「目前驗證基準」](../../README.md#目前驗證基準)。
+需要 PATH 上的 `php`（PHP CLI ≥ 8.3）與 Composer 2（前置需求見 [PR Review CLI](../../docs/review-cli.md#前置需求)）。generator 與 analyzer 都以 `php` 執行：找不到 `php` 時 `evaluate` / `generate` 立即失敗（exit 2）；單獨執行 `run` 時，空檔以外的每筆都是 `ANALYZER_ERROR`（空檔不執行 analyzer），以 gate failure（exit 1）結束。
+
+目標專案不在本 repo 內，對真實目標專案執行的評估不在 `npm run test:all` 與 CI 中；`npm run test:all` 只以 `tests/evaluation/real-repo-cli.test.js` 在 repo 內的 `fixtures/php-laravel` 上測試這個工具本身與 gate。最近一次的量測結果見 [README「目前驗證基準」](../../README.md#目前驗證基準)。
 
 ```bash
 npm run analyzer:install   # 第一次需要安裝 PHP analyzer 依賴
@@ -31,7 +33,7 @@ npm run eval:real-repo -- evaluate \
 npm run eval:real-repo -- evaluate --repo shop=/path/to/shop-api --baseline-ref <base ref>   # 例如 origin/master、HEAD~1
 ```
 
-`--baseline-ref` 以 `git archive` 取出 reviewer repo 該 ref 的 snapshot（不動目前的 working tree），執行前先準備好，ref 不存在時立即失敗。snapshot 的 `composer.lock` 與目前相同、且目前已安裝 `analyzers/php/vendor/` 時直接複製 `vendor/`；否則執行 `composer install`，此時需要 `composer` 與網路。早於 AST analyzer 的版本（snapshot 沒有 `analyzers/php/composer.json`，即 PR #6 之前的 token-based analyzer）不需要安裝依賴。snapshot 在正常結束、發生錯誤或收到 Ctrl-C / SIGTERM 時都會被刪除；被 SIGKILL 強制結束時可能留在 `$TMPDIR/reviewer-baseline-*`，需手動刪除。
+`--baseline-ref` 以 `git archive` 取出 reviewer repo 該 ref 的 snapshot（不動目前的 working tree），執行前先準備好，ref 不存在時立即失敗。snapshot 的 `composer.lock` 與目前相同、且目前已安裝 `analyzers/php/vendor/` 時直接複製 `vendor/`；否則執行 `composer install`，此時需要 `composer` 與網路。早於 AST analyzer 的版本（snapshot 沒有 `analyzers/php/composer.json` 的 token-based analyzer，例如 PR #6 合併前的 `master`；AST analyzer 從 PR #6 的 `bbc93a8` 開始）不需要安裝依賴。snapshot 在正常結束、發生錯誤或收到 Ctrl-C / SIGTERM 時都會被刪除；被 SIGKILL 強制結束時可能留在 `$TMPDIR/reviewer-baseline-*`，需手動刪除。
 
 ## 標籤與 gate
 
@@ -69,9 +71,9 @@ npm run eval:real-repo -- evaluate --repo shop=/path/to/shop-api --baseline-ref 
 | `R_RENAME_COMPACT` | risky | 一致改名被 `compact()` 以字串引用的變數（字串不變） |
 | `R_RENAME_GLOBAL` | risky | 一致改名 `global` 宣告的變數（改指向另一個全域變數） |
 
-標籤由 `generate.php` 獨立驗證：before / after 解析後去除所有 attributes 再 pretty print，safe（改名除外）必須相同、risky 必須不同，不符合的 mutation 直接捨棄。比較時 `__LINE__` 以實際行號、`__halt_compiler` 以 `__COMPILER_HALT_OFFSET__` 表示（排版變更會改變它們的值），`TRUE` / `true` 等常數名稱視為相同。safe 必須同時在最新 PHP 語法與 PHP 7 視角（7.4 語法、`#[` 視為註解）下成立，因為目標專案可能跑在任一版本。這個驗證刻意不使用 analyzer 的 `Canonicalizer`。
+標籤由 `generate.php` 獨立驗證：before / after 解析後去除所有 attributes 再 pretty print，safe（改名除外）必須相同、risky 必須不同，不符合的 mutation 直接捨棄。比較時 `__LINE__` 以實際行號、`__halt_compiler` 以 `__COMPILER_HALT_OFFSET__` 表示（排版變更會改變它們的值），`TRUE` / `true` 等常數名稱視為相同。safe 必須同時在最新 PHP 語法與 PHP 7 視角（7.4 語法、`#[` 視為註解）下成立，因為目標專案可能跑在 PHP 7 或 PHP 8。這個驗證刻意不使用 analyzer 的 `Canonicalizer`。
 
-刻意接受的限制（analyzer 與 generator 都不視為行為差異）：排版變更造成例外訊息、backtrace 與匿名 class 名稱中的行號改變；透過 reflection 讀取的 closure `use` 變數與 `static` 變數名稱；舊版 PHP 不支援的新語法（例如參數 trailing comma、`1_000`），這類問題請用目標 PHP 版本的 `php -l` 檢查。
+刻意接受的限制（analyzer 與 generator 都不視為行為差異）：排版變更造成例外訊息、backtrace 與匿名 class 名稱中的行號改變；透過 reflection 讀取的 closure `use` 變數與 `static` 變數名稱；PHP 5 的語意（只檢查 PHP 7 與 PHP 8 的解讀）；舊版 PHP 不支援的新語法（例如參數 trailing comma、`1_000`），這類問題請用目標 PHP 版本的 `php -l` 檢查。
 
 Gate（任一項不為 0 時 gate 失敗）：
 

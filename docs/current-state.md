@@ -95,7 +95,7 @@ callee=$this->authorize / Gate::authorize
 AUTHORIZATION_GUARD_REMOVED
 ```
 
-之後 interpreter 已從 3 個擴充為 15 個（`PHP_LARAVEL_DOMAIN_INTERPRETERS`）：原本三個中，transaction boundary 與 authorization guard 也擴大了範圍（例如 `rollBack` 移除 → `TRANSACTION_ROLLBACK_REMOVED`、authorize 的 ability 字串改值 → `AUTHORIZATION_ABILITY_CHANGED`），另新增 middleware guard、row lock、payment signature verification、運算子、guard clause、運算式反轉、回傳值、參數順序、變數 / 參數改名、class 常數、Laravel validation rules、Laravel model attributes。各 interpreter 的範圍見 [README「已實作」](../README.md#已實作)；完整的 blocker 代碼以 `src/interpreters/php-laravel-domain.js` 為準。
+之後 interpreter 已從 3 個擴充為 15 個（`PHP_LARAVEL_DOMAIN_INTERPRETERS`）：原本三個中，transaction boundary 與 authorization guard 也擴大了範圍（例如 `rollBack` 移除 → `TRANSACTION_ROLLBACK_REMOVED`、authorize 的 ability 字串改值 → `AUTHORIZATION_ABILITY_CHANGED`），另新增 middleware guard、row lock、payment signature verification、運算子、guard clause、運算式反轉、回傳值、參數順序、改用另一個變數（部分改名、合併變數）/ 參數改名、class 常數、Laravel validation rules、Laravel model attributes。各 interpreter 的範圍見 [README「已實作」](../README.md#已實作)；完整的 blocker 代碼以 `src/interpreters/php-laravel-domain.js` 為準。
 
 這個分層很重要：
 
@@ -239,14 +239,14 @@ Real-repo evaluation（`evaluation/real-repo/`，說明見 [Real-repo Evaluation
 - `npm run eval:real-repo -- evaluate --repo <label>=<path> ...` 在真實 PHP 專案的檔案上自動產生帶標籤的 mutation（`unchanged` / `safe` / `risky`），走完整 pipeline（PHP analyzer → interpreters → reducer），再檢查決策是否符合標籤。另有 `generate` / `run` / `report` / `compare` / `inspect` 子指令；`--baseline-ref` 可與修改前的版本比較。
 - Gate 任一項不為 0 即失敗：`RISKY_REDUCED`（risky mutation 被判為 `NOT_SELECTED_FOR_HUMAN_REVIEW`）、`ANALYZER_ERROR`（analyzer crash、逾時或 pipeline 例外）、`UNCHANGED_NOT_REDUCED`（可解析的未變更檔案沒有被 reduce）、`NO_ROWS_ANALYZED` / `REPO_NOT_ANALYZED`（沒有資料，或某個 repo 沒有資料被實際分析）。
 - 最近一次在本機對兩個私有 PHP 金流專案與一個 Laravel 11 專案執行（seed 42、rate 0.3）：12,283 筆（3,093 unchanged、3,648 safe、5,542 risky），Risky reduced 0、Risky targeted rate 99.3%、Risky specific reason rate 53.4%、Safe reduction rate 100.0%、Unchanged reduction rate 99.9%（未被 reduce 的 3 筆都是空檔）。
-- 目標專案不在本 repo 內，這些數字無法只靠本 repo 重現；Real-repo evaluation 不在 `npm run test:all` 與 CI 中，不屬於 release gate。資料是在真實程式碼上自動產生的 mutation，不是真實 PR 的 human concern。
+- 目標專案不在本 repo 內，這些數字無法只靠本 repo 重現；對真實目標專案執行的 Real-repo evaluation 不在 `npm run test:all` 與 CI 中，不屬於 release gate（`npm run test:all` 只以 `tests/evaluation/real-repo-cli.test.js` 在 repo 內的 `fixtures/php-laravel` 上執行 `evaluate`，測試工具本身與 gate）。資料是在真實程式碼上自動產生的 mutation，不是真實 PR 的 human concern。
 
 CI（`.github/workflows/review-reduction-safety.yml`，PHP 8.4）在 `npm run test:all` 之前先執行 `composer install --working-dir=analyzers/php`，並對 `analyzers/php/bin`、`analyzers/php/src` 與 `evaluation` 下的 `.php` 檔執行 `php -l`。
 
 ## 2. 現在的完整 Pipeline
 
 ```
-PR review CLI（bin/review.js）
+PR review CLI（bin/review.js）的入口步驟：
   git merge-base(base, head) → git diff -M <merge base> <head>
   ↓
 逐檔分類
@@ -254,6 +254,7 @@ PR review CLI（bin/review.js）
   └─ .php 的修改 / rename
   ↓
 PHP/Laravel Adapter（nikic/php-parser AST）
+（evaluation harness 與 runStoredAdapterPipeline 不經過上面的 CLI 步驟，直接從 Adapter 開始）
   ├─ changed regions
   ├─ runtime context
   └─ semantic facts
@@ -277,7 +278,8 @@ HUMAN_REVIEW_REQUIRED（TARGETED / FULL）
 NOT_SELECTED_FOR_HUMAN_REVIEW
   ↓
   ├─ PR review CLI：內容等價（原本 NOT_SELECTED）的 rename / 權限變更改為 TARGETED，
-  │  其餘只附加 FILE_RENAMED / FILE_MODE_CHANGED（TARGETED / FULL 不變）；彙整成 PR 層級決策
+  │  已需要 review 的 rename / 權限變更檔案只附加 FILE_RENAMED / FILE_MODE_CHANGED
+  │  （TARGETED / FULL 不變）；彙整成 PR 層級決策
   │  （所有檔案都 NOT_SELECTED 才 NOT_SELECTED）→ 文字 / JSON 報表
   └─ runStoredAdapterPipeline：CAS Authority → Summary / Status Check
      （GitHub transport 需注入；目前只有測試呼叫，沒有 CLI 或 workflow 使用）

@@ -38,7 +38,7 @@ PHP 相關的前置需求不滿足時，CLI **不會**以錯誤結束，而是�
 |---|---|
 | PATH 上沒有 `php` | `ANALYZER_ERROR:spawn php ENOENT` |
 | 沒有執行 `npm run analyzer:install`（`analyzers/php/vendor` 不存在） | `COV-PHP-001:PHP_ANALYZER_DEPENDENCY_MISSING` |
-| PATH 上的 `php` 低於 8.3（Composer 的 platform check 讓 analyzer 以非 0 結束） | `ANALYZER_ERROR:PHP_ANALYZER_EXIT_<code>:…` |
+| PATH 上的 `php` 低於 8.3：PHP 8.0–8.2 由 Composer 的 platform check 讓 analyzer 以非 0 結束；PHP 7 以下連 analyzer 本身都無法解析（PHP 的 Parse error），不會走到 platform check | `ANALYZER_ERROR:PHP_ANALYZER_EXIT_<code>:…` |
 
 這時 exit code 為 0；加上 `--fail-on-review` 時為 1，與「真的需要 review」無法區分。CI 中請另外檢查，見「在 CI 中使用」。
 
@@ -122,7 +122,7 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
 - analyzer 以 AST 比較兩個版本：兩側都能以最新 PHP 語法解析時使用最新語法，否則兩側一起改用 PHP 7.4 語法。每個被解釋的差異都對應一個 fact（`CALL_REMOVED`、`BINARY_OPERATOR_CHANGED` 等，完整清單見 [README「已實作」](../README.md#已實作)）。
 - 每個 fact 交給 `src/interpreters/php-laravel-domain.js` 的 15 個 deterministic domain interpreter：有對應規則的 fact 產生具體的原因代碼，沒有的產生 `FACT_UNHANDLED:<fact id>`。
 - 結果：
-  - 沒有任何 fact、兩個版本在 AST 比較下等價（排版、註解、區域變數一致改名等），而且 PHP 8 與 PHP 7 的解讀一致：`NOT_SELECTED_FOR_HUMAN_REVIEW`，原因 `NO_REDUCTION_BLOCKER`。
+  - 沒有任何 fact、兩個版本在 AST 比較下等價（排版、註解、區域變數一致改名等），而且 PHP 8 與 PHP 7 的解讀一致（不檢查 PHP 5 的語意，見「限制」）：`NOT_SELECTED_FOR_HUMAN_REVIEW`，原因 `NO_REDUCTION_BLOCKER`。
   - 每個差異都有 fact 解釋：`TARGETED`，原因是 fact 產生的代碼。
   - 有差異無法解釋，或分析無法完成：`FULL`，原因含 `COV-PHP-001:<原因>`；已找到的 fact 的原因也一起列出。
 - rename 或檔案權限改變（例如 `100644` → `100755`）會再加上 `FILE_RENAMED` / `FILE_MODE_CHANGED`，因為 autoload 路徑或執行權限可能改變行為：
@@ -173,7 +173,7 @@ analyzer process 沒有正常產生結果。訊息最多 200 字元：
 |---|---|
 | `PHP_ANALYZER_ABORTED` | 超過 `--timeout-ms`，analyzer 被終止 |
 | `spawn php ENOENT` | PATH 上找不到 `php` |
-| `PHP_ANALYZER_EXIT_<code>:<stderr>` | analyzer 以非 0 結束，例如 `php` 低於 8.3 時 Composer 的 platform check 失敗 |
+| `PHP_ANALYZER_EXIT_<code>:<stderr>` | analyzer 以非 0 結束，例如 `php` 低於 8.3（PHP 8.0–8.2 為 Composer 的 platform check 失敗；PHP 7 以下為 analyzer 本身用到 PHP 8.0 的語法而無法解析） |
 | `PHP_ANALYZER_OUTPUT_INVALID` | analyzer 的 stdout 不是 JSON |
 
 ### `COV-PHP-001:<原因>`（`FULL`）
@@ -197,9 +197,11 @@ analyzer process 沒有正常產生結果。訊息最多 200 字元：
 
 內容等價時檔案為 `TARGETED`，否則接在 analyzer 的原因之後（見「檔案分類」）。非 PHP 檔的 rename 或權限變更只會是 `UNSUPPORTED_FILE_TYPE`。
 
-### `FACT_UNHANDLED:<fact id>`（`TARGETED`）
+### `FACT_UNHANDLED:<fact id>`
 
-analyzer 找到了 fact（變更已被解釋），但沒有任何 domain interpreter 對應它。fact id 的格式是 `php-` 加 20 個十六進位字元。
+fact 沒有任何 domain interpreter 對應。fact id 的格式是 `php-` 加 20 個十六進位字元。與 domain 原因代碼相同，檔案沒有 `COV-PHP-001:*` 時為 `TARGETED`（變更已被 fact 解釋，只是沒有對應的 domain 規則）；有 `COV-PHP-001:*` 時為 `FULL`，已找到的 fact 照樣列出。
+
+例外：位置參數的變更無法被更細的 fact 解釋時，analyzer 仍輸出 `CALL_ARGUMENT_CHANGED` 標示位置（描述為「`<callee>` 的參數 #<index>：<原值> → <新值>」），但這個 fact 不視為已解釋，所以同一檔案也會有 `COV-PHP-001:UNRECOGNIZED_PHP_CHANGE`，為 `FULL`。例如 `$q->take(10)` 改成 `$q->take($n)`：原因是 `COV-PHP-001:UNRECOGNIZED_PHP_CHANGE` 與這個 fact 的 `FACT_UNHANDLED:<id>`。
 
 - 例如 `CALL_ADDED`（新增呼叫）目前沒有任何 interpreter 處理，一律是 `FACT_UNHANDLED`；其他 fact 只有符合下一節的模式時才有具體代碼。
 - 文字輸出把它們合併成一行 `FACT_UNHANDLED ×N`；JSON 逐一列出。
@@ -215,7 +217,7 @@ analyzer 找到了 fact（變更已被解釋），但沒有任何 domain interpr
 | `TRANSACTION_BOUNDARY_REMOVED` | `CALL_REMOVED` | 移除 `beginTransaction`（任何 receiver），或移除 DB 連線 receiver 的 `transaction` / `commit`。DB 連線 receiver 指最後一段為 `DB`、以 `db` 或 `connection` 結尾（不分大小寫）或 `pdo`，例如 `DB::`、`$db->`、`$this->adminDB->` |
 | `TRANSACTION_ROLLBACK_REMOVED` | `CALL_REMOVED` | 移除 DB 連線 receiver 的 `rollBack` / `rollback` |
 | `AUTHORIZATION_GUARD_REMOVED` | `CALL_REMOVED` | 移除 `$this->authorize`、`$this->authorizeForUser` 或 `Gate::authorize` |
-| `AUTHORIZATION_ABILITY_CHANGED` | `LITERAL_CHANGED` | 上述呼叫的第一個參數（ability）換成另一個值，例如 `'update'` → `'view'` |
+| `AUTHORIZATION_ABILITY_CHANGED` | `LITERAL_CHANGED` | `$this->authorize` 或 `Gate::authorize` 的第一個參數（ability）從字面值換成另一個字面值，例如 `'update'` → `'view'`。`$this->authorizeForUser` 的 ability 是第二個參數，換成另一個字面值時為 `FACT_UNHANDLED`。任一呼叫的 ability 改成變數等非字面值（例如 `'update'` → `$ability`）時無法解釋，檔案為 `FULL`（`COV-PHP-001:UNRECOGNIZED_PHP_CHANGE`） |
 | `MIDDLEWARE_GUARD_REMOVED` | `CALL_REMOVED`、`CALL_ARGUMENT_CHANGED`、`ARRAY_ITEM_REMOVED`、`LITERAL_CHANGED` | 原本的 middleware 不再套用：`->middleware(...)` 呼叫被移除，或 `->middleware(...)`、`Route::group` 的 `'middleware'`、`$middleware` / `$middlewares` / `$beforeActionList` property 少了某個 middleware、名稱被換掉 |
 | `ROW_LOCK_REMOVED` | `CALL_REMOVED` | 移除 `lockForUpdate` / `sharedLock` |
 | `SIGNATURE_VERIFICATION_REMOVED` | `CALL_REMOVED` | 移除名稱像簽章驗證的 method，例如 `verifySign`、`verificationSign`、`checkSign`、`validateSignature` |
@@ -223,8 +225,8 @@ analyzer 找到了 fact（變更已被解釋），但沒有任何 domain interpr
 | `ARITHMETIC_OPERATOR_CHANGED` | `BINARY_OPERATOR_CHANGED` | 算術運算子互換（`+`、`-`、`*`、`/`、`%`、`**`） |
 | `LOGICAL_OPERATOR_CHANGED` | `BINARY_OPERATOR_CHANGED` | 邏輯運算子互換（`&&`、`\|\|`、`and`、`or`、`xor`） |
 | `OPERATOR_CHANGED` | `BINARY_OPERATOR_CHANGED` | 其他運算子改變，或前後不屬於同一類 |
-| `GUARD_CLAUSE_REMOVED` | `GUARD_REMOVED` | 移除 guard clause（body 只有 throw / return / exit 的 if） |
-| `GUARD_CLAUSE_ADDED` | `GUARD_ADDED` | 新增 guard clause |
+| `GUARD_CLAUSE_REMOVED` | `GUARD_REMOVED` | 移除 guard clause（沒有 else / elseif、body 只有一個 throw / return / exit 的 if）。有 else / elseif 的 if 整段移除時無法解釋，檔案為 `FULL`（`COV-PHP-001:UNRECOGNIZED_PHP_CHANGE`） |
+| `GUARD_CLAUSE_ADDED` | `GUARD_ADDED` | 新增 guard clause（定義同上） |
 | `CONDITION_NEGATED` | `EXPRESSION_NEGATED` | `if` / `elseif`、`while` / `do-while`、`for`、三元運算、`match`（含 arm 條件）的條件被反轉（`X` ↔ `!X`） |
 | `BOOLEAN_VALUE_NEGATED` | `EXPRESSION_NEGATED` | 條件以外的運算式被反轉，例如回傳值 |
 | `RETURN_VALUE_CHANGED` | `RETURN_VALUE_CHANGED` | 回傳值換成常數或從常數換掉（`return null;`、`return [];`、`return;` 等） |
@@ -507,6 +509,7 @@ exit "$status"   # 0：不需要 Human Review；1：需要（清單見 review/re
 - `--out` 讓 stdout 保留給人看的文字報表，同時留下 JSON 供後續步驟使用。
 - `ANALYZER_ERROR:PHP_ANALYZER_ABORTED`（逾時）也會被上面的檢查擋下；大型檔案多時可以調高 `--timeout-ms`。
 - 在 GitHub Actions 中，`actions/checkout` 預設只抓一個 commit，請設 `fetch-depth: 0`。否則 base 的 ref 不存在（`GIT_FAILED:git rev-parse: …`）；另外 fetch base 但深度不夠時，則是找不到 merge base（`GIT_NO_MERGE_BASE`）。見「比較範圍」。
+- `pull_request` 事件中，`actions/checkout` 預設 checkout 的是 `refs/pull/<n>/merge`（GitHub 把 PR 合併到當時 base 的暫時 commit），不是 PR head。這時 `--head HEAD` 是這個合併 commit，比較起點會是合併當時 base 的最新 commit，而不是 PR 分支的 merge base，`head:` 的行號也是合併後版本的行號，與 GitHub「Files changed」中 PR head 的行號不一定相同。請同時設 `ref: ${{ github.event.pull_request.head.sha }}` 與 `fetch-depth: 0`，並以 `--base origin/${{ github.base_ref }}` 指定 base。
 
 ## 限制
 
@@ -515,6 +518,7 @@ exit "$status"   # 0：不需要 Human Review；1：需要（清單見 review/re
 - 只比較 commit，不看 working tree。
 - 需要 base 與 head 的共同歷史；shallow clone 可能缺少 base（`GIT_FAILED`）或找不到 merge base（`GIT_NO_MERGE_BASE`）。
 - 不檢查目標 PHP 版本是否支援新語法（例如在 PHP 7 專案中使用參數 trailing comma），請以目標版本的 `php -l` 檢查。
+- 判為等價時只檢查 PHP 8 與 PHP 7（7.4 語法）的解讀，不檢查 PHP 5 的語意。例如 `$$name['key']` 在 PHP 5 是 `${$name['key']}`，在 PHP 7 以後是 `${$name}['key']`；把它改成 `${$name}['key']` 仍會判為 `NOT_SELECTED_FOR_HUMAN_REVIEW`。PHP 5 專案的 `NOT_SELECTED_FOR_HUMAN_REVIEW` 不代表行為不變。其他刻意接受、不視為行為差異的情況見 [README「目前能力邊界」](../README.md#目前能力邊界)。
 - analyzer 失敗與缺少依賴不會讓 CLI 以錯誤結束，CI 需另外檢查（見上）。
 - JSON 的 fact 不含 fact id，`FACT_UNHANDLED:<id>` 無法直接對應到個別 fact。
 - JSON 報表沒有 `schemaVersion`。

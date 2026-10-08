@@ -4,7 +4,7 @@
 
 這份文件是 Safety MVP 後續測試的強制規範。測試不只確認正常結果，還必須證明任何證據缺失、資料矛盾、結果過期或發布失敗，都不能產生 reduction success。
 
-目前測試使用 Node.js native ESM、`node:test`、table-driven cases 與 deterministic exhaustive cases；不依賴 LLM、網路或無法重現的隨機資料。N-01 的 AdapterResult ingress、context binding contract tests，以及可執行的 PHP/Laravel Adapter 都在範圍內。
+目前測試使用 Node.js native ESM、`node:test`、table-driven cases 與 deterministic exhaustive cases；不依賴 LLM、網路或無法重現的隨機資料（唯一例外：working tree 的 `analyzers/php/composer.lock` 與 `HEAD` 不同時，real-repo baseline 測試需要 Composer 與網路，見下方前置需求）。N-01 的 AdapterResult ingress、context binding contract tests，以及可執行的 PHP/Laravel Adapter 都在範圍內。
 
 只有下表四個測試檔會執行外部程式；其他測試（contracts、coverage、reducer、evidence / impact / invariant、semantic facts、domain interpreters、publication、storage、sink、E2E 與 evaluation metrics）都不執行外部程式。
 
@@ -13,13 +13,13 @@
 | `tests/adapters/php-laravel.test.js` | `php analyzers/php/bin/analyze.php`（真實 analyzer，nikic/php-parser 5.9.0） |
 | `tests/adapters/php-laravel-failures.test.js` | 以 Node 撰寫的 fake analyzer 模擬 process 失敗；缺少依賴的案例執行真實的 `analyze.php` |
 | `tests/review/review.test.js` | `git`（在暫存目錄建立 repository）、真實 analyzer 與 `bin/review.js` |
-| `tests/evaluation/real-repo-cli.test.js` | `php evaluation/real-repo/generate.php`、真實 analyzer、`git` 與 `tar`（從本 repo 的 `HEAD` 建立 baseline snapshot） |
+| `tests/evaluation/real-repo-cli.test.js` | `php evaluation/real-repo/generate.php`、真實 analyzer、`git` 與 `tar`（從本 repo 的 `HEAD` 建立 baseline snapshot）；working tree 的 `analyzers/php/composer.lock` 與 `HEAD` 不同時另外執行 `composer install` |
 
 `npm run eval:mutations` 與 `npm run eval:historical` 也以真實 analyzer 執行完整 pipeline。因此執行測試前需要：
 
 - PHP CLI 8.3 以上，以 `php` 的名稱放在 PATH 上（`analyzers/php/composer.json` 的要求；CI 使用 PHP 8.4），以及 Composer 2。
 - 已執行 `npm run analyzer:install`（`analyzers/php/vendor/` 不納入版本控制）。缺少依賴時 analyzer 以 `PHP_ANALYZER_DEPENDENCY_MISSING` fail-closed（obligation `FAILED`），real-repo 的 `loadReviewer()` 以 `ANALYZER_DEPENDENCY_MISSING` 立即失敗；`tests/adapters/php-laravel.test.js`、`tests/review/review.test.js`、`tests/evaluation/real-repo-cli.test.js` 與 `eval:mutations` 都會失敗，不會被當成通過（`php-laravel-failures.test.js` 使用 fake analyzer，缺少依賴的案例則執行複製到隔離目錄的 `analyze.php`，因此不受影響）。`eval:historical` 的 gate 只檢查 publication 是否被接受，以及 human concern 是否落在被選取的檔案；此時每個檔案都是 Full Review，所以仍會通過，但 Analysis Failure Rate 為 100%。
-- PATH 上的 `git` 與 `tar`，並在本 repo 的 git checkout 中執行（real-repo baseline 測試會讀取本 repo 的 `HEAD`）。
+- PATH 上的 `git` 與 `tar`，並在本 repo 的 git checkout 中執行（real-repo baseline 測試會讀取本 repo 的 `HEAD`）。baseline 測試（直接呼叫 `prepareBaseline` 的案例，以及 `run --baseline-ref HEAD` 的 SIGTERM 案例）只在 working tree 與 `HEAD` 的 `analyzers/php/composer.lock` 相同、且已安裝 `analyzers/php/vendor/` 時直接複製 `vendor/`；兩者不同（例如尚未 commit 的依賴更新）時，會對 snapshot 執行 `composer install`，需要 Composer 與網路（或 Composer cache）。SIGTERM 案例最多等 30 秒讓 snapshot 建好，安裝太慢時也會失敗。
 
 real-repo generator 以 seed 與檔案路徑重設 `mt_srand`，相同 seed 產生相同 corpus，測試會驗證這一點。
 
@@ -106,10 +106,10 @@ real-repo generator 以 seed 與檔案路徑重設 `mt_srand`，相同 seed 產�
 
 測試：`tests/adapters/php-laravel.test.js`（真實 analyzer）、`tests/adapters/php-laravel-failures.test.js`（failure path）。facts 的定義見 [README「已實作」](../../README.md#已實作)。
 
-- AST 等價：排版、註解、trailing comma、引號種類、`array()` / `[]`、多餘括號判為 `COMPLETE` 且無 fact。沒有 fact 的 `COMPLETE` 只能發生在兩棵 AST 經 canonical 比較等價時（只差上述語法形式，或 scope 內一致的區域變數改名；soundness 案例）；任何沒有被 fact 解釋的差異都必須是 `PARTIAL_PARSE` + `UNRECOGNIZED_PHP_CHANGE`。
+- AST 等價：排版、註解、trailing comma、引號種類、`array()` / `[]`、多餘括號判為 `COMPLETE` 且無 fact。沒有 fact 的 `COMPLETE` 只能發生在兩棵 AST 經 canonical 比較等價時（只差不影響 AST node 類型與 sub-node 值的寫法，例如上述語法形式、數字寫法 `0x1A` / `26` 或 `1_000` / `1000`、heredoc 與一般字串、cast 寫法 `(integer)` / `(int)`、`list()` / `[]`，或 scope 內一致的區域變數改名；soundness 案例）；任何沒有被 fact 解釋的差異都必須是 `PARTIAL_PARSE` + `UNRECOGNIZED_PHP_CHANGE`。
 - 語法版本：最新語法無法解析任一側時，兩側一起改用 PHP 7.4 語法（例如 `$str{0}`）；兩種語法都無法同時解析兩側時回傳 `PHP_PARSE_ERROR`（`FAILED`）。原本會判為無 fact 的 `COMPLETE` 時，若在最新語法或 PHP 7 視角（7.4 語法，`#[` 視為註解）下兩側的可解析性不一致，或兩側都能解析但不等價，必須改為 `PARTIAL_PARSE` + `PHP_GRAMMAR_DIVERGENCE`。
 - 排版讓 `__LINE__` 或 `__COMPILER_HALT_OFFSET__` 的值改變時，不得判為無 fact 的 `COMPLETE`。
-- Scope-aware 改名：scope 內一致的區域變數改名判為 `COMPLETE` 且無 fact。不改名的變數（參數、`$this`、superglobal、magic local、`global` 變數、頂層變數、頂層 closure 的 `use` 變數）與整個 scope 不改名的情況（`compact`、`extract`、`get_defined_vars`、`$$x`、`eval`、`include` / `require`、單參數或 spread 參數的 `parse_str`、PHP 7 字串 `assert()`，含 `use function` 別名）都要有案例。canonical 名稱不得與保留原名的變數碰撞（例如參數 `$__rv0`）；改名同時有其他變更時仍輸出對應 fact；無法以改名解釋的變數差異輸出 `VARIABLE_CHANGED`；不安全的改名絕不判為無 fact 的 `COMPLETE`。目前 `$this`、superglobal、`get_defined_vars`、`eval`、`require` 與單參數 `parse_str` 沒有專用案例。
+- Scope-aware 改名：scope 內一致的區域變數改名判為 `COMPLETE` 且無 fact。不改名的變數（參數、`$this`、superglobal、magic local、`global` 變數、頂層變數、頂層 closure 的 `use` 變數）與整個 scope 不改名的情況（`compact`、`extract`、`get_defined_vars`、`$$x`、`eval`、`include` / `require`、單參數或 spread 參數的 `parse_str` / `mb_parse_str`、PHP 7 字串 `assert()`，含 `use function` 別名）都要有案例。canonical 名稱不得與保留原名的變數碰撞（例如參數 `$__rv0`）；改名同時有其他變更時仍輸出對應 fact；無法以改名解釋的變數差異輸出 `VARIABLE_CHANGED`；不安全的改名絕不判為無 fact 的 `COMPLETE`。目前 `$this`、superglobal、`get_defined_vars`、`eval`、`require`、單參數 `parse_str` 與 `mb_parse_str`（單參數或 spread 參數）沒有專用案例。
 - 每種 generic fact 都要有真實 analyzer 的正向案例，以及「不得誤判為完整」的反向案例，例如：位置參數的 `#index` fallback 維持 `PARTIAL_PARSE`、非 guard 的 if 被移除時維持 `PARTIAL_PARSE`、回傳值換成另一個非常數運算式時維持 `PARTIAL_PARSE`。Adapter 只輸出 generic fact，不在 Adapter 內解讀 domain 風險（例如移除 `authorize` call 只輸出 `CALL_REMOVED`）。目前 `GUARD_ADDED` 與 `ARRAY_ITEM_ADDED` 只有 interpreter 與 `describeFact` 層的測試，缺少真實 analyzer 的案例。
 - 回傳 terminal result 的失敗：`PHP_ANALYZER_INPUT_INVALID`（不得執行 analyzer）、analyzer 回傳 `ok:false` 時沿用其 code（缺 code 時為 `PHP_ANALYZER_FAILED`）、`PHP_ANALYZER_DEPENDENCY_MISSING`，obligation 都是 `FAILED`；head 為空檔時 `PHP_FILE_DELETION_UNSUPPORTED`（`UNSUPPORTED`）。這些結果都不能視為安全。
 - reject 的失敗：非零 exit（`PHP_ANALYZER_EXIT_<code>:<stderr>`）、stdout 不是 JSON（`PHP_ANALYZER_OUTPUT_INVALID`）、abort signal 終止 analyzer（`PHP_ANALYZER_ABORTED`）與 spawn error（例如 `ENOENT`）都必須讓 `analyze()` reject；runner 再經 Adapter Execution Boundary 轉成 failure（Full），review CLI 轉成 `ANALYZER_ERROR:*`（`FULL`）。
@@ -197,7 +197,7 @@ real-repo generator 以 seed 與檔案路徑重設 `mt_srand`，相同 seed 產�
 - git 解析：`parseRawDiff` 解析修改、新增、刪除、rename（含相似度）、權限與 type change，格式錯誤時為 `GIT_DIFF_UNPARSABLE`；`parseHunks` / `changedLines` 把 hunk 轉成 head / base 行號；`lineLocator` 以 UTF-8 byte offset 計算行號；`resolveCommit` 拒絕空字串與像選項的 ref（`GIT_REF_INVALID`）以及不存在的 ref（`GIT_FAILED`）。
 - 比較範圍：從 merge base 算起。base 在分支建立後的新 commit 不列入；報表的 `base.sha` 是 base ref 的 commit，`mergeBase` 是比較起點；merge base 與 base 不同時文字輸出標示比較起點，相同時不標示；沒有共同祖先時為 `GIT_NO_MERGE_BASE`。
 - 檔案分類：[「檔案分類」](../review-cli.md#檔案分類)表的每一列都要有案例；第 1–7 步不得呼叫 analyzer，一律 `FULL`。analyzer 失敗（例如 PHP binary 不存在）時該檔案 fail-closed 為 `FULL`（`ANALYZER_ERROR:*`），PR 不得因此變成 `NOT_SELECTED_FOR_HUMAN_REVIEW`。目前 `SUBMODULE_CHANGED` 與 `UNSUPPORTED_CHANGE_TYPE:type-changed` 沒有 `reviewRange()` 層級的案例（type change 只有 `parseRawDiff` 的解析案例），`--timeout-ms` 逾時造成的 `ANALYZER_ERROR:PHP_ANALYZER_ABORTED` 只在 adapter 層測試。
-- rename 與權限變更：內容等價時必須是 `TARGETED`，原因只有 `FILE_RENAMED` / `FILE_MODE_CHANGED`；內容也有變更時接在 analyzer 的原因之後。目前只有內容等價的案例。
+- rename 與權限變更（只限送進 analyzer 且有結果的 PHP 檔，即「檔案分類」第 9 步）：內容等價時必須是 `TARGETED`，原因只有 `FILE_RENAMED` / `FILE_MODE_CHANGED`；內容也有變更時接在 analyzer 的原因之後。第 1–8 步的檔案（非 PHP、symlink、binary、`ANALYZER_ERROR` 等）維持該步的 `FULL` 與原因代碼，不加這兩個代碼，例如內容不變的 `notes.md` → `docs.md` 是 `FULL`（`UNSUPPORTED_FILE_TYPE`）。目前只有內容等價的案例。
 - 逐檔決策：`NOT_SELECTED_FOR_HUMAN_REVIEW`、`TARGETED`、`FULL` 都要有案例。需要 review 的檔案附 `changedLines`（git hunk 的 head / base 行號），`NOT_SELECTED_FOR_HUMAN_REVIEW` 不附；經 analyzer 分析的檔案另有每個 fact 的 side 與行號，不只 `TARGETED`，有部分變更無法解釋的 `FULL`（`COV-PHP-001:<原因>` 加上已找到的 fact 的原因）也會有，測試不得假設 `FULL` 沒有 fact 位置。這些位置只是 review 起點（見「Safety invariants」）。
 - PR 彙整（`summarizeFiles`）：只有所有檔案都是 `NOT_SELECTED_FOR_HUMAN_REVIEW` 時 PR 才是 `NOT_SELECTED_FOR_HUMAN_REVIEW`；`reasons` 是需要 review 的檔案原因去重後排序的結果；只有排版變更時 `reasons` 為 `[]`；沒有任何檔案變更（例如 base 與 head 是同一個 commit）時為 `NO_CHANGES`。
 - 輸出與 exit code：文字輸出（`formatReview`，含 `FACT_UNHANDLED ×N` 的合併）、`describeFact` 對每種 fact 的描述、`--json`、`--out`（內容與 stdout 的 JSON 相同）、`--help`；exit code 0、1（`--fail-on-review` 且需要 review）與 2（例如 `OPTION_MISSING`、`OPTION_INVALID`）。exit code 的完整定義見 [「Exit code 與錯誤」](../review-cli.md#exit-code-與錯誤)。
@@ -206,7 +206,7 @@ real-repo generator 以 seed 與檔案路徑重設 `mt_srand`，相同 seed 產�
 
 `evaluation/**` 不在 c8 coverage gate 內（只計算 `src/**/*.js`），以下行為只由這些測試保護。
 
-- Mutation evaluation（`evaluation/mutations`，測試 `tests/evaluation/mutation-metrics.test.js`）：critical recall 與 direct fact coverage 分開計算；critical mutation 被 `NOT_SELECTED_FOR_HUMAN_REVIEW`（`CRITICAL_FALSE_NEGATIVE`、`DECISION_REGRESSION`）或預期 fact 消失（`EXPECTED_FACT_MISSING`）時 gate 必須失敗。`PIPELINE_PUBLICATION_FAILED` 與 `EXPECTED_REASON_MISSING` 目前只在 `npm run eval:mutations` 對 corpus 執行時檢查，沒有獨立的 metrics 測試。
+- Mutation evaluation（`evaluation/mutations`，測試 `tests/evaluation/mutation-metrics.test.js`）：critical recall 與 direct fact coverage 分開計算；任何案例的 decision 與 `expectedCurrentDecision` 不同時（`DECISION_REGRESSION`，不分 classification，包括 safe 案例不再被 reduce 或變成被 reduce）、critical mutation 被 `NOT_SELECTED_FOR_HUMAN_REVIEW`（`CRITICAL_FALSE_NEGATIVE`）或預期 fact 消失（`EXPECTED_FACT_MISSING`）時 gate 必須失敗。`PIPELINE_PUBLICATION_FAILED` 與 `EXPECTED_REASON_MISSING` 目前只在 `npm run eval:mutations` 對 corpus 執行時檢查，沒有獨立的 metrics 測試；`DECISION_REGRESSION` 只在 critical 案例被 `NOT_SELECTED_FOR_HUMAN_REVIEW` 時與 `CRITICAL_FALSE_NEGATIVE` 一起測試，safe 案例的 `DECISION_REGRESSION` 也沒有獨立的 metrics 測試。
 - `npm run eval:mutations` 以 `evaluation/mutations/cases.json` 的案例（fixture 在 `fixtures/php-laravel`）跑完整 pipeline，任何 gate failure 時 exit code 為 1。新增案例必須寫 `classification`（`critical` / `safe`）與 `expectedCurrentDecision`；預期的 fact 與 domain 原因寫在 `expectedFactKinds` / `expectedReasons`，gate 會檢查它們沒有消失。
 - Historical evaluation（`evaluation/historical`，測試 `tests/evaluation/historical-metrics.test.js`）：concern recall 與 review scope reduction 分開量測；human concern 落在未選取檔案時 gate 必須失敗（`HISTORICAL_CONCERN_MISSED`）；aggregate 以總 concern / file 數計算；manifest 的 concern path 必須屬於 changed files。
 - Real-repo toolkit（`evaluation/real-repo`，測試 `tests/evaluation/real-repo-metrics.test.js`、`real-repo-cli.test.js`，以 `fixtures/php-laravel` 與暫存目錄當作目標 repo）：

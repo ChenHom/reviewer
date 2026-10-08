@@ -50,7 +50,7 @@ NEEDS_USER_DECISION
 - semantic facts
 - coverage
 - deterministic domain policy
-- unresolved evidence / impact / invariants
+- unresolved evidence / impact / invariants（pipeline 只在收到外部提供的這些資料時才檢查；`bin/review.js` 目前不產生也不傳入，所以 PR review 不會考慮這三層）
 
 輸出（每個變更檔案一個決策，再彙整成 PR 層級決策）：
 
@@ -241,7 +241,7 @@ node <reviewer>/bin/review.js \
 - 要在 stdout 取得 JSON 時改用 `--json`；沒有 `--format` 選項。
 - 完整選項見 [PR Review CLI](../review-cli.md)「用法」。
 
-它已完成原本列為「建議下一個產品入口」的步驟：
+它目前的流程：
 
 1. 以 `git merge-base <base> <head>` 為比較起點，用 `git diff -M <merge base> <head>` 取得變更檔案（含 rename 偵測），與 GitHub PR 的「Files changed」相同。
 2. 只把 `.php` 的修改與 rename 送進 PHP Adapter；其他變更不分析（見下方「檔案處理規則」）。
@@ -269,9 +269,11 @@ node <reviewer>/bin/review.js \
 
 執行 Reviewer 的環境（Harness worker 或 GitHub runner）需要 `git`、Node.js、PATH 上的 `php`（PHP CLI ≥ 8.3；CI 使用 8.4），並在 Reviewer 的 checkout 先執行 `npm run analyzer:install`（以 Composer 2 安裝鎖定版本的 `nikic/php-parser` 5.9.0）。完整說明見 [PR Review CLI](../review-cli.md)「前置需求」。
 
-PHP 環境不完整時 CLI **不會**以錯誤結束：每個送進 analyzer 的 PHP 檔都變成 `FULL`，原因是 `ANALYZER_ERROR:*`（例如找不到 `php`）或 `COV-PHP-001:PHP_ANALYZER_DEPENDENCY_MISSING`（沒有執行 `npm run analyzer:install`），exit code 仍是 0。報表看起來像正常結果，只是 Not Selected 為 0。
+PHP 環境不完整時 CLI **不會**以錯誤結束：每個送進 analyzer 的 PHP 檔都變成 `FULL`，原因是 `ANALYZER_ERROR:*`（例如找不到 `php` 時的 `ANALYZER_ERROR:spawn php ENOENT`，或 `php` 低於 8.3 時的 `ANALYZER_ERROR:PHP_ANALYZER_EXIT_<code>:…`）或 `COV-PHP-001:PHP_ANALYZER_DEPENDENCY_MISSING`（沒有執行 `npm run analyzer:install`），exit code 仍是 0。報表看起來像正常結果，只是 Not Selected 為 0。
 
-Harness 與 GitHub workflow 必須檢查 `files[].reasons`。出現這些原因時當成 Reviewer 環境錯誤處理，不發布成 Review Scope，也不拿來計算 reduction。檢查方式見 [PR Review CLI](../review-cli.md)「在 CI 中使用」。
+`ANALYZER_ERROR:*` 不一定代表環境不完整：單一檔案超過 `--timeout-ms`（預設 30000 毫秒）時 analyzer 會被終止，原因是 `ANALYZER_ERROR:PHP_ANALYZER_ABORTED`；analyzer 對某個輸入以非 0 結束或輸出不是 JSON 時也是 `ANALYZER_ERROR:*`。這時只有那些檔案變成 `FULL`，exit code 同樣是 0。
+
+Harness 與 GitHub workflow 必須檢查 `files[].reasons`。出現這些原因代表 analyzer 沒有產生結果，當成 Reviewer 執行問題處理（不是 verification failure），不發布成 Review Scope，也不拿來計算 reduction。逾時的情況可以調高 `--timeout-ms` 後重跑。檢查方式見 [PR Review CLI](../review-cli.md)「在 CI 中使用」。
 
 ### Harness 會用到的報表欄位
 
