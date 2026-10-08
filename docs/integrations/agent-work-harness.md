@@ -269,7 +269,7 @@ node <reviewer>/bin/review.js \
 
 執行 Reviewer 的環境（Harness worker 或 GitHub runner）需要 `git`、Node.js、PATH 上的 `php`（PHP CLI ≥ 8.3；CI 使用 8.4），並在 Reviewer 的 checkout 先執行 `npm run analyzer:install`（以 Composer 2 安裝鎖定版本的 `nikic/php-parser` 5.9.0）。完整說明見 [PR Review CLI](../review-cli.md)「前置需求」。
 
-PHP 環境不完整時 CLI **不會**以錯誤結束：每個送進 analyzer 的 PHP 檔都變成 `FULL`，原因是 `ANALYZER_ERROR:*`（例如找不到 `php` 時的 `ANALYZER_ERROR:spawn php ENOENT`，或 `php` 低於 8.3 時的 `ANALYZER_ERROR:PHP_ANALYZER_EXIT_<code>:…`）或 `COV-PHP-001:PHP_ANALYZER_DEPENDENCY_MISSING`（沒有執行 `npm run analyzer:install`），exit code 仍是 0。報表看起來像正常結果，只是 Not Selected 為 0。
+PHP 環境不完整時 CLI **不會**以錯誤結束：每個送進 analyzer 的 PHP 檔都變成 `FULL`，原因是 `ANALYZER_ERROR:*`（例如找不到 `php` 時的 `ANALYZER_ERROR:spawn php ENOENT`，或依賴已安裝但 `php` 低於 8.3 時的 `ANALYZER_ERROR:PHP_ANALYZER_EXIT_<code>:…`）或 `COV-PHP-001:PHP_ANALYZER_DEPENDENCY_MISSING`（沒有執行 `npm run analyzer:install`；以 PHP 8.0–8.2 執行它會因 `php >= 8.3` 的要求失敗，也是這種情況），exit code 仍是 0。報表看起來像正常結果，只是 Not Selected 為 0。
 
 `ANALYZER_ERROR:*` 不一定代表環境不完整：單一檔案超過 `--timeout-ms`（預設 30000 毫秒）時 analyzer 會被終止，原因是 `ANALYZER_ERROR:PHP_ANALYZER_ABORTED`；analyzer 對某個輸入以非 0 結束或輸出不是 JSON 時也是 `ANALYZER_ERROR:*`。這時只有那些檔案變成 `FULL`，exit code 同樣是 0。
 

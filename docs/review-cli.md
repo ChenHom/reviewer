@@ -38,7 +38,7 @@ PHP 相關的前置需求不滿足時，CLI **不會**以錯誤結束，而是�
 |---|---|
 | PATH 上沒有 `php` | `ANALYZER_ERROR:spawn php ENOENT` |
 | 沒有執行 `npm run analyzer:install`（`analyzers/php/vendor` 不存在） | `COV-PHP-001:PHP_ANALYZER_DEPENDENCY_MISSING` |
-| PATH 上的 `php` 低於 8.3：PHP 8.0–8.2 由 Composer 的 platform check 讓 analyzer 以非 0 結束；PHP 7 以下連 analyzer 本身都無法解析（PHP 的 Parse error），不會走到 platform check | `ANALYZER_ERROR:PHP_ANALYZER_EXIT_<code>:…` |
+| PATH 上的 `php` 低於 8.3：PHP 8.0–8.2 在依賴已安裝時（`analyzers/php/vendor` 存在，例如之前以其他 PHP 版本安裝），由 Composer 的 platform check 讓 analyzer 以非 0 結束；PHP 7 以下連 analyzer 本身都無法解析（PHP 的 Parse error），不會走到 platform check。以 PHP 8.0–8.2 執行 `npm run analyzer:install` 會因 `php >= 8.3` 的 platform requirement 失敗、不會建立 `vendor`，這時的原因是上一列的 `COV-PHP-001:PHP_ANALYZER_DEPENDENCY_MISSING` | `ANALYZER_ERROR:PHP_ANALYZER_EXIT_<code>:…` |
 
 這時 exit code 為 0；加上 `--fail-on-review` 時為 1，與「真的需要 review」無法區分。CI 中請另外檢查，見「在 CI 中使用」。
 
@@ -173,7 +173,7 @@ analyzer process 沒有正常產生結果。訊息最多 200 字元：
 |---|---|
 | `PHP_ANALYZER_ABORTED` | 超過 `--timeout-ms`，analyzer 被終止 |
 | `spawn php ENOENT` | PATH 上找不到 `php` |
-| `PHP_ANALYZER_EXIT_<code>:<stderr>` | analyzer 以非 0 結束，例如 `php` 低於 8.3（PHP 8.0–8.2 為 Composer 的 platform check 失敗；PHP 7 以下為 analyzer 本身用到 PHP 8.0 的語法而無法解析） |
+| `PHP_ANALYZER_EXIT_<code>:<stderr>` | analyzer 以非 0 結束，例如 `php` 低於 8.3（PHP 8.0–8.2 為已安裝的依賴被 Composer 的 platform check 擋下，沒有安裝依賴時則是 `COV-PHP-001:PHP_ANALYZER_DEPENDENCY_MISSING`；PHP 7 以下為 analyzer 本身用到 PHP 8.0 的語法而無法解析） |
 | `PHP_ANALYZER_OUTPUT_INVALID` | analyzer 的 stdout 不是 JSON |
 
 ### `COV-PHP-001:<原因>`（`FULL`）
@@ -186,7 +186,7 @@ analyzer process 沒有正常產生結果。訊息最多 200 字元：
 | `PHP_GRAMMAR_DIVERGENCE` | 在主要語法下判為等價，但 PHP 8 與 PHP 7（7.4 語法，`#[` 視為註解）的解讀不同：兩側在某個語法下的可解析性不一致，或在該語法下不等價。例如把 `$a . $b + $c` 改成 `$a . ($b + $c)`（`.` 與 `+` 的優先順序在 PHP 8 改變） |
 | `PHP_PARSE_ERROR` | 最新語法與 PHP 7.4 語法都無法同時解析兩個版本，例如有語法錯誤 |
 | `PHP_FILE_DELETION_UNSUPPORTED` | head 版本是空檔（檔案被清空但沒有刪除） |
-| `PHP_ANALYZER_DEPENDENCY_MISSING` | `analyzers/php/vendor` 不存在；先執行 `npm run analyzer:install` |
+| `PHP_ANALYZER_DEPENDENCY_MISSING` | `analyzers/php/vendor` 不存在；先執行 `npm run analyzer:install`（需要 PHP 8.3 以上，否則安裝會因 platform requirement 失敗） |
 
 ### `FILE_RENAMED` / `FILE_MODE_CHANGED`
 

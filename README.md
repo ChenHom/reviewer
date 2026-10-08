@@ -51,7 +51,7 @@ Authoritative Candidate / Summary / Check
 
 ## Review 一個 PR
 
-需要 Node.js（CI 使用 24）、`git`、PATH 上的 `php`（PHP CLI ≥ 8.3，CI 使用 8.4）與 Composer 2；完整前置需求見 [Review CLI](docs/review-cli.md#前置需求)。這是執行 analyzer 的 PHP 版本，與被分析專案的目標版本無關：被分析的程式碼以最新語法或 PHP 7.4 語法解析，判為等價前只檢查 PHP 7 與 PHP 8 的解讀，PHP 5 的語意不在檢查範圍；兩種語法都無法解析時為 `FULL`（`PHP_PARSE_ERROR`），見「已實作」。
+需要 Node.js（CI 使用 24）、`git`、PATH 上的 `php`（PHP CLI ≥ 8.3，CI 使用 8.4）與 Composer 2；完整前置需求見 [Review CLI](docs/review-cli.md#前置需求)。這是執行 analyzer 的 PHP 版本，與被分析專案的目標版本無關：被分析的程式碼以最新語法或 PHP 7.4 語法解析，判為等價前只檢查 PHP 7 與 PHP 8 的解讀，PHP 5 的語意不在檢查範圍；最新語法與 PHP 7.4 語法都無法同時解析 before / after 兩個版本時為 `FULL`（`COV-PHP-001:PHP_PARSE_ERROR`），見「已實作」。
 
 ```bash
 npm run analyzer:install   # 第一次需要安裝 PHP analyzer 依賴（執行 composer install）
@@ -59,7 +59,7 @@ npm run analyzer:install   # 第一次需要安裝 PHP analyzer 依賴（執行 
 node bin/review.js --repo /path/to/project --base origin/master --head HEAD
 ```
 
-與 GitHub PR 相同，比較的是 head 相對於 `git merge-base <base> <head>` 的變更：base 分支在 head 分出後的新 commit 不會被列入；兩者沒有共同歷史（或 shallow clone 中缺少 merge base，例如 CI 的 `fetch-depth: 1`）時以 `GIT_NO_MERGE_BASE` 結束（exit code 2）。每個變更檔案逐一決策，列出需要 Human Review 的檔案、原因與行號：
+與 GitHub PR 相同，比較的是 head 相對於 `git merge-base <base> <head>` 的變更：base 分支在 head 分出後的新 commit 不會被列入。兩者沒有共同歷史，或 shallow clone 的歷史不夠深、到不了 merge base 時，以 `GIT_NO_MERGE_BASE` 結束；`actions/checkout` 預設的 `fetch-depth: 1` 連 base 都沒有抓，會在解析 ref 時就以 `GIT_FAILED` 結束（兩者的 exit code 都是 2，見 [PR Review CLI](docs/review-cli.md#比較範圍merge-base)）。每個變更檔案逐一決策，列出需要 Human Review 的檔案、原因與行號：
 
 ```
 Review：HUMAN_REVIEW_REQUIRED（3/4 個檔案需要 review；TARGETED 2、FULL 1）
@@ -125,7 +125,7 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
   - Payment signature verification removal（method 名稱含 `verif…sign`、`check…sign`、`validate…sign`、`sign…verif`、`sign…check` 或 `sign…valid`（不分大小寫），如 `verifySign`、`verificationSign`、`checkSign` → `SIGNATURE_VERIFICATION_REMOVED`）
   - Operator change（同類別內改變 → `COMPARISON_OPERATOR_CHANGED` / `ARITHMETIC_OPERATOR_CHANGED` / `LOGICAL_OPERATOR_CHANGED`；跨類別或其他運算子 → `OPERATOR_CHANGED`）
   - Guard clause removal / addition（`GUARD_CLAUSE_REMOVED` / `GUARD_CLAUSE_ADDED`）
-  - Condition negation（`CONDITION_NEGATED`；條件以外的反轉為 `BOOLEAN_VALUE_NEGATED`）、回傳值改變（`RETURN_VALUE_CHANGED`）、參數順序（`ARGUMENTS_REORDERED`）、參數改名（`PARAMETER_RENAMED`，named argument API）、改用另一個變數（`VARIABLE_REFERENCE_CHANGED`）、class 常數改值（`CONSTANT_VALUE_CHANGED`）
+  - Condition negation（`CONDITION_NEGATED`；條件以外的反轉為 `BOOLEAN_VALUE_NEGATED`）、回傳值改變（`RETURN_VALUE_CHANGED`）、參數順序（`ARGUMENTS_REORDERED`）、參數改名（`PARAMETER_RENAMED`，named argument API）、改用另一個變數（`VARIABLE_REFERENCE_CHANGED`）、`const` 宣告（class 常數與頂層 / namespace 常數）改值（`CONSTANT_VALUE_CHANGED`）
   - Laravel validation rules（`rules()` 回傳值、`$this` / `$request` 的 `validate` / `validateWithBag`、`Validator::make` 的規則增減或改值 → `VALIDATION_RULE_CHANGED`）
   - Laravel model attributes（`$fillable` / `$guarded` → `MASS_ASSIGNMENT_CHANGED`、`$hidden` / `$visible` → `SERIALIZED_ATTRIBUTES_CHANGED`、`$casts` / `casts()` → `ATTRIBUTE_CAST_CHANGED`）
 - persisted authority / stale analysis protection
@@ -160,7 +160,7 @@ Safe reduction rate          100.0%
 Unchanged reduction rate     99.9%
 ```
 
-這三個專案不在本 repo 內（corpus 與結果含目標專案的原始碼片段，不能 commit），所以這些數字無法只靠本 repo 重現；它們是在本機以 commit `9022e04`（analyzer / interpreter 與 master `2be0cde` 相同）量測的一次性結果。Real-repo evaluation 不在 `npm run test:all` 與 CI 中，不屬於 release gate；修改 analyzer 或 interpreter 後，請對自己的專案以 `--baseline-ref` 重跑比較。
+這三個專案不在本 repo 內（corpus 與結果含目標專案的原始碼片段，不能 commit），所以這些數字無法只靠本 repo 重現；它們是在本機以 commit `9022e04`（analyzer / interpreter 與 master `2be0cde` 相同）量測的一次性結果。對真實目標專案執行的 Real-repo evaluation 不在 `npm run test:all` 與 CI 中，不屬於 release gate（`test:all` 只以 `tests/evaluation/real-repo-*.test.js` 在本 repo 的 fixture（`fixtures/php-laravel`）與合成資料上測試這個工具本身與 gate）；修改 analyzer 或 interpreter 後，請對自己的專案以 `--baseline-ref` 重跑比較。
 
 未被 reduce 的 3 個 unchanged 都是空檔（`parseable: false`）。Risky targeted rate 是 risky mutation 以 `TARGETED`（變更已被 fact 完整解釋）而非 `FULL` 送 Human Review 的比例，加入 `LITERAL_CHANGED` 等 facts 前為 34.6%。Risky specific reason rate 是原因中至少有一個 domain 規則產生的具體原因（不只有 `FACT_UNHANDLED`、`COV-…` 等 generic 原因）的比例，加入前為 9.3%。仍為 `FULL` 的主要是移除含 closure body 的 call（closure 內可能有任意邏輯）與改變運算子優先順序的 `&&` / `||` 互換。
 
@@ -205,6 +205,8 @@ npm run analyzer:install
 ```bash
 npm run test:all
 ```
+
+`npm run test:all` 另外需要 PATH 上的 `git` 與 `tar`，且本 repo 必須是有 commit 的 git checkout，不能是解壓縮的原始碼（例如 GitHub 的「Download ZIP」）：review CLI 的測試會建立暫時的 git repository，real-repo evaluation 工具的測試會對本 repo 的 `HEAD` 執行 `git archive` 並以 `tar` 解開（見 [Safety MVP Next Phase](docs/operations/safety-mvp-next-phase.md#release-gate)）。
 
 包含：
 

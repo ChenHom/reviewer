@@ -112,7 +112,7 @@ Analyzer 以 [nikic/php-parser](https://github.com/nikic/PHP-Parser) 5.9.0（版
 2. 以 scope-aware canonical 名稱比較（`VariableScopes`）：method / function 內一致的區域變數改名視為等價。參數、`$this`、superglobal、`global` 變數與頂層變數不改名；scope 內有 `compact`、`extract`、`get_defined_vars`、`$$x`、`eval`、`include` / `require` 等以字串存取變數名的機制時，整個 scope 不做改名正規化（完整條件見 [README「已實作」](../README.md#已實作)）。
 3. 以原始名稱比較，並把變數差異描述成 `VARIABLE_CHANGED`（部分改名、合併變數、參數改名等）。
 
-判為等價（`COMPLETE` 且沒有 fact）前，再以最新語法與 PHP 7.4 語法分別解析 before / after：同一語法下兩側的可解析性必須一致，兩側都能解析的語法下也必須等價，否則回報 `PHP_GRAMMAR_DIVERGENCE`（例如 `.` 與 `+` 的優先順序在 PHP 8 改變）。舊版 PHP 不支援的新語法（例如參數 trailing comma）不在這項檢查範圍內，請以目標 PHP 版本的 `php -l` 檢查。PHP 5 的語意也不在檢查範圍：例如 `$$foo['bar']` 在 PHP 5 是 `${$foo['bar']}`，在 PHP 7 / 8 是 `${$foo}['bar']`，兩者互換會被判為等價。
+判為等價（`COMPLETE` 且沒有 fact）前，再以最新語法與 PHP 7.4 語法分別解析 before / after：同一語法下兩側的可解析性必須一致，兩側都能解析的語法下也必須等價，否則回報 `PHP_GRAMMAR_DIVERGENCE`（例如 `.` 與 `+` 的優先順序在 PHP 8 改變）。舊版 PHP 不支援的新語法（例如參數 trailing comma）不在這項檢查範圍內，請以目標 PHP 版本的 `php -l` 檢查。PHP 5 的語意也不在檢查範圍：例如 `$$foo['bar']` 在 PHP 5 是 `${$foo['bar']}`，在 PHP 7 / 8 是 `${$foo}['bar']`；把 `$$foo['bar']` 改成 `${$foo}['bar']`（或反過來）仍會被判為等價。
 
 目前輸出 13 種 generic facts（各 fact 的細節與 container 格式見 [README「已實作」](../README.md#已實作)）：
 
@@ -271,7 +271,7 @@ npm run analyzer:install   # 第一次需要安裝 PHP analyzer 依賴
 npm run test:all
 ```
 
-`test:all` 依序執行 lint（ESLint，只檢查 JS）、safety tests、E2E、coverage、mutation evaluation、historical evaluation。需要 PATH 上的 `php`（PHP CLI ≥ 8.3）與 Composer 2；沒有安裝依賴時 analyzer 以 `PHP_ANALYZER_DEPENDENCY_MISSING` fail-closed，release gate 無法通過。
+`test:all` 依序執行 lint（ESLint，只檢查 JS）、safety tests、E2E、coverage、mutation evaluation、historical evaluation。需要 PATH 上的 `php`（PHP CLI ≥ 8.3）、Composer 2，以及 `git` 與 `tar`（review CLI 與 real-repo evaluation 的測試會建立暫時的 git repository、對本 repo 的 `HEAD` 執行 `git archive`，所以本 repo 必須是有 commit 的 git checkout，見 [Safety MVP Next Phase](operations/safety-mvp-next-phase.md#release-gate)）；沒有安裝依賴時 analyzer 以 `PHP_ANALYZER_DEPENDENCY_MISSING` fail-closed，release gate 無法通過。
 
 CI（`.github/workflows/review-reduction-safety.yml`，Node.js 24、PHP 8.4）在 `npm ci` 之後先執行 `composer install --working-dir=analyzers/php`，再對 `analyzers/php/bin`、`analyzers/php/src` 與 `evaluation` 下的 `.php` 檔執行 `php -l`，最後執行 `npm run test:all`。
 
@@ -351,8 +351,8 @@ Human / AI Reviewer
 2. 增加 PHP/Laravel support，降低 `PARTIAL_PARSE`。
 3. 提高 risky 變更的具體原因比例（real-repo 的 Risky specific reason rate 目前 53.4%，其餘只有 `FACT_UNHANDLED` 等 generic 原因），並減少仍為 `FULL` 的情況。Safe Reduction Rate 在 mutation corpus 與 real-repo 都已是 100.0%，但 safe 案例只涵蓋排版、註解、引號、trailing comma、區域變數改名等變更；真實 PR 的 reduction 需以第 1 項的 corpus 衡量。
 4. 正式的 Review Scope Plan：可安裝的 `reviewer plan` 指令，以及有版本的 JSON schema（`schemaVersion`、`reviewScope`、metrics、Reviewer 版本與 analysis identity），見 [Agent Work Harness Integration](integrations/agent-work-harness.md) §5。`bin/review.js` 已提供 PR 層級的逐檔決策與位置提示，但只能以 `node bin/review.js` 呼叫，`--json` 報表也沒有 schema 版本，不是該文件提案的 Review Scope Plan 格式。
-5. Harness `review <workId>` integration。
-6. GitHub PR Review Scope workflow（目前 CI 只在測試中執行 `bin/review.js`，不會用它 review PR；GitHub sink 也沒有 workflow 使用）。
+5. GitHub PR Review Scope workflow（目前 CI 只在測試中執行 `bin/review.js`，不會用它 review PR；GitHub sink 也沒有 workflow 使用）。
+6. Harness `review <workId>` integration。
 7. region-level blocker → fact → provenance contract。在此之前，`TARGETED` 的位置只是 review 起點。
 8. optional impact provider，例如 code-review-graph。
 9. LLM 僅作 hypothesis / explanation，不取得 reduction authority。
