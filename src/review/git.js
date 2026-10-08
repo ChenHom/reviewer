@@ -36,6 +36,24 @@ export async function resolveCommit(repo, ref) {
 }
 
 /**
+ * 兩個 commit 的 merge base（`git merge-base`）。沒有共同祖先時丟出 GIT_NO_MERGE_BASE。
+ *
+ * @param {string} repo - repository 路徑。
+ * @param {string} baseSha - base commit。
+ * @param {string} headSha - head commit。
+ * @returns {Promise<string>} merge base 的 commit SHA。
+ */
+export async function mergeBase(repo, baseSha, headSha) {
+  let output;
+  try {
+    output = await git(repo, ['merge-base', baseSha, headSha]);
+  } catch {
+    throw new Error(`GIT_NO_MERGE_BASE:${baseSha}..${headSha}`);
+  }
+  return output.toString('utf8').trim();
+}
+
+/**
  * repository 根目錄（worktree 頂層）的絕對路徑。
  *
  * @param {string} repo - repository 路徑。

@@ -6,7 +6,7 @@ import { createPhpLaravelAdapter } from '../adapters/php-laravel/adapter.js';
 import { PHP_LARAVEL_DOMAIN_INTERPRETERS } from '../interpreters/php-laravel-domain.js';
 import { createAuthorityState } from '../publication.js';
 import { runAdapterPipeline } from '../runner.js';
-import { diffEntries, diffHunks, readBlob, repositoryRoot, resolveCommit } from './git.js';
+import { diffEntries, diffHunks, mergeBase, readBlob, repositoryRoot, resolveCommit } from './git.js';
 
 export const NOT_SELECTED = 'NOT_SELECTED_FOR_HUMAN_REVIEW';
 export const HUMAN_REVIEW = 'HUMAN_REVIEW_REQUIRED';
@@ -297,7 +297,9 @@ export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs
     resolveCommit(repo, base),
     resolveCommit(repo, head),
   ]);
-  const entries = await diffEntries(root, baseSha, headSha);
+  // 與 GitHub PR 相同，只看 head 相對於 merge base 的變更：base 在分支建立後的新 commit 不算在內。
+  const forkPoint = await mergeBase(root, baseSha, headSha);
+  const entries = await diffEntries(root, forkPoint, headSha);
   const context = {
     repo: root,
     adapter: createPhpLaravelAdapter(adapterOptions),
@@ -305,7 +307,7 @@ export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs
     timeoutMs,
     identity: {
       repository: basename(root),
-      baseSha,
+      baseSha: forkPoint,
       headSha,
       policyId: 'pr-review',
       policyVersion: '1',
@@ -318,6 +320,7 @@ export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs
     repository: basename(root),
     base: { ref: base, sha: baseSha },
     head: { ref: head, sha: headSha },
+    mergeBase: forkPoint,
     decision: summarizeFiles(files),
     files,
   };

@@ -52,7 +52,9 @@ export function formatReview(report) {
   const reduced = report.files.filter((file) => file.decision === NOT_SELECTED);
   const lines = [
     `Review：${decision.status}（${needsReview.length}/${decision.files} 個檔案需要 review；TARGETED ${decision.targeted}、FULL ${decision.full}）`,
-    `${report.repository}  ${report.base.ref} (${report.base.sha.slice(0, 12)}) → ${report.head.ref} (${report.head.sha.slice(0, 12)})`,
+    `${report.repository}  ${report.base.ref} (${report.base.sha.slice(0, 12)}) → ${report.head.ref} (${report.head.sha.slice(0, 12)})${
+      report.mergeBase && report.mergeBase !== report.base.sha ? `，比較起點為 merge base ${report.mergeBase.slice(0, 12)}` : ''
+    }`,
   ];
 
   if (decision.files === 0) {
