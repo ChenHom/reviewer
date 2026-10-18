@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 export const PHP_LARAVEL_ADAPTER_DESCRIPTOR = Object.freeze({
   id: 'php-laravel-v1',
-  version: '0.1.0',
+  // 0.2.0：fact schema v2（結構化 callee / container、CALL_ARGUMENT_REMOVED / ADDED）。
+  version: '0.2.0',
   languages: ['php'],
   capabilities: [
     'changed-regions',

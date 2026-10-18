@@ -106,8 +106,10 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
 - `__LINE__` 的行號與 `__COMPILER_HALT_OFFSET__` 納入 AST 比較：排版變更讓它們的值改變時不視為等價
 - 判為等價前同時檢查 PHP 8 與 PHP 7 的解讀（7.4 語法，`#[` 視為註解）：兩邊的可解析性必須一致、且兩種語法下都等價，否則回報 `PHP_GRAMMAR_DIVERGENCE`（例如 `.` 與 `+` 的優先順序在 PHP 8 改變）。舊版 PHP 不支援的新語法（例如參數 trailing comma）不在檢查範圍，請以目標版本的 `php -l` 檢查
 - Generic facts：
-  - `CALL_ARGUMENT_CHANGED`（named argument；位置參數只在無法被更細 fact 解釋時以 `#index` 輸出，且不視為已解釋）
+  - `CALL_ARGUMENT_CHANGED`（named argument；位置參數只在無法被更細 fact 解釋時以位置數字輸出、顯示為 `#index`，且不視為已解釋）
+  - `CALL_ARGUMENT_REMOVED` / `CALL_ARGUMENT_ADDED`（參數純移除或純新增：一邊的參數是另一邊的子序列，且增減的參數不含 closure；`argument` 為位置數字或具名參數名稱。同時改了其他參數時維持未解釋）
   - `CALL_REMOVED` / `CALL_ADDED`（含 closure 內的巢狀 call 與鏈式 call，如 `->lockForUpdate`；receiver 保留完整名稱，如 `$this->adminDB->transaction`）；同一位置換成另一個 method（`->first()` → `->firstOrFail()`）由這兩個 fact 一起解釋
+  - fact schema v2：`callee` 與 `container` 是語言中立的結構化欄位，interpreter 只比對結構，不解析 PHP 語法字串。`callee` 為 `{ text, name, receiver, kind, optional }`，例如 `$this->adminDB->transaction` → `name: 'transaction'`、`receiver: ['this', 'adminDB']`、`kind: 'method'`；`\Illuminate\Support\Facades\Gate::authorize` → `receiver: ['Illuminate', 'Support', 'Facades', 'Gate']`、`kind: 'static'`；鏈式 call 的 `receiver` 為 `null`。`container` 為 `{ type, keys, text, … }`，例如 `Route::group#0[middleware]` → `type: 'argument'`、`callee`（`Route::group`）、`argument: 0`、`keys: ['middleware']`。`text` 是原本的文字格式，只供顯示（定義見 `src/facts/structured.js`）
   - `BINARY_OPERATOR_CHANGED`（左右運算元不變，只有運算子改變）
   - `GUARD_REMOVED` / `GUARD_ADDED`（body 只有 throw / return / exit 的 if）
   - `ARRAY_ITEM_REMOVED` / `ARRAY_ITEM_ADDED`（帶 container，如 `property:$beforeActionList`、`Route::group#0[middleware]`）
@@ -116,7 +118,7 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
   - `RETURN_VALUE_CHANGED`（回傳值換成常數或從常數換掉，如 `return null;`、`return [];`、`return;`；兩邊都不是常數時維持未解釋）
   - `CALL_ARGUMENTS_REORDERED`（參數內容相同、只有順序改變；method / function call 與 `new`）
   - `VARIABLE_CHANGED`（改用另一個變數，如部分改名、合併變數、參數改名；只在 scope 內一致改名也無法解釋差異時才輸出，container `param` 表示參數）
-- Deterministic PHP/Laravel interpreters（callee 會先正規化 fully-qualified 前導 `\`；括號內的大寫代碼為輸出的 blocker；沒有任何 interpreter 處理的 fact 輸出 `FACT_UNHANDLED:<factId>`）：
+- Deterministic PHP/Laravel interpreters（比對結構化 callee 的 `name` / `receiver`，fully-qualified 前導 `\` 不在 `receiver` 中；括號內的大寫代碼為輸出的 blocker；沒有任何 interpreter 處理的 fact 輸出 `FACT_UNHANDLED:<factId>`）：
   - Payment idempotency identity change（named argument `idempotencyKey` 改變 → `PAYMENT_IDEMPOTENCY_IDENTITY_CHANGED`）
   - Transaction boundary removal（DB receiver 上的 `transaction` / `commit` 被移除，如 `DB::`、`\DB::`、`$db`、`$this->adminDB`、`$connection`；`beginTransaction` 不論 receiver → `TRANSACTION_BOUNDARY_REMOVED`）、rollback removal（DB receiver 上的 `rollBack` / `rollback` → `TRANSACTION_ROLLBACK_REMOVED`）
   - Authorization guard removal（`$this->authorize`、`$this->authorizeForUser`、`Gate::authorize`、`Illuminate\Support\Facades\Gate::authorize` → `AUTHORIZATION_GUARD_REMOVED`）；第一個參數的 ability 字串改值（如 `'update'` 改成 `'view'` → `AUTHORIZATION_ABILITY_CHANGED`）

@@ -34,7 +34,7 @@ final class CallFacts
                     if ($afterArgument === null || $beforeArgument['signature'] === $afterArgument['signature']) {
                         continue;
                     }
-                    $facts[] = self::fact($path, 'CALL_ARGUMENT_CHANGED', $afterCall, $afterCall['callee'] . ':' . $argument, [
+                    $facts[] = self::fact($path, 'CALL_ARGUMENT_CHANGED', $afterCall, $afterCall['callee']['text'] . ':' . $argument, [
                         'callee' => $afterCall['callee'],
                         'argument' => $argument,
                         'before' => $beforeArgument['expression'],
@@ -84,7 +84,7 @@ final class CallFacts
      */
     private static function callFact(string $path, string $kind, string $side, array $call, int $callIndex): array
     {
-        return self::fact($path, $kind, $call, $call['callee'] . ':' . $callIndex, [
+        return self::fact($path, $kind, $call, $call['callee']['text'] . ':' . $callIndex, [
             'callee' => $call['callee'],
             'changeSide' => $side,
         ], $call['startByte'], $call['statementEndByte']);

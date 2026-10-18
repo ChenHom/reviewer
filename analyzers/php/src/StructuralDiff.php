@@ -78,7 +78,7 @@ final class StructuralDiff
      */
     public function run(array $before, array $after): array
     {
-        $this->compareList($before, $after, 'stmts', 'file');
+        $this->compareList($before, $after, 'stmts', self::container('file'));
 
         // Soundness 不變式：AST 不同時，必須至少有一個差異被 fact 解釋或被標為未解釋。
         // 防止遞迴比對與 canonical hash 的判斷標準不一致時，把不同的程式判為無 fact 的 COMPLETE。
@@ -136,7 +136,10 @@ final class StructuralDiff
         $this->unexplained[] = [$what, $before?->getStartFilePos() ?? -1];
     }
 
-    private function compare(mixed $before, mixed $after, string $container): void
+    /**
+     * @param array<string, mixed> $container 結構化 container（見 container()）。
+     */
+    private function compare(mixed $before, mixed $after, array $container): void
     {
         if ($this->same($before, $after)) {
             return;
@@ -202,7 +205,7 @@ final class StructuralDiff
                     $this->compare($before->$name, $after->$name, $container);
                 }
             }
-            $this->addReorderFact($before, $after, $this->calleeText($after, $this->afterSource), null);
+            $this->addReorderFact($before, $after, $this->structuredCallee($after, $this->afterSource), null);
             return;
         }
 
@@ -246,7 +249,10 @@ final class StructuralDiff
         return $this->function ?? $this->path;
     }
 
-    private function compareDifferentTypes(Node $before, Node $after, string $container): void
+    /**
+     * @param array<string, mixed> $container
+     */
+    private function compareDifferentTypes(Node $before, Node $after, array $container): void
     {
         // `X` ↔ `!X`：整個運算式被反轉。
         if (
@@ -308,7 +314,10 @@ final class StructuralDiff
         return false;
     }
 
-    private function compareCalls(Node $before, Node $after, string $container): void
+    /**
+     * @param array<string, mixed> $container
+     */
+    private function compareCalls(Node $before, Node $after, array $container): void
     {
         $beforeCall = $this->beforeCalls[spl_object_id($before)] ?? null;
         $afterCall = $this->afterCalls[spl_object_id($after)] ?? null;
@@ -330,7 +339,9 @@ final class StructuralDiff
         $beforeArgs = $before->args;
         $afterArgs = $after->args;
         if (count($beforeArgs) !== count($afterArgs)) {
-            $this->unexplained('argument-count', $before);
+            if (!$this->explainArgumentCountChange($beforeArgs, $afterArgs, $beforeCall, $afterCall)) {
+                $this->unexplained('argument-count', $before);
+            }
             return;
         }
 
@@ -338,7 +349,7 @@ final class StructuralDiff
             $this->addReorderFact(
                 $before,
                 $after,
-                $afterCall['callee'] ?? $this->calleeText($after, $this->afterSource),
+                $afterCall['callee'] ?? $this->structuredCallee($after, $this->afterSource),
                 $afterCall['subject'] ?? null,
             );
             return;
@@ -370,7 +381,7 @@ final class StructuralDiff
             }
 
             $unexplainedBefore = count($this->unexplained);
-            $this->compare($beforeArg->value, $afterArg->value, $this->argumentContainer($afterCall, '#' . $index));
+            $this->compare($beforeArg->value, $afterArg->value, $this->argumentContainer($afterCall, $index));
             if (
                 count($this->unexplained) > $unexplainedBefore
                 && $afterCall !== null
@@ -381,7 +392,7 @@ final class StructuralDiff
                 // 位置參數無法被更細的 fact 解釋：輸出 fallback fact（不視為已解釋）。
                 $this->addFact('CALL_ARGUMENT_CHANGED', $afterArg, $this->afterSource, [
                     'callee' => $afterCall['callee'],
-                    'argument' => '#' . $index,
+                    'argument' => $index,
                     'before' => $this->text($beforeArg, $this->beforeSource),
                     'after' => $this->text($afterArg, $this->afterSource),
                     'changeSide' => 'after',
@@ -393,8 +404,9 @@ final class StructuralDiff
     /**
      * @param array<mixed> $before
      * @param array<mixed> $after
+     * @param array<string, mixed> $container
      */
-    private function compareList(array $before, array $after, string $kind, string $container): void
+    private function compareList(array $before, array $after, string $kind, array $container): void
     {
         $before = Canonicalizer::significant($before);
         $after = Canonicalizer::significant($after);
@@ -425,8 +437,9 @@ final class StructuralDiff
     /**
      * @param list<mixed> $removed
      * @param list<mixed> $added
+     * @param array<string, mixed> $container
      */
-    private function compareGap(array $removed, array $added, string $container): void
+    private function compareGap(array $removed, array $added, array $container): void
     {
         // 運算式 list（`for` 條件、`echo`、`isset` 等）中一對一替換：直接比較兩個運算式。
         if (
@@ -493,7 +506,10 @@ final class StructuralDiff
         return true;
     }
 
-    private function explainListChange(mixed $item, string $side, string $container): void
+    /**
+     * @param array<string, mixed> $container
+     */
+    private function explainListChange(mixed $item, string $side, array $container): void
     {
         $calls = $side === 'before' ? $this->beforeCalls : $this->afterCalls;
         $source = $side === 'before' ? $this->beforeSource : $this->afterSource;
@@ -546,7 +562,7 @@ final class StructuralDiff
         }
 
         $mark = count($this->unexplained);
-        $this->compare($before->expr, $after->expr, 'return');
+        $this->compare($before->expr, $after->expr, self::container('return'));
         if (count($this->unexplained) > $mark && (self::isConstant($before->expr) || self::isConstant($after->expr))) {
             array_splice($this->unexplained, $mark);
             $this->addFact('RETURN_VALUE_CHANGED', $after->expr, $this->afterSource, [
@@ -582,7 +598,10 @@ final class StructuralDiff
         return $beforeHashes === $afterHashes;
     }
 
-    private function addReorderFact(Node $before, Node $after, string $callee, ?string $subject): void
+    /**
+     * @param array<string, mixed> $callee 結構化 callee。
+     */
+    private function addReorderFact(Node $before, Node $after, array $callee, ?string $subject): void
     {
         $join = fn (array $args, string $source): string => implode(', ', array_map(
             fn (Node $arg): string => $this->text($arg, $source),
@@ -597,16 +616,94 @@ final class StructuralDiff
     }
 
     /**
-     * 沒有 call record 的 call（function call、`new`、不支援的 receiver）的名稱文字。
+     * 參數數量改變：只有在一邊的參數是另一邊的子序列（純新增或純移除），且增減的參數不含
+     * callback 時，以 CALL_ARGUMENT_REMOVED / CALL_ARGUMENT_ADDED 解釋。之後的位置參數會因此
+     * 移位，fact 的 `argument` 標示被增減的位置（具名參數則為名稱）。
+     *
+     * @param array<Node> $beforeArgs
+     * @param array<Node> $afterArgs
+     * @param array<string, mixed>|null $beforeCall
+     * @param array<string, mixed>|null $afterCall
      */
-    private function calleeText(Node $call, string $source): string
+    private function explainArgumentCountChange(array $beforeArgs, array $afterArgs, ?array $beforeCall, ?array $afterCall): bool
     {
-        return match (true) {
-            $call instanceof Expr\FuncCall => $this->text($call->name, $source),
-            $call instanceof Expr\New_ => 'new ' . ($call->class instanceof Stmt\Class_ ? 'class' : $this->text($call->class, $source)),
-            $call instanceof Expr\StaticCall => $this->text($call->class, $source) . '::' . $this->text($call->name, $source),
-            default => '->' . $this->text($call->name, $source),
-        };
+        if ($beforeCall === null || $afterCall === null) {
+            return false;
+        }
+        $pairs = self::lcs(
+            array_map(fn ($arg) => $this->beforeHasher->hash($arg), $beforeArgs),
+            array_map(fn ($arg) => $this->afterHasher->hash($arg), $afterArgs),
+        );
+        if (count($pairs) !== min(count($beforeArgs), count($afterArgs))) {
+            return false;
+        }
+
+        $removed = count($beforeArgs) > count($afterArgs);
+        $changed = array_diff_key($removed ? $beforeArgs : $afterArgs, array_flip(array_column($pairs, $removed ? 0 : 1)));
+        foreach ($changed as $arg) {
+            if (!$arg instanceof Node\Arg || self::containsCallback($arg)) {
+                return false;
+            }
+        }
+
+        $source = $removed ? $this->beforeSource : $this->afterSource;
+        foreach ($changed as $index => $arg) {
+            $this->addFact($removed ? 'CALL_ARGUMENT_REMOVED' : 'CALL_ARGUMENT_ADDED', $arg, $source, [
+                'callee' => $afterCall['callee'],
+                'argument' => $arg->name?->toString() ?? $index,
+                'value' => $this->text($arg, $source),
+                'changeSide' => $removed ? 'before' : 'after',
+            ], $afterCall['subject']);
+        }
+
+        return true;
+    }
+
+    /**
+     * 沒有 call record 的 call（function call、`new`、不支援的 receiver）的結構化 callee。
+     *
+     * @return array<string, mixed>
+     */
+    private function structuredCallee(Node $call, string $source): array
+    {
+        if ($call instanceof Expr\FuncCall) {
+            $text = $this->text($call->name, $source);
+            return $call->name instanceof Node\Name
+                ? self::namedCallee($text, $text, 'function')
+                : CallExtractor::callee($text, $text, null, 'function');
+        }
+        if ($call instanceof Expr\New_) {
+            if ($call->class instanceof Stmt\Class_) {
+                return CallExtractor::callee('new class', 'class', null, 'constructor');
+            }
+            $class = $this->text($call->class, $source);
+            return $call->class instanceof Node\Name
+                ? self::namedCallee('new ' . $class, $class, 'constructor')
+                : CallExtractor::callee('new ' . $class, $class, null, 'constructor');
+        }
+        if ($call instanceof Expr\StaticCall) {
+            $class = $this->text($call->class, $source);
+            $name = $this->text($call->name, $source);
+            $receiver = $call->class instanceof Node\Name ? CallExtractor::nameSegments($class) : null;
+            return CallExtractor::callee($class . '::' . $name, $name, $receiver, 'static');
+        }
+
+        $name = $this->text($call->name, $source);
+        $nullsafe = $call instanceof Expr\NullsafeMethodCall;
+        return CallExtractor::callee(($nullsafe ? '?->' : '->') . $name, $name, null, 'method', $nullsafe);
+    }
+
+    /**
+     * 以名稱（`\App\foo`、`Foo\Bar`）建立 callee：最後一段是名稱，前面是 receiver（namespace）。
+     *
+     * @return array<string, mixed>
+     */
+    private static function namedCallee(string $text, string $qualifiedName, string $kind): array
+    {
+        $segments = CallExtractor::nameSegments($qualifiedName);
+        $name = array_pop($segments) ?? $qualifiedName;
+
+        return CallExtractor::callee($text, $name, $segments, $kind);
     }
 
     /**
@@ -683,33 +780,72 @@ final class StructuralDiff
         ) !== null;
     }
 
-    private function childContainer(Node $node, string $name, string $container): string
+    /**
+     * 結構化 container（fact schema v2）：`type` 是位置種類，`keys` 是陣列 key 路徑，
+     * `text` 是舊格式的文字（`property:$fillable`、`Route::group#0[middleware]`），只供顯示。
+     *
+     * @param array<string, mixed> $extra 種類專屬欄位（`name`、`callee` / `argument`）。
+     * @return array<string, mixed>
+     */
+    private static function container(string $type, ?string $text = null, array $extra = []): array
+    {
+        return ['type' => $type, ...$extra, 'keys' => [], 'text' => $text ?? $type];
+    }
+
+    /**
+     * @param array<string, mixed> $container
+     * @return array<string, mixed>
+     */
+    private static function withKey(array $container, string $key): array
+    {
+        $container['keys'][] = $key;
+        $container['text'] .= '[' . $key . ']';
+
+        return $container;
+    }
+
+    /**
+     * @param array<string, mixed> $container
+     * @return array<string, mixed>
+     */
+    private function childContainer(Node $node, string $name, array $container): array
     {
         return match (true) {
-            $node instanceof Node\PropertyItem && $name === 'default' => 'property:$' . $node->name->toString(),
-            $node instanceof Node\Const_ && $name === 'value' => 'const:' . $node->name->toString(),
+            $node instanceof Node\PropertyItem && $name === 'default'
+                => self::container('property', 'property:$' . $node->name->toString(), ['name' => $node->name->toString()]),
+            $node instanceof Node\Const_ && $name === 'value'
+                => self::container('const', 'const:' . $node->name->toString(), ['name' => $node->name->toString()]),
             $node instanceof Expr\Assign && $name === 'expr' && $node->var instanceof Expr\Variable && is_string($node->var->name)
-                => 'assign:$' . $node->var->name,
+                => self::container('assign', 'assign:$' . $node->var->name, ['name' => $node->var->name]),
             $node instanceof Node\ArrayItem && $name === 'value' && $node->key instanceof Scalar\String_
-                => $container . '[' . $node->key->value . ']',
-            $node instanceof Stmt\Return_ => 'return',
-            ($node instanceof Stmt\If_ || $node instanceof Stmt\ElseIf_) && $name === 'cond' => 'if',
-            ($node instanceof Stmt\While_ || $node instanceof Stmt\Do_) && $name === 'cond' => 'while',
-            $node instanceof Stmt\For_ && $name === 'cond' => 'for',
-            $node instanceof Expr\Ternary && $name === 'cond' => 'ternary',
-            $node instanceof Expr\Match_ && $name === 'cond' => 'match',
-            $node instanceof Node\MatchArm && $name === 'conds' => 'match-arm',
-            $node instanceof Node\Param && $name === 'var' => 'param',
-            $node instanceof Node\ClosureUse && $name === 'var' => 'closure-use',
-            $node instanceof Stmt\Global_ => 'global',
-            $node instanceof Node\StaticVar && $name === 'var' => 'static',
+                => self::withKey($container, $node->key->value),
+            $node instanceof Stmt\Return_ => self::container('return'),
+            ($node instanceof Stmt\If_ || $node instanceof Stmt\ElseIf_) && $name === 'cond' => self::container('if'),
+            ($node instanceof Stmt\While_ || $node instanceof Stmt\Do_) && $name === 'cond' => self::container('while'),
+            $node instanceof Stmt\For_ && $name === 'cond' => self::container('for'),
+            $node instanceof Expr\Ternary && $name === 'cond' => self::container('ternary'),
+            $node instanceof Expr\Match_ && $name === 'cond' => self::container('match'),
+            $node instanceof Node\MatchArm && $name === 'conds' => self::container('match-arm'),
+            $node instanceof Node\Param && $name === 'var' => self::container('param'),
+            $node instanceof Node\ClosureUse && $name === 'var' => self::container('closure-use'),
+            $node instanceof Stmt\Global_ => self::container('global'),
+            $node instanceof Node\StaticVar && $name === 'var' => self::container('static'),
             default => $container,
         };
     }
 
-    private function argumentContainer(?array $call, string $argument): string
+    /**
+     * @param array<string, mixed>|null $call
+     * @return array<string, mixed>
+     */
+    private function argumentContainer(?array $call, int|string $argument): array
     {
-        return ($call['callee'] ?? 'call') . $argument;
+        $callee = $call['callee'] ?? null;
+
+        return self::container('argument', ($callee['text'] ?? 'call') . '#' . $argument, [
+            'callee' => $callee,
+            'argument' => $argument,
+        ]);
     }
 
     private function isCall(mixed $node): bool

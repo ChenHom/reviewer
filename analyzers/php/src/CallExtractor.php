@@ -141,12 +141,13 @@ final class CallExtractor
             $startPosition = $operatorPosition;
             $callee = $operator . $methodName;
             $calleeKey = $callee;
+            $segments = null;
         } else {
             $described = $this->receiverText($receiver);
             if ($described === null || $receiver->getEndTokenPos() !== $leftPosition) {
                 return;
             }
-            [$receiverText, $startPosition, $receiverKey] = $described;
+            [$receiverText, $startPosition, $receiverKey, $segments] = $described;
             $callee = $receiverText . $operator . $methodName;
             $calleeKey = $receiverKey . $operator . $methodName;
         }
@@ -165,7 +166,7 @@ final class CallExtractor
         $this->calls[] = [
             'nodeId' => spl_object_id($node),
             'hasCallbackBody' => $hasCallbackBody,
-            'callee' => $callee,
+            'callee' => self::callee($callee, $methodName, $segments, $isStatic ? 'static' : 'method', $operator === '?->'),
             // 配對用 key：receiver 中可改名的區域變數換成 canonical 名稱。
             'calleeKey' => $calleeKey,
             'subject' => $this->subject($class, $function),
@@ -182,13 +183,13 @@ final class CallExtractor
      * 與舊 token extractor 相容：只沿 `->` / `?->` 回溯連續的名稱 token，
      * 遇到非名稱（如 `foo()->bar`）時只保留最長的名稱後綴（`bar`）。
      *
-     * @return array{0: string, 1: int, 2: string}|null [文字, 起始 token, canonical key]
+     * @return array{0: string, 1: int, 2: string, 3: list<string>}|null [文字, 起始 token, canonical key, receiver 路徑]
      */
     private function receiverText(Node $receiver): ?array
     {
         if ($receiver instanceof Expr\Variable) {
             return is_string($receiver->name)
-                ? ['$' . $receiver->name, $receiver->getStartTokenPos(), '$' . $this->hasher->variableName($receiver)]
+                ? ['$' . $receiver->name, $receiver->getStartTokenPos(), '$' . $this->hasher->variableName($receiver), [$receiver->name]]
                 : null;
         }
         if (
@@ -198,14 +199,14 @@ final class CallExtractor
             $name = $receiver->name->toString();
             $base = $this->receiverText($receiver->var);
             if ($base === null) {
-                return [$name, $receiver->name->getStartTokenPos(), $name];
+                return [$name, $receiver->name->getStartTokenPos(), $name, [$name]];
             }
             $operator = $receiver instanceof Expr\NullsafePropertyFetch ? '?->' : '->';
-            return [$base[0] . $operator . $name, $base[1], $base[2] . $operator . $name];
+            return [$base[0] . $operator . $name, $base[1], $base[2] . $operator . $name, [...$base[3], $name]];
         }
         if ($receiver instanceof Expr\StaticPropertyFetch && $receiver->name instanceof Node\VarLikeIdentifier) {
             $text = '$' . $receiver->name->toString();
-            return [$text, $receiver->name->getStartTokenPos(), $text];
+            return [$text, $receiver->name->getStartTokenPos(), $text, [$receiver->name->toString()]];
         }
         if (
             $receiver instanceof Expr\ClassConstFetch
@@ -213,13 +214,15 @@ final class CallExtractor
             && strtolower($receiver->name->toString()) !== 'class'
         ) {
             $text = $receiver->name->toString();
-            return [$text, $receiver->name->getStartTokenPos(), $text];
+            return [$text, $receiver->name->getStartTokenPos(), $text, [$text]];
         }
         if ($receiver instanceof Name) {
             $position = $receiver->getStartTokenPos();
             $token = $this->tokens[$position];
             $nameTokens = [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED, T_NAME_RELATIVE];
-            return in_array($token->id, $nameTokens, true) ? [$token->text, $position, $token->text] : null;
+            return in_array($token->id, $nameTokens, true)
+                ? [$token->text, $position, $token->text, self::nameSegments($token->text)]
+                : null;
         }
 
         return null;
@@ -247,6 +250,33 @@ final class CallExtractor
         }
 
         return $named;
+    }
+
+    /**
+     * 語言中立的結構化 callee（fact schema v2）。`text` 只供顯示；規則比對 `name` 與 `receiver`。
+     *
+     * @param list<string>|null $receiver 去掉 `$`、`->`、`::`、`\` 的 receiver 路徑；無法化成路徑時為 null。
+     * @return array{text: string, name: string, receiver: list<string>|null, kind: string, optional: bool}
+     */
+    public static function callee(string $text, string $name, ?array $receiver, string $kind, bool $optional = false): array
+    {
+        return [
+            'text' => $text,
+            'name' => $name,
+            'receiver' => $receiver,
+            'kind' => $kind,
+            'optional' => $optional,
+        ];
+    }
+
+    /**
+     * 名稱（class / namespace）拆成路徑，移除 fully-qualified 前導 `\`。
+     *
+     * @return list<string>
+     */
+    public static function nameSegments(string $name): array
+    {
+        return array_values(array_filter(explode('\\', $name), static fn (string $part): bool => $part !== ''));
     }
 
     private function rangeContainsCallback(int $startPosition, int $endPosition): bool

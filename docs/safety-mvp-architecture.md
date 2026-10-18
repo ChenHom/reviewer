@@ -104,7 +104,8 @@ Analyzer 以 [nikic/php-parser](https://github.com/nikic/PHP-Parser) 5.9.0（版
 
 - 排版、註解、trailing comma、引號種類、`array()` / `[]`、多餘括號不算差異（`Canonicalizer` 的 hash 不看 node attributes）；`__LINE__` 的行號與 `__COMPILER_HALT_OFFSET__` 則納入比較。
 - 其餘每個被「解釋」的差異都必須消耗一個 call fact 或產生一個新的 fact，因此沒有 fact 的 `COMPLETE` 只會發生在兩棵 AST 相同時（區域變數以 canonical 名稱比較，見下）。
-- 位置參數的改變無法被更細的 fact 解釋時，會輸出 `CALL_ARGUMENT_CHANGED`（argument 為 `#index`）作為補充資訊，但不算已解釋。
+- 位置參數的改變無法被更細的 fact 解釋時，會輸出 `CALL_ARGUMENT_CHANGED`（argument 為位置數字，顯示為 `#index`）作為補充資訊，但不算已解釋。
+- 參數數量改變時，只有純移除或純新增（一邊的參數是另一邊的子序列，增減的參數不含 closure）才以 `CALL_ARGUMENT_REMOVED` / `CALL_ARGUMENT_ADDED` 解釋，否則為未解釋差異。
 
 比對最多依序做三輪。後一輪只在前面各輪都留有未解釋差異時才執行，且只有能完整解釋時才採用，否則維持第 1 輪的結果：
 
@@ -114,10 +115,10 @@ Analyzer 以 [nikic/php-parser](https://github.com/nikic/PHP-Parser) 5.9.0（版
 
 判為等價（`COMPLETE` 且沒有 fact）前，再以最新語法與 PHP 7.4 語法分別解析 before / after：同一語法下兩側的可解析性必須一致，兩側都能解析的語法下也必須等價，否則回報 `PHP_GRAMMAR_DIVERGENCE`（例如 `.` 與 `+` 的優先順序在 PHP 8 改變）。舊版 PHP 不支援的新語法（例如參數 trailing comma）不在這項檢查範圍內，請以目標 PHP 版本的 `php -l` 檢查。PHP 5 的語意也不在檢查範圍：例如 `$$foo['bar']` 在 PHP 5 是 `${$foo['bar']}`，在 PHP 7 / 8 是 `${$foo}['bar']`；把 `$$foo['bar']` 改成 `${$foo}['bar']`（或反過來）仍會被判為等價。
 
-目前輸出 13 種 generic facts（各 fact 的細節與 container 格式見 [README「已實作」](../README.md#已實作)）：
+目前輸出 15 種 generic facts（各 fact 的細節與結構化 `callee` / `container` 格式見 [README「已實作」](../README.md#已實作)）：
 
 - `CallExtractor` / `CallFacts`：`CALL_ARGUMENT_CHANGED`（named argument）、`CALL_REMOVED` / `CALL_ADDED`（method、nullsafe method 與 static call，含 closure 內的巢狀 call 與鏈式 call）。
-- `StructuralDiff`：`BINARY_OPERATOR_CHANGED`、`GUARD_REMOVED` / `GUARD_ADDED`、`ARRAY_ITEM_REMOVED` / `ARRAY_ITEM_ADDED`、`LITERAL_CHANGED`、`EXPRESSION_NEGATED`、`RETURN_VALUE_CHANGED`、`CALL_ARGUMENTS_REORDERED`、`VARIABLE_CHANGED`。
+- `StructuralDiff`：`CALL_ARGUMENT_REMOVED` / `CALL_ARGUMENT_ADDED`、`BINARY_OPERATOR_CHANGED`、`GUARD_REMOVED` / `GUARD_ADDED`、`ARRAY_ITEM_REMOVED` / `ARRAY_ITEM_ADDED`、`LITERAL_CHANGED`、`EXPRESSION_NEGATED`、`RETURN_VALUE_CHANGED`、`CALL_ARGUMENTS_REORDERED`、`VARIABLE_CHANGED`。
 
 下列情況 analyzer 回報 `PARTIAL_PARSE`，`COV-PHP-001` 帶 reasonCode：
 
@@ -144,7 +145,7 @@ Adapter 只說「發生什麼」。
 
 Interpreter 才說「這件事對 Review policy 代表什麼」。
 
-目前 `PHP_LARAVEL_DOMAIN_INTERPRETERS`（`src/interpreters/php-laravel-domain.js`）註冊 15 個 interpreter。比對 callee 前會先移除 fully-qualified 前導 `\`，所以 `\DB::transaction` 與 `DB::transaction` 相同。例如：
+目前 `PHP_LARAVEL_DOMAIN_INTERPRETERS`（`src/interpreters/php-laravel-domain.js`）註冊 15 個 interpreter。Interpreter 比對 fact schema v2 的結構化 `callee` / `container`（`name`、`receiver`、`type`、`keys` 等），不解析 PHP 語法字串；`receiver` 不含 fully-qualified 前導 `\`，所以 `\DB::transaction` 與 `DB::transaction` 相同。例如：
 
 ```
 CALL_ARGUMENT_CHANGED（named argument idempotencyKey）

@@ -42,6 +42,19 @@ async function analyze(caseName) {
   });
 }
 
+/**
+ * fact properties 中結構化 callee / container 換成顯示文字，方便比較。
+ *
+ * @param {object} properties - fact properties。
+ * @returns {object} 以文字表示的 properties。
+ */
+function textual(properties) {
+  return Object.fromEntries(Object.entries(properties).map(([key, value]) => [
+    key,
+    (key === 'callee' || key === 'container') && value && typeof value === 'object' ? value.text : value,
+  ]));
+}
+
 test('format-only PHP change 會 COMPLETE 且不產生 semantic fact', async () => {
   const result = await analyze('format-only');
 
@@ -60,7 +73,7 @@ test('named argument expression 變更會輸出 CALL_ARGUMENT_CHANGED', async ()
   assert.equal(result.facts[0].kind, 'CALL_ARGUMENT_CHANGED');
   assert.equal(result.facts[0].subject, 'PaymentService::retry');
   assert.deepEqual(result.facts[0].properties, {
-    callee: '$gateway->charge',
+    callee: { text: '$gateway->charge', name: 'charge', receiver: ['gateway'], kind: 'method', optional: false },
     argument: 'idempotencyKey',
     before: '$requestId',
     after: "$requestId . ':' . $attempt",
@@ -77,7 +90,7 @@ test('DB::transaction wrapper 移除只輸出 generic CALL_REMOVED 並保持 par
   assert.equal(result.obligations[0].status, 'PARTIAL_PARSE');
   assert.ok(result.facts.some((fact) => (
     fact.kind === 'CALL_REMOVED'
-    && fact.properties.callee === 'DB::transaction'
+    && fact.properties.callee?.text === 'DB::transaction'
   )));
   assert.equal(
     result.facts.some((fact) => fact.kind === 'TRANSACTION_BOUNDARY_REMOVED'),
@@ -93,7 +106,7 @@ test('authorize call 移除只描述 CALL_REMOVED，不在 Adapter 解讀授權�
   assert.equal(result.complete, true);
   assert.ok(result.facts.some((fact) => (
     fact.kind === 'CALL_REMOVED'
-    && fact.properties.callee === '$this->authorize'
+    && fact.properties.callee?.text === '$this->authorize'
   )));
   assert.equal(
     result.facts.some((fact) => fact.kind === 'AUTHORIZATION_GUARD_REMOVED'),
@@ -108,7 +121,7 @@ test('新增 standalone call 會輸出 CALL_ADDED 且 completeness 可被證明'
   assert.equal(result.complete, true);
   assert.ok(result.facts.some((fact) => (
     fact.kind === 'CALL_ADDED'
-    && fact.properties.callee === '$this->audit'
+    && fact.properties.callee?.text === '$this->audit'
   )));
 });
 
@@ -284,7 +297,7 @@ test('closure 內的巢狀 call 會被抽出，unwrap transaction 只留下 CALL
   assert.deepEqual(validateAdapterResult(result), { valid: true, errors: [] });
   assert.equal(result.complete, false);
   assert.deepEqual(
-    result.facts.map(({ kind, properties }) => [kind, properties.callee]),
+    result.facts.map(({ kind, properties }) => [kind, properties.callee?.text]),
     [['CALL_REMOVED', '\\DB::transaction']],
   );
 });
@@ -297,7 +310,7 @@ test('鏈式 call 移除會輸出 ->method callee，並由 AST 解釋為完整',
 
   assert.equal(result.complete, true);
   assert.deepEqual(
-    result.facts.map(({ kind, properties }) => [kind, properties.callee]),
+    result.facts.map(({ kind, properties }) => [kind, properties.callee?.text]),
     [['CALL_REMOVED', '->lockForUpdate']],
   );
 });
@@ -310,7 +323,7 @@ test('屬性鏈 receiver 會保留完整名稱', async () => {
 
   assert.equal(result.complete, true);
   assert.deepEqual(
-    result.facts.map(({ kind, properties }) => [kind, properties.callee]),
+    result.facts.map(({ kind, properties }) => [kind, properties.callee?.text]),
     [['CALL_REMOVED', '$this->adminDB->commit']],
   );
 });
@@ -325,9 +338,9 @@ test('無法被更細 fact 解釋的位置參數變更輸出 #index fallback fac
   assert.equal(result.obligations[0].status, 'PARTIAL_PARSE');
   assert.equal(result.facts.length, 1);
   assert.equal(result.facts[0].kind, 'CALL_ARGUMENT_CHANGED');
-  assert.deepEqual(result.facts[0].properties, {
+  assert.deepEqual(textual(result.facts[0].properties), {
     callee: '$q->update',
-    argument: '#0',
+    argument: 0,
     before: "['amount' => floor($q->amount)]",
     after: "['amount' => ceil($q->amount)]",
     changeSide: 'after',
@@ -402,7 +415,7 @@ class InlineService
   assert.deepEqual(
     result.facts.map(({ kind, properties, provenance }) => [
       kind,
-      properties.callee,
+      properties.callee?.text,
       before.slice(provenance.startByte, provenance.startByte + 2),
     ]),
     [
@@ -438,7 +451,7 @@ test('PHP 8 已移除的語法（$str{0}）會以 PHP 7.4 語法 fallback 解析
 
   const removed = await inlineAnalyze(legacy('        $this->verifySign($s);'), legacy(''));
   assert.deepEqual(
-    removed.facts.map(({ kind, properties }) => [kind, properties.callee]),
+    removed.facts.map(({ kind, properties }) => [kind, properties.callee?.text]),
     [['CALL_REMOVED', '$this->verifySign']],
   );
 });
@@ -506,7 +519,7 @@ test('property 陣列移除元素輸出 ARRAY_ITEM_REMOVED 並帶 container', as
   assert.deepEqual(result.facts.map(({ kind, properties }) => [kind, properties]), [[
     'ARRAY_ITEM_REMOVED',
     {
-      container: 'property:$beforeActionList',
+      container: { type: 'property', name: 'beforeActionList', keys: [], text: 'property:$beforeActionList' },
       key: null,
       value: "'authorize'",
       changeSide: 'before',
@@ -523,14 +536,14 @@ test('Route::group middleware 移除輸出帶 key path 的 ARRAY_ITEM_REMOVED', 
 
   assert.equal(result.complete, true);
   assert.deepEqual(
-    result.facts.map(({ kind, properties }) => [kind, properties.container, properties.value]),
+    result.facts.map(({ kind, properties }) => [kind, properties.container?.text, properties.value]),
     [['ARRAY_ITEM_REMOVED', 'Route::group#0[middleware]', "'auth:admin'"]],
   );
 });
 
 function factSummary(result) {
   return result.facts.map(({ kind, properties }) => {
-    const { changeSide, ...rest } = properties;
+    const { changeSide, ...rest } = textual(properties);
     assert.equal(changeSide, kind === 'CALL_REMOVED' ? 'before' : 'after');
     return [kind, rest];
   });
@@ -569,7 +582,7 @@ test('條件或布林值被反轉時輸出 EXPRESSION_NEGATED', async () => {
   assert.deepEqual(factSummary(unnegated), [['EXPRESSION_NEGATED', { container: 'return', before: '!$q', after: '$q' }]]);
 
   const ternary = await inlineAnalyze(wrap('        return $q ? 1 : 2;'), wrap('        return !$q ? 1 : 2;'));
-  assert.deepEqual(ternary.facts.map(({ properties }) => properties.container), ['ternary']);
+  assert.deepEqual(ternary.facts.map(({ properties }) => properties.container?.text), ['ternary']);
 });
 
 test('回傳值換成常數（或從常數換掉）時輸出 RETURN_VALUE_CHANGED', async () => {
@@ -624,7 +637,7 @@ test('同一位置換成另一個 method 時由 CALL_REMOVED / CALL_ADDED 解釋
     wrap('        return $q->where($a)->firstOrFail();'),
   );
   assert.equal(result.complete, true);
-  assert.deepEqual(result.facts.map(({ kind, properties }) => [kind, properties.callee]), [
+  assert.deepEqual(result.facts.map(({ kind, properties }) => [kind, properties.callee?.text]), [
     ['CALL_ADDED', '->firstOrFail'],
     ['CALL_REMOVED', '->first'],
   ]);
@@ -643,7 +656,7 @@ test('鏈中移除或新增的 call 與鄰近 call 同類型時仍由 CALL_REMOV
   for (const [before, after, kind, callee] of cases) {
     const result = await inlineAnalyze(wrap(before), wrap(after));
     assert.equal(result.complete, true, after);
-    assert.deepEqual(result.facts.map((fact) => [fact.kind, fact.properties.callee]), [[kind, callee]], after);
+    assert.deepEqual(result.facts.map((fact) => [fact.kind, fact.properties.callee?.text]), [[kind, callee]], after);
   }
 });
 
@@ -656,7 +669,7 @@ test('運算式 list 中一對一替換的運算式直接比較（for 條件、e
   assert.deepEqual(loop.facts.map(({ kind, properties }) => [kind, properties.operatorAfter]), [['BINARY_OPERATOR_CHANGED', '<']]);
 
   const negatedLoop = await inlineAnalyze(wrap('        while ($q) {\n            $a->x();\n        }'), wrap('        while (!$q) {\n            $a->x();\n        }'));
-  assert.deepEqual(negatedLoop.facts.map(({ properties }) => properties.container), ['while']);
+  assert.deepEqual(negatedLoop.facts.map(({ properties }) => properties.container?.text), ['while']);
 
   const echo = await inlineAnalyze(wrap('        echo $a, $b;'), wrap('        echo $a, floor($b);'));
   assert.equal(echo.complete, false);
@@ -672,7 +685,7 @@ test('變數名稱的差異無法以 scope 內改名解釋時輸出 VARIABLE_CHA
 
   const parameter = await inlineAnalyze(method('$amount', '        return $amount;'), method('$value', '        return $value;'));
   assert.equal(parameter.complete, true);
-  assert.deepEqual(parameter.facts.map(({ properties }) => [properties.container, properties.before, properties.after]), [
+  assert.deepEqual(parameter.facts.map(({ properties }) => [properties.container?.text, properties.before, properties.after]), [
     ['param', '$amount', '$value'],
     ['return', '$amount', '$value'],
   ]);
@@ -791,7 +804,7 @@ test('改名同時有其他變更時仍輸出對應 fact', async () => {
 
   assert.equal(result.complete, true);
   assert.deepEqual(
-    result.facts.map(({ kind, properties }) => [kind, properties.callee ?? properties.operatorAfter]),
+    result.facts.map(({ kind, properties }) => [kind, properties.callee?.text ?? properties.operatorAfter]),
     [['CALL_REMOVED', '$cash->lock'], ['BINARY_OPERATOR_CHANGED', '<=']],
   );
 });
@@ -891,4 +904,82 @@ test('PHP 7 字串 assert() 與 spread 參數的 parse_str 視為 name-sensitive
   );
   assert.equal(reduced.complete, true);
   assert.deepEqual(reduced.facts, []);
+});
+
+test('fact schema v2：callee 以語言中立的 name / receiver / kind 描述', async () => {
+  const cases = [
+    ['        \\DB::transaction($a);', { text: '\\DB::transaction', name: 'transaction', receiver: ['DB'], kind: 'static', optional: false }],
+    [
+      '        \\Illuminate\\Support\\Facades\\Gate::authorize($a);',
+      {
+        text: '\\Illuminate\\Support\\Facades\\Gate::authorize',
+        name: 'authorize',
+        receiver: ['Illuminate', 'Support', 'Facades', 'Gate'],
+        kind: 'static',
+        optional: false,
+      },
+    ],
+    ['        $this->adminDB->transaction($a);', { text: '$this->adminDB->transaction', name: 'transaction', receiver: ['this', 'adminDB'], kind: 'method', optional: false }],
+    ['        $q->where($a)->lockForUpdate();', { text: '->lockForUpdate', name: 'lockForUpdate', receiver: null, kind: 'method', optional: false }],
+    ['        $q?->audit($a);', { text: '$q?->audit', name: 'audit', receiver: ['q'], kind: 'method', optional: true }],
+  ];
+
+  for (const [line, callee] of cases) {
+    const result = await inlineAnalyze(wrap(`        $q->save();\n${line}`), wrap('        $q->save();'));
+    const removed = result.facts.filter((fact) => fact.kind === 'CALL_REMOVED' && fact.properties.callee.name === callee.name);
+    assert.deepEqual(removed.map((fact) => fact.properties.callee), [callee], line);
+  }
+});
+
+test('fact schema v2：位置參數 container 帶結構化 callee 與數字位置', async () => {
+  const result = await inlineAnalyze(
+    wrap("        return $this->authorize('update', $q);"),
+    wrap("        return $this->authorize('view', $q);"),
+  );
+
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.facts.map(({ kind, properties }) => [kind, properties.container]), [[
+    'LITERAL_CHANGED',
+    {
+      type: 'argument',
+      callee: { text: '$this->authorize', name: 'authorize', receiver: ['this'], kind: 'method', optional: false },
+      argument: 0,
+      keys: [],
+      text: '$this->authorize#0',
+    },
+  ]]);
+
+  const reordered = await inlineAnalyze(wrap('        return new \\App\\Money($a, $b);'), wrap('        return new \\App\\Money($b, $a);'));
+  assert.deepEqual(reordered.facts.map(({ properties }) => properties.callee), [
+    { text: 'new \\App\\Money', name: 'Money', receiver: ['App'], kind: 'constructor', optional: false },
+  ]);
+});
+
+test('參數純移除或純新增時輸出 CALL_ARGUMENT_REMOVED / CALL_ARGUMENT_ADDED 並判為完整', async () => {
+  const removed = await inlineAnalyze(
+    wrap("        $this->middleware('auth', 'verified');"),
+    wrap("        $this->middleware('auth');"),
+  );
+  assert.equal(removed.complete, true);
+  assert.deepEqual(removed.facts.map(({ kind, properties }) => [kind, textual(properties)]), [[
+    'CALL_ARGUMENT_REMOVED',
+    { callee: '$this->middleware', argument: 1, value: "'verified'", changeSide: 'before' },
+  ]]);
+
+  const added = await inlineAnalyze(wrap('        $q->charge($a);'), wrap('        $q->charge($a, idempotencyKey: $b);'));
+  assert.equal(added.complete, true);
+  assert.deepEqual(added.facts.map(({ kind, properties }) => [kind, textual(properties)]), [[
+    'CALL_ARGUMENT_ADDED',
+    { callee: '$q->charge', argument: 'idempotencyKey', value: 'idempotencyKey: $b', changeSide: 'after' },
+  ]]);
+
+  // 同時改了其他參數、或增減的是 callback 時維持未解釋。
+  for (const [before, after] of [
+    ['        $q->where($a, 1);', '        $q->where($b);'],
+    ['        $q->each($a, function () { return 1; });', '        $q->each($a);'],
+  ]) {
+    const result = await inlineAnalyze(wrap(before), wrap(after));
+    assert.equal(result.complete, false, after);
+    assert.equal(result.facts.some(({ kind }) => kind.startsWith('CALL_ARGUMENT_')), false, after);
+  }
 });

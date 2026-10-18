@@ -203,6 +203,7 @@ fact 沒有任何 domain interpreter 對應。fact id 的格式是 `php-` 加 20
 
 例外：位置參數的變更無法被更細的 fact 解釋時，analyzer 仍輸出 `CALL_ARGUMENT_CHANGED` 標示位置（描述為「`<callee>` 的參數 #<index>：<原值> → <新值>」），但這個 fact 不視為已解釋，所以同一檔案也會有 `COV-PHP-001:UNRECOGNIZED_PHP_CHANGE`，為 `FULL`。例如 `$q->take(10)` 改成 `$q->take($n)`：原因是 `COV-PHP-001:UNRECOGNIZED_PHP_CHANGE` 與這個 fact 的 `FACT_UNHANDLED:<id>`。
 
+- 參數純移除或純新增（`CALL_ARGUMENT_REMOVED` / `CALL_ARGUMENT_ADDED`，描述為「`<callee>` 移除參數 <位置或名稱>：<值>」）是已解釋的變更：沒有對應的 domain 規則時是 `TARGETED` 的 `FACT_UNHANDLED`。
 - 例如 `CALL_ADDED`（新增呼叫）目前沒有任何 interpreter 處理，一律是 `FACT_UNHANDLED`；其他 fact 只有符合下一節的模式時才有具體代碼。
 - 文字輸出把它們合併成一行 `FACT_UNHANDLED ×N`；JSON 逐一列出。
 - JSON 的 `facts` 不含 fact id，無法以 id 對應到個別 fact；請以 fact 的 `kind` 與位置判斷。
@@ -218,7 +219,7 @@ fact 沒有任何 domain interpreter 對應。fact id 的格式是 `php-` 加 20
 | `TRANSACTION_ROLLBACK_REMOVED` | `CALL_REMOVED` | 移除 DB 連線 receiver 的 `rollBack` / `rollback` |
 | `AUTHORIZATION_GUARD_REMOVED` | `CALL_REMOVED` | 移除 `$this->authorize`、`$this->authorizeForUser` 或 `Gate::authorize` |
 | `AUTHORIZATION_ABILITY_CHANGED` | `LITERAL_CHANGED` | `$this->authorize` 或 `Gate::authorize` 的第一個參數（ability）從字面值換成另一個字面值，例如 `'update'` → `'view'`。`$this->authorizeForUser` 的 ability 是第二個參數，換成另一個字面值時為 `FACT_UNHANDLED`。任一呼叫的 ability 改成變數等非字面值（例如 `'update'` → `$ability`）時無法解釋，檔案為 `FULL`（`COV-PHP-001:UNRECOGNIZED_PHP_CHANGE`） |
-| `MIDDLEWARE_GUARD_REMOVED` | `CALL_REMOVED`、`CALL_ARGUMENT_CHANGED`、`ARRAY_ITEM_REMOVED`、`LITERAL_CHANGED` | 原本的 middleware 不再套用：`->middleware(...)` 呼叫被移除，或 `->middleware(...)`、`Route::group` 的 `'middleware'`、`$middleware` / `$middlewares` / `$beforeActionList` property 少了某個 middleware、名稱被換掉 |
+| `MIDDLEWARE_GUARD_REMOVED` | `CALL_REMOVED`、`CALL_ARGUMENT_CHANGED`、`CALL_ARGUMENT_REMOVED`、`ARRAY_ITEM_REMOVED`、`LITERAL_CHANGED` | 原本的 middleware 不再套用：`->middleware(...)` 呼叫或其中一個參數被移除、`Route::group` 含 `'middleware'` 的設定參數被移除，或 `->middleware(...)`、`Route::group` 的 `'middleware'`、`$middleware` / `$middlewares` / `$beforeActionList` property 少了某個 middleware、名稱被換掉 |
 | `ROW_LOCK_REMOVED` | `CALL_REMOVED` | 移除 `lockForUpdate` / `sharedLock` |
 | `SIGNATURE_VERIFICATION_REMOVED` | `CALL_REMOVED` | 移除名稱像簽章驗證的 method，例如 `verifySign`、`verificationSign`、`checkSign`、`validateSignature` |
 | `COMPARISON_OPERATOR_CHANGED` | `BINARY_OPERATOR_CHANGED` | 比較運算子互換（`<`、`<=`、`>`、`>=`、`==`、`!=`、`===`、`!==`、`<>`、`<=>`） |

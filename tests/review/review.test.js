@@ -138,8 +138,18 @@ test('describeFact 為每種 fact 產生可讀描述', () => {
   assert.equal(describe('RETURN_VALUE_CHANGED', { before: '$q->total()', after: '' }), '回傳值 $q->total() → （無）');
   assert.equal(describe('RETURN_VALUE_CHANGED', { before: '', after: 'null' }), '回傳值 （無） → null');
   assert.equal(describe('CALL_ARGUMENTS_REORDERED', { callee: 'max', before: '$a, $b', after: '$b, $a' }), 'max 的參數順序：($a, $b) → ($b, $a)');
-  assert.equal(describe('VARIABLE_CHANGED', { container: 'param', before: '$amount', after: '$value' }), '參數 $amount → $value');
-  assert.equal(describe('VARIABLE_CHANGED', { container: 'return', before: '$a', after: '$b' }), '變數 $a → $b');
+  assert.equal(describe('VARIABLE_CHANGED', { container: { type: 'param', keys: [], text: 'param' }, before: '$amount', after: '$value' }), '參數 $amount → $value');
+  assert.equal(describe('VARIABLE_CHANGED', { container: { type: 'return', keys: [], text: 'return' }, before: '$a', after: '$b' }), '變數 $a → $b');
+  // fact schema v2：結構化 callee / container 顯示 text，位置參數顯示 #index
+  const callee = { text: '$this->middleware', name: 'middleware', receiver: ['this'], kind: 'method', optional: false };
+  assert.equal(describe('CALL_REMOVED', { callee }), '移除呼叫 $this->middleware');
+  assert.equal(describe('CALL_ARGUMENT_CHANGED', { callee, argument: 0, before: "'a'", after: "'b'" }), "$this->middleware 的參數 #0：'a' → 'b'");
+  assert.equal(describe('CALL_ARGUMENT_REMOVED', { callee, argument: 1, value: "'verified'" }), "$this->middleware 移除參數 #1：'verified'");
+  assert.equal(describe('CALL_ARGUMENT_ADDED', { callee, argument: 'key', value: 'key: $b' }), '$this->middleware 新增參數 key：key: $b');
+  assert.equal(
+    describe('LITERAL_CHANGED', { container: { type: 'argument', callee, argument: 0, keys: [], text: '$this->middleware#0' }, before: '1', after: '2' }),
+    '值 1 → 2（$this->middleware#0）',
+  );
   // 多行、過長的片段壓成一行並截斷
   const long = `[\n    'a' => ${'1, '.repeat(40)}\n]`;
   const described = describe('RETURN_VALUE_CHANGED', { before: long, after: 'null' });

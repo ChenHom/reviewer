@@ -3,6 +3,7 @@ import { basename } from 'node:path';
 
 import { createAnalysisContextBinding } from '../adapters/contracts.js';
 import { createPhpLaravelAdapter } from '../adapters/php-laravel/adapter.js';
+import { displayArgument, displayText } from '../facts/structured.js';
 import { PHP_LARAVEL_DOMAIN_INTERPRETERS } from '../interpreters/php-laravel-domain.js';
 import { createAuthorityState } from '../publication.js';
 import { runAdapterPipeline } from '../runner.js';
@@ -61,10 +62,12 @@ function snippet(value) {
  */
 export function describeFact(fact) {
   const raw = fact.properties ?? {};
-  const p = Object.fromEntries(Object.entries(raw).map(([key, value]) => [
-    key,
-    ['before', 'after', 'value', 'condition'].includes(key) && value !== null ? snippet(value) : value,
-  ]));
+  const p = Object.fromEntries(Object.entries(raw).map(([key, value]) => {
+    if (['before', 'after', 'value', 'condition'].includes(key) && value !== null) return [key, snippet(value)];
+    if (key === 'callee' || key === 'container') return [key, displayText(value)];
+    if (key === 'argument') return [key, displayArgument(value)];
+    return [key, value];
+  }));
   switch (fact.kind) {
     case 'CALL_REMOVED':
       return `移除呼叫 ${p.callee}`;
@@ -72,6 +75,10 @@ export function describeFact(fact) {
       return `新增呼叫 ${p.callee}`;
     case 'CALL_ARGUMENT_CHANGED':
       return `${p.callee} 的參數 ${p.argument}：${p.before} → ${p.after}`;
+    case 'CALL_ARGUMENT_REMOVED':
+      return `${p.callee} 移除參數 ${p.argument}：${p.value}`;
+    case 'CALL_ARGUMENT_ADDED':
+      return `${p.callee} 新增參數 ${p.argument}：${p.value}`;
     case 'BINARY_OPERATOR_CHANGED':
       return `運算子 ${p.operatorBefore} → ${p.operatorAfter}：${p.before} → ${p.after}`;
     case 'GUARD_REMOVED':
@@ -91,7 +98,7 @@ export function describeFact(fact) {
     case 'CALL_ARGUMENTS_REORDERED':
       return `${p.callee} 的參數順序：(${p.before}) → (${p.after})`;
     case 'VARIABLE_CHANGED':
-      return `${p.container === 'param' ? '參數' : '變數'} ${p.before} → ${p.after}`;
+      return `${raw.container?.type === 'param' ? '參數' : '變數'} ${p.before} → ${p.after}`;
     default:
       return fact.kind;
   }

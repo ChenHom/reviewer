@@ -18,19 +18,79 @@ import {
   ROW_LOCK_INTERPRETER,
   SIGNATURE_VERIFICATION_INTERPRETER,
   TRANSACTION_BOUNDARY_INTERPRETER,
-  calleeParts,
 } from '../../src/interpreters/php-laravel-domain.js';
 import { validateFactInterpreters } from '../../src/facts/interpreter.js';
 
+/**
+ * 以 PHP 語法文字建立 fact schema v2 的結構化 callee（測試用）。
+ *
+ * @param {string} text - 例如 `$this->authorize`、`\\DB::transaction`、`->lockForUpdate`、`max`。
+ * @returns {object} structured callee。
+ */
+function phpCallee(text) {
+  const match = /^(.*?)(->|\?->|::)([A-Za-z_]\w*)$/.exec(text);
+  if (!match) {
+    const segments = text.split('\\').filter(Boolean);
+    return { text, name: segments.pop(), receiver: segments, kind: 'function', optional: false };
+  }
+  const [, receiverText, operator, name] = match;
+  const receiver = receiverText === ''
+    ? null
+    : receiverText.split(/\?->|->|::|\\/).filter(Boolean).map((part) => part.replace(/^\$/, ''));
+  return { text, name, receiver, kind: operator === '::' ? 'static' : 'method', optional: operator === '?->' };
+}
+
+/**
+ * 以舊格式文字建立結構化 container（測試用）：`property:$x`、`const:X`、`assign:$x`、
+ * `<callee>#<位置或名稱>`、`return`、`if` 等，後面可接 `[key]`。
+ *
+ * @param {string} text - container 文字。
+ * @returns {object} structured container。
+ */
+function phpContainer(text) {
+  const keys = [];
+  let base = text;
+  for (let match = /\[([^\][]*)\]$/.exec(base); match; match = /\[([^\][]*)\]$/.exec(base)) {
+    keys.unshift(match[1]);
+    base = base.slice(0, match.index);
+  }
+  const argument = /^(.*)#(\w+)$/.exec(base);
+  if (argument) {
+    return {
+      type: 'argument',
+      callee: argument[1] === 'call' ? null : phpCallee(argument[1]),
+      argument: /^\d+$/.test(argument[2]) ? Number(argument[2]) : argument[2],
+      keys,
+      text,
+    };
+  }
+  const named = /^(property|const|assign):\$?(.+)$/.exec(base);
+  return named ? { type: named[1], name: named[2], keys, text } : { type: base, keys, text };
+}
+
 function removed(callee) {
-  return { id: 'php-1', kind: 'CALL_REMOVED', properties: { callee, changeSide: 'before' } };
+  return { id: 'php-1', kind: 'CALL_REMOVED', properties: { callee: phpCallee(callee), changeSide: 'before' } };
 }
 
 function argumentChanged(callee, argument, before, after) {
   return {
     id: 'php-2',
     kind: 'CALL_ARGUMENT_CHANGED',
-    properties: { callee, argument, before, after, changeSide: 'after' },
+    properties: {
+      callee: phpCallee(callee),
+      argument: /^#\d+$/.test(argument) ? Number(argument.slice(1)) : argument,
+      before,
+      after,
+      changeSide: 'after',
+    },
+  };
+}
+
+function argumentRemoved(callee, argument, value) {
+  return {
+    id: 'php-9',
+    kind: 'CALL_ARGUMENT_REMOVED',
+    properties: { callee: phpCallee(callee), argument, value, changeSide: 'before' },
   };
 }
 
@@ -39,30 +99,29 @@ function blockersOf(interpreter, fact) {
   return result.handled ? result.blockers : null;
 }
 
-test('calleeParts 移除 fully-qualified 前導反斜線並拆出 receiver/method', () => {
-  assert.deepEqual(calleeParts('\\DB::transaction'), {
-    receiver: 'DB',
-    method: 'transaction',
-    normalized: 'DB::transaction',
+test('測試 helper 產生的結構化欄位與 analyzer 輸出形狀一致', () => {
+  assert.deepEqual(phpCallee('\\DB::transaction'), {
+    text: '\\DB::transaction', name: 'transaction', receiver: ['DB'], kind: 'static', optional: false,
   });
-  assert.deepEqual(calleeParts('$this->adminDB->transaction'), {
-    receiver: '$this->adminDB',
-    method: 'transaction',
-    normalized: '$this->adminDB->transaction',
-  });
-  assert.deepEqual(calleeParts('->lockForUpdate'), {
-    receiver: '',
-    method: 'lockForUpdate',
-    normalized: '->lockForUpdate',
-  });
-  assert.deepEqual(calleeParts('$user?->can'), {
-    receiver: '$user',
-    method: 'can',
-    normalized: '$user?->can',
-  });
-  assert.deepEqual(calleeParts('helper'), { receiver: '', method: 'helper', normalized: 'helper' });
-  assert.equal(calleeParts(undefined), null);
-  assert.equal(calleeParts(''), null);
+  assert.deepEqual(phpCallee('$this->adminDB->transaction').receiver, ['this', 'adminDB']);
+  assert.deepEqual(phpCallee('->lockForUpdate').receiver, null);
+  assert.equal(phpCallee('$user?->can').optional, true);
+  assert.deepEqual(phpContainer('Route::group#0[prefix][middleware]').keys, ['prefix', 'middleware']);
+  assert.deepEqual(phpContainer('property:$fillable'), { type: 'property', name: 'fillable', keys: [], text: 'property:$fillable' });
+});
+
+test('舊格式字串或形狀錯誤的 callee / container 不被任何 interpreter 處理（fail-closed 成 FACT_UNHANDLED）', () => {
+  const legacy = [
+    { id: 'x1', kind: 'CALL_REMOVED', properties: { callee: '\\DB::transaction', changeSide: 'before' } },
+    { id: 'x2', kind: 'CALL_REMOVED', properties: { callee: { text: 'x', name: '', receiver: null, kind: 'method', optional: false } } },
+    { id: 'x3', kind: 'ARRAY_ITEM_REMOVED', properties: { container: 'property:$middleware', key: null, value: "'auth'" } },
+    { id: 'x4', kind: 'LITERAL_CHANGED', properties: { container: '$this->authorize#0', before: "'a'", after: "'b'" } },
+  ];
+  for (const fact of legacy) {
+    for (const interpreter of PHP_LARAVEL_DOMAIN_INTERPRETERS) {
+      assert.equal(interpreter.interpret(fact).handled, false, `${interpreter.id} ${fact.id}`);
+    }
+  }
 });
 
 test('interpreter set 保持合法且 id 唯一', () => {
@@ -112,7 +171,7 @@ test('transaction interpreter 不誤判非 DB receiver 或非移除 fact', () =>
     blockersOf(TRANSACTION_BOUNDARY_INTERPRETER, {
       id: 'php-3',
       kind: 'CALL_ADDED',
-      properties: { callee: 'DB::transaction' },
+      properties: { callee: phpCallee('DB::transaction') },
     }),
     null,
   );
@@ -209,6 +268,19 @@ test('middleware interpreter 處理 ->middleware(...) 參數中的 middleware �
   );
 });
 
+test('middleware interpreter 處理 middleware 參數或 Route::group 設定參數被移除', () => {
+  assert.deepEqual(
+    blockersOf(MIDDLEWARE_GUARD_INTERPRETER, argumentRemoved('$this->middleware', 1, "'verified'")),
+    ['MIDDLEWARE_GUARD_REMOVED'],
+  );
+  assert.deepEqual(
+    blockersOf(MIDDLEWARE_GUARD_INTERPRETER, argumentRemoved('\\Route::group', 0, "['middleware' => 'auth', 'prefix' => 'a']")),
+    ['MIDDLEWARE_GUARD_REMOVED'],
+  );
+  assert.equal(blockersOf(MIDDLEWARE_GUARD_INTERPRETER, argumentRemoved('Route::group', 0, "['prefix' => 'a']")), null);
+  assert.equal(blockersOf(MIDDLEWARE_GUARD_INTERPRETER, argumentRemoved('$q->where', 1, '1')), null);
+});
+
 test('row lock interpreter 辨識 lockForUpdate/sharedLock 移除', () => {
   for (const callee of ['->lockForUpdate', '$query->lockForUpdate', 'CashFlow::sharedLock']) {
     assert.deepEqual(
@@ -251,7 +323,7 @@ function arrayItemRemoved(container, value = "'auth'") {
   return {
     id: 'php-4',
     kind: 'ARRAY_ITEM_REMOVED',
-    properties: { container, key: null, value, changeSide: 'before' },
+    properties: { container: phpContainer(container), key: null, value, changeSide: 'before' },
   };
 }
 
@@ -275,7 +347,7 @@ test('middleware interpreter 處理 middleware container 的 ARRAY_ITEM_REMOVED'
       id: 'php-8',
       kind: 'ARRAY_ITEM_REMOVED',
       properties: {
-        container: 'Route::group#0',
+        container: phpContainer('Route::group#0'),
         key: "'middleware'",
         value: "'check.permission:admin'",
         changeSide: 'before',
@@ -290,7 +362,7 @@ test('middleware interpreter 處理 middleware container 的 ARRAY_ITEM_REMOVED'
     blockersOf(MIDDLEWARE_GUARD_INTERPRETER, {
       id: 'php-5',
       kind: 'ARRAY_ITEM_ADDED',
-      properties: { container: 'property:$middleware', key: null, value: "'x'", changeSide: 'after' },
+      properties: { container: phpContainer('property:$middleware'), key: null, value: "'x'", changeSide: 'after' },
     }),
     null,
   );
@@ -329,7 +401,10 @@ test('guard clause interpreter 處理 guard 的移除與新增', () => {
 });
 
 function valueFact(kind, properties, subject = 'Service::run') {
-  return { id: 'php-8', kind, subject, properties: { changeSide: 'after', ...properties } };
+  const structured = { ...properties };
+  if (typeof structured.container === 'string') structured.container = phpContainer(structured.container);
+  if (typeof structured.callee === 'string') structured.callee = phpCallee(structured.callee);
+  return { id: 'php-8', kind, subject, properties: { changeSide: 'after', ...structured } };
 }
 
 test('literal 變更：middleware 名稱被換掉、authorize ability 改變、class 常數改值', () => {
