@@ -5,13 +5,13 @@ import { structuredCallee, structuredContainer } from './facts/structured.js';
 import { TRACK } from './routing.js';
 
 /**
- * 二次 review 的追蹤單位：需要人工處理的項目（finding）。
+ * 二次 review 的追蹤單位：必須人工確認的項目（finding）。
  *
  * - 每個帶單向門 blocker 的 fact，每個 blocker 一個 finding；
- * - 檔案層級的單向門原因（`PROTECTED_PATH`、`POLICY_FILE_CHANGED`）各一個 finding；
- * - `FULL` 的檔案一個 `FULL_REVIEW` finding（有無法解釋或沒有分析的變更，必須看整個檔案）。
+ * - 檔案層級的單向門原因（`PROTECTED_PATH`、`POLICY_FILE_CHANGED`、`POLICY_CONFIG_INVALID`）各一個 finding。
  *
- * 只有路由為 `ESCALATED` 的檔案有 finding；`AI_TRACK` 的 fact 不需要人工確認。
+ * 只有路由為 `ESCALATED` 的檔案有 finding。其他需要 review 的變更（含機械審查無法解釋的部分）
+ * 由 AI 審查；AI 判斷需要人工的項目之後由 AI 層加入（尚未實作）。
  *
  * finding id = sha256(path, subject, kind, blocker, anchor, ordinal)，不含行號與 byte offset，
  * 所以在上方插入程式碼不會讓 finding 變成新的。`anchor` 是 fact 中不隨位置改變的內容；
@@ -108,7 +108,7 @@ function digest(value) {
 /**
  * 計算單一檔案的 findings。
  *
- * @param {object} file - review file result（含 `track`、`fallback`、`reasons`、`facts[].blockers`）。
+ * @param {object} file - review file result（含 `track`、`reasons`、`facts[].blockers`）。
  * @param {object} options - 選項。
  * @param {Iterable<string>} options.oneWayDoors - 單向門代碼。
  * @returns {object[]} findings（依出現順序；檔案層級的在最後）。
@@ -137,7 +137,6 @@ export function findingsFor(file, { oneWayDoors }) {
 
   const factBlockers = new Set((file.facts ?? []).flatMap((fact) => fact.blockers ?? []));
   const fileReasons = (file.reasons ?? []).filter((reason) => doors.has(reason) && !factBlockers.has(reason));
-  if (file.fallback === 'FULL') fileReasons.push('FULL_REVIEW');
   for (const reason of fileReasons) {
     drafts.push({
       subject: file.path,

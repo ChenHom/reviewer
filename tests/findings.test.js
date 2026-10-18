@@ -69,7 +69,7 @@ test('同一個 subject 中 anchor 相同的兩個 finding 以 ordinal 區分，
   assert.notEqual(findings[0].id, findings[1].id);
 });
 
-test('檔案層級的單向門與 FULL 檔案各有一個 finding，scope 為整個檔案', () => {
+test('檔案層級的單向門各有一個 finding，scope 為整個檔案；FULL 本身不是人工項目（交給 AI）', () => {
   const findings = findingsFor(file({
     fallback: 'FULL',
     reasons: ['COV-PHP-001:UNRECOGNIZED_PHP_CHANGE', 'AUTHORIZATION_GUARD_REMOVED', 'PROTECTED_PATH'],
@@ -77,12 +77,11 @@ test('檔案層級的單向門與 FULL 檔案各有一個 finding，scope 為整
   assert.deepEqual(findings.map(({ kind, blocker, scopeHash }) => [kind, blocker, scopeHash]), [
     ['CALL_REMOVED', 'AUTHORIZATION_GUARD_REMOVED', 'php:scope-1'],
     ['FILE', 'PROTECTED_PATH', 'git:abc'],
-    ['FILE', 'FULL_REVIEW', 'git:abc'],
   ]);
 
-  const unanalyzed = findingsFor({ path: 'composer.json', track: 'ESCALATED', fallback: 'FULL', reasons: ['UNSUPPORTED_FILE_TYPE'], contentHash: 'git:def', facts: [] }, options);
-  assert.deepEqual(unanalyzed.map(({ kind, blocker, subject, scopeHash, location }) => ({ kind, blocker, subject, scopeHash, location })), [
-    { kind: 'FILE', blocker: 'FULL_REVIEW', subject: 'composer.json', scopeHash: 'git:def', location: null },
+  const invalid = findingsFor({ path: 'composer.json', track: 'ESCALATED', fallback: 'FULL', reasons: ['UNSUPPORTED_FILE_TYPE', 'POLICY_CONFIG_INVALID'], contentHash: 'git:def', facts: [] }, options);
+  assert.deepEqual(invalid.map(({ kind, blocker, subject, scopeHash, location }) => ({ kind, blocker, subject, scopeHash, location })), [
+    { kind: 'FILE', blocker: 'POLICY_CONFIG_INVALID', subject: 'composer.json', scopeHash: 'git:def', location: null },
   ]);
 
   // 沒有 scope hash 的 fact（例如沒有輸出 scope 的 analyzer）以整個檔案為範圍

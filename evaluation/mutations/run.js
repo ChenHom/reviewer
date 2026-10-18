@@ -132,7 +132,7 @@ async function executeCase(definition) {
       decision: decision.status,
       fallback: decision.fallback ?? null,
       reasons: decision.reasons ?? [],
-    }, { oneWayDoors: policy.oneWayDoors, aiTrackPath: policy.isAiTrackPath }).track,
+    }, { oneWayDoors: policy.oneWayDoors }).track,
     publicationAccepted: pipeline.publication.accepted,
     analysisStatus: pipeline.candidate.analysisStatus,
     coverageStatus: pipeline.candidate.coverage.status,

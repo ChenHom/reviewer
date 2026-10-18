@@ -249,12 +249,12 @@ CI（`.github/workflows/review-reduction-safety.yml`，PHP 8.4）在 `npm run te
 
 - Fact schema v2：`callee` / `container` 改為語言中立的結構化欄位；新增 `CALL_ARGUMENT_REMOVED` / `CALL_ARGUMENT_ADDED`。
 - Interpreter 依層拆成語言層（`src/interpreters/core.js`）、框架 preset（`php-laravel`）與業務 preset（`payments`）；CLI 依副檔名選擇語言。
-- 路由：需要 review 的檔案再分成 `AI_TRACK`（交給 AI 審查）與 `ESCALATED`（單向門或 `FULL`，需要人工確認）；`--fail-on-escalation`。
+- 路由：核心流程是機械審查 → AI 審查剩下的 → AI 審查後需要人工的才交給人工。需要 review 的檔案都交給 AI；命中單向門的（`ESCALATED`）AI 不能放行，之後一律人工確認；其他（`AI_TRACK`，包括 `FULL`）由 AI 判斷。`--fail-on-escalation`。AI 審查層尚未實作。
 - 專案設定 `.reviewer.json`（從 merge base 讀取，只能新增攔截），見 [專案設定](project-config.md)。
 - TypeScript / JavaScript adapter 第 1 階段：只判斷 AST 是否等價，不輸出 fact。
 - 二次 review 的輸入：每個 fact 的 scope hash（所屬 method 的 canonical AST hash）與 finding 指紋（`files[].findings`）。狀態機與 GitHub 整合（設計的步驟 7）尚未實作。
 
-目前 mutation evaluation（`npm run eval:mutations`）：32 個 case（critical 25、safe 7，含 8 個 TS case 與 4 個帶專案設定的 case），Critical Recall 100%、Safe Reduction Rate 100%、Critical Direct Fact Coverage 80%（5 個 TS critical case 沒有 fact）、Critical Escalation Rate 84%（4 個 critical case 只會交給 AI 審查，見實作紀錄步驟 3）。
+目前 mutation evaluation（`npm run eval:mutations`）：32 個 case（critical 25、safe 7，含 8 個 TS case 與 4 個帶專案設定的 case），Critical Recall 100%、Safe Reduction Rate 100%、Critical Direct Fact Coverage 80%（5 個 TS critical case 沒有 fact）、Critical Escalation Rate 64%（9 個 critical case 沒有命中單向門，只靠 AI 審查判斷是否需要人工：4 個 PHP case 與 5 個 TS case，見實作紀錄的「流程調整」）。
 
 ## 2. 現在的完整 Pipeline
 

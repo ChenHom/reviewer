@@ -20,7 +20,6 @@ const full = {
     protectedPaths: ['database/migrations/**', 'config/payment.php'],
     oneWayDoors: ['CONSTANT_VALUE_CHANGED'],
   },
-  routing: { aiTrackPaths: ['tests/**', 'docs/*.md'] },
 };
 
 test('完整的設定可以解析，digest 與 key 順序無關', () => {
@@ -29,7 +28,7 @@ test('完整的設定可以解析，digest 與 key 順序無關', () => {
   assert.match(parsed.digest, /^[0-9a-f]{64}$/);
   assert.deepEqual(parsed.config.presets, ['php-laravel']);
 
-  const reordered = { routing: full.routing, rules: full.rules, presets: full.presets, version: 1 };
+  const reordered = { rules: full.rules, presets: full.presets, version: 1 };
   assert.equal(parseProjectConfig(JSON.stringify(reordered)).digest, parsed.digest);
   assert.notEqual(parseProjectConfig(JSON.stringify({ ...full, presets: ['payments'] })).digest, parsed.digest);
 
@@ -66,9 +65,7 @@ test('任何未知欄位、型別錯誤或無效規則都使設定無效（fail-
     [{ version: 1, rules: { protectedArguments: [{ argument: 'k', blocker: 'lower' }] } }, 'POLICY_CONFIG_FIELD_INVALID:rules.protectedArguments[0].blocker'],
     [{ version: 1, rules: { protectedPaths: [''] } }, 'POLICY_CONFIG_FIELD_INVALID:rules.protectedPaths'],
     [{ version: 1, rules: { oneWayDoors: ['not a code'] } }, 'POLICY_CONFIG_FIELD_INVALID:rules.oneWayDoors'],
-    [{ version: 1, routing: 'x' }, 'POLICY_CONFIG_FIELD_INVALID:routing'],
-    [{ version: 1, routing: { aiTrackPaths: '**' } }, 'POLICY_CONFIG_FIELD_INVALID:routing.aiTrackPaths'],
-    [{ version: 1, routing: { skip: [] } }, 'POLICY_CONFIG_KEY_UNKNOWN:routing.skip'],
+    [{ version: 1, routing: { aiTrackPaths: ['tests/**'] } }, 'POLICY_CONFIG_KEY_UNKNOWN:routing'],
   ];
   for (const [config, error] of cases) {
     const result = invalid(config);
@@ -103,7 +100,6 @@ test('沒有設定時 policy 為預設值', () => {
   assert.deepEqual(canonicalInterpreterSet(policy.interpretersFor(php)), canonicalInterpreterSet(PHP_LARAVEL_DOMAIN_INTERPRETERS));
   assert.deepEqual(policy.oneWayDoors, DEFAULT_ONE_WAY_DOORS);
   assert.equal(policy.isProtectedPath('database/migrations/x.php'), false);
-  assert.equal(policy.isAiTrackPath('tests/x.php'), false);
   assert.deepEqual(POLICY_FILES, ['.reviewer.json', 'codingstandards.md']);
 });
 
@@ -120,11 +116,9 @@ test('設定的 preset、規則、單向門與路徑都反映在 policy', () => 
   assert.ok(policy.oneWayDoors.includes('PAYMENT_IDEMPOTENCY_IDENTITY_CHANGED'));
   assert.ok(DEFAULT_ONE_WAY_DOORS.every((door) => policy.oneWayDoors.includes(door)), '不能移除預設單向門');
   assert.equal(policy.isProtectedPath('config/payment.php'), true);
-  assert.equal(policy.isAiTrackPath('tests/Unit/A.php'), true);
-  assert.equal(policy.isAiTrackPath('docs/a.md'), true);
-  assert.equal(policy.isAiTrackPath('src/a.md'), false);
+  assert.equal(policy.isProtectedPath('config/app.php'), false);
 
-  // 只有 protectedPaths / routing 時不加入規則引擎
+  // 只有 protectedPaths 時不加入規則引擎
   const pathsOnly = createProjectPolicy(parseProjectConfig('{"version":1,"rules":{"protectedPaths":["a/**"]}}'));
   assert.ok(!pathsOnly.interpretersFor(php).some(({ id }) => id === 'config-rules'));
 });

@@ -213,28 +213,28 @@ test('reviewRange 逐檔決策並彙整成 PR 層級結果', async () => {
   assert.equal(report.decision.files, report.files.length);
   assert.equal(report.decision.notSelected, 1);
 
-  // 路由：單向門與 FULL 需要人工確認；其餘已解釋的變更交給 AI。
+  // 路由：機械審查後剩下的都交給 AI；只有單向門在 AI 審查後必須人工確認。
   const tracks = Object.fromEntries(report.files.map((file) => [file.path, file.track]));
   assert.deepEqual(tracks, {
-    'notes.md': 'ESCALATED',
-    'src/Added.php': 'ESCALATED',
-    'src/Binary.php': 'ESCALATED',
-    'src/Deleted.php': 'ESCALATED',
+    'notes.md': 'AI_TRACK',
+    'src/Added.php': 'AI_TRACK',
+    'src/Binary.php': 'AI_TRACK',
+    'src/Deleted.php': 'AI_TRACK',
     'src/Exec.php': 'AI_TRACK',
     'src/Format.php': 'AUTO_PASS',
     'src/Guard.php': 'ESCALATED',
-    'src/Link.php': 'ESCALATED',
+    'src/Link.php': 'AI_TRACK',
     'src/Op.php': 'AI_TRACK',
     'src/Renamed.php': 'AI_TRACK',
-    'src/Unknown.php': 'ESCALATED',
+    'src/Unknown.php': 'AI_TRACK',
   });
   assert.deepEqual(guard.oneWayDoors, ['AUTHORIZATION_GUARD_REMOVED']);
-  assert.deepEqual(report.routing, { track: 'ESCALATED', autoPass: 1, aiTrack: 3, escalated: 7 });
+  assert.deepEqual(report.routing, { track: 'ESCALATED', autoPass: 1, aiTrack: 9, escalated: 1 });
 
   const text = formatReview(report);
   assert.match(text, /^Review：HUMAN_REVIEW_REQUIRED/);
-  assert.match(text, /^路由：ESCALATED（需要人工確認 7、交給 AI 審查 3、不需要 review 1）$/m);
-  assert.match(text, /需要人工確認（ESCALATED）：\n[^]*TARGETED src\/Guard\.php\n[^]*交給 AI 審查（AI_TRACK）：\n[^]*TARGETED src\/Op\.php/);
+  assert.match(text, /^路由：ESCALATED（交給 AI 審查 10，其中 1 個 AI 審查後必須人工確認；不需要 review 1）$/m);
+  assert.match(text, /AI 審查後必須人工確認（ESCALATED，單向門）：\n[^]*TARGETED src\/Guard\.php\n[^]*交給 AI 審查，由 AI 判斷是否需要人工（AI_TRACK）：\n[^]*TARGETED src\/Op\.php/);
   assert.match(text, /TARGETED src\/Guard\.php\n\s+- AUTHORIZATION_GUARD_REMOVED（單向門）\n\s+變更位置：base:L7\n\s+· base:L7 移除呼叫 \$this->authorize/);
   assert.match(text, /src\/Renamed\.php（原 src\/Moved\.php）/);
 
@@ -327,7 +327,7 @@ test('bin/review.js：文字、JSON、--out、--fail-on-review 與錯誤處理',
 
   const text = await cli(['--repo', repo, '--base', base, '--head', head]);
   assert.equal(text.code, 0);
-  assert.match(text.stdout, /需要人工確認（ESCALATED）：/);
+  assert.match(text.stdout, /AI 審查後必須人工確認（ESCALATED，單向門）：/);
 
   const out = join(repo, '..', `review-out-${process.pid}`, 'report.json');
   const json = await cli(['--repo', repo, '--base', base, '--head', head, '--json', '--out', out, '--fail-on-review']);

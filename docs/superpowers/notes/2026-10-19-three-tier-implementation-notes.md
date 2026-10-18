@@ -95,3 +95,24 @@
 2. **real-repo evaluation 沒有在本機重跑**：目標專案不在 repo 內（見 `docs/current-state.md`）。步驟 1、2 是行為不變的重構，mutation corpus 結果相同；但 `CALL_ARGUMENT_REMOVED` / `ADDED` 會讓部分真實檔案從 `FULL` 變成 `TARGETED`，建議合併前在本機對目標專案執行 `npm run eval:real-repo -- evaluate --baseline-ref <修改前>`，確認 `RISKY_REDUCED` 仍為 0。
 3. **尚未實作**（設計 §8 步驟 7–9）：GitHub 留言中的狀態與 ack 指令、置頂儀表板、Check、PR 自我宣告的風險、TS 第 2 / 3 階段、第 2 層 AI、retro。
 4. **待決事項**（設計 §9）中仍未決定的：`FULL` 中「未分析」檔案的預設路由（目前依建議為 `ESCALATED`，可用 `aiTrackPaths` 放寬）、AI 是否直接 commit、豁免權限、TS 型別變更的路由。
+
+## 流程調整（2026-10-19，步驟 1–6 完成後）
+
+使用者確認核心流程是串接的：**機械審查 → AI 審查剩下的 → AI 審查後需要人工處理、確認的才交給人工**。原本的設計是「單向門或 `FULL` 直接交給人工、AI 不審查」，與這個流程不同。兩個安全取捨由使用者決定：
+
+1. **單向門：AI 審查後一律交給人工**，AI 不能放行（建議選項）。
+2. **`FULL`（無法解釋、analyzer 失敗、沒有分析）：交給 AI，由 AI 決定是否需要人工**（建議選項）。
+
+**改了什麼**：
+
+- `src/routing.js`：`ESCALATED` 只看單向門；`FULL` 沒有單向門時為 `AI_TRACK`。`POLICY_CONFIG_INVALID` 加入預設單向門（設定無效時專案的單向門規則沒有套用，必須人工確認）。
+- 移除 `.reviewer.json` 的 `routing.aiTrackPaths`：沒有分析的檔案本來就交給 AI，這個設定不再需要。舊設定若寫了 `routing` 會被判為無效（`POLICY_CONFIG_KEY_UNKNOWN:routing`）。
+- `src/findings.js`：finding 只代表必須人工確認的單向門；移除 `FULL_REVIEW`（無法解釋的部分交給 AI）。AI 判斷需要人工的項目將以 `kind: AI` 的 finding 加入（步驟 9）。
+- 文字報表的兩段改為「AI 審查後必須人工確認（ESCALATED，單向門）」與「交給 AI 審查，由 AI 判斷是否需要人工（AI_TRACK）」。
+- 設計文件 §1 的原則 1 改為「單向門只有人能放行」，§2、§6 依新流程改寫。
+
+**影響**：
+
+- mutation 的 Critical Escalation Rate 從 84% 降到 64%：5 個 TS critical case（移除 Prisma transaction、移除 Express `requireAuth`、加上 `@ts-ignore`、物件簡寫 key 改變、optional chain 加括號）現在是 `AI_TRACK`。TS 第 1 階段偵測不到單向門，這些是否交給人工完全依賴 AI 審查。PHP 的 4 個 case（MUT-004、012、015、016）同樣依賴 AI（或專案設定的 `sensitiveOperands`）。
+- **AI 審查層實作前，`AI_TRACK` 沒有任何人或 AI 看。** 在 AI 層完成之前，CI 若要守住安全，應繼續使用 `--fail-on-review`（任何需要 review 的變更都失敗），而不是只用 `--fail-on-escalation`。
+- AI 呼叫失敗或逾時時，該檔案的 AI 結果視為「需要人工」（設計 §6），在步驟 9 實作。

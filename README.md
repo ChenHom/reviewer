@@ -63,15 +63,13 @@ node bin/review.js --repo /path/to/project --base origin/master --head HEAD
 
 ```
 Review：HUMAN_REVIEW_REQUIRED（3/4 個檔案需要 review；TARGETED 2、FULL 1）
-路由：ESCALATED（需要人工確認 1、交給 AI 審查 2、不需要 review 1）
+路由：AI_TRACK（交給 AI 審查 3，其中 0 個 AI 審查後必須人工確認；不需要 review 1）
 project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 merge base 895b1d0a2b2b
 
-需要人工確認（ESCALATED）：
+交給 AI 審查，由 AI 判斷是否需要人工（AI_TRACK）：
   FULL     composer.json
            - UNSUPPORTED_FILE_TYPE（不支援的檔案類型，未分析）
            變更位置：head:L5
-
-交給 AI 審查（AI_TRACK）：
   TARGETED app/Services/FreezeService.php
            - COMPARISON_OPERATOR_CHANGED
            變更位置：head:L9
@@ -94,9 +92,9 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
 - 每個 fact 都會讓檔案需要 review。PHP 檔只有在沒有任何 fact、AST 等價（排版、註解、一致的區域變數改名等，見「已實作」），而且不是 rename 或權限變更時，才會列在「不需要 review」，例如上例只加了註解、改了區域變數名稱的 `FreezeObserver.php`。
 - 只有支援的語言（PHP，以及 TypeScript / JavaScript）的修改與 rename 會送進 analyzer；新增、刪除、不支援的檔案、binary、symlink、submodule 一律 `FULL`。TypeScript / JavaScript 目前是第 1 階段：只判斷 AST 是否等價（排版、註解、區域變數改名等不需要 review），其他變更一律 `FULL`（`COV-TS-001:*`），見 [PR Review CLI「檔案分類」](docs/review-cli.md#檔案分類)。rename 與檔案權限變更即使內容等價也要求 review（`FILE_RENAMED`、`FILE_MODE_CHANGED`）。
 - PR 層級的決策只有在**所有**檔案都不需 review 時才是 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
-- 路由（三層審查：機械 → AI → 人工）：需要 review 的檔案再分成兩段。有單向門（例如 `TRANSACTION_BOUNDARY_REMOVED`、`AUTHORIZATION_GUARD_REMOVED`）或 `FULL` 的檔案「需要人工確認」（`ESCALATED`）；其餘 `TARGETED` 檔案「交給 AI 審查」（`AI_TRACK`）。路由不改變上面的決策。專案可以用 `.reviewer.json` 加入業務相關的單向門，例如把 `amount` 列為敏感運算元後，上例的 `FreezeService.php` 會需要人工確認（見 [專案設定](docs/project-config.md)）。
+- 路由（三層審查）：核心流程是**機械審查 → AI 審查剩下的 → AI 審查後需要人處理、確認的才交給人工**。上面的報表是機械審查的結果：不需要 review 的檔案到此結束；其餘交給 AI 審查。命中單向門的檔案（例如 `TRANSACTION_BOUNDARY_REMOVED`、`AUTHORIZATION_GUARD_REMOVED`）列在「AI 審查後必須人工確認」（`ESCALATED`），AI 不能放行；其他檔案（包括 `FULL`）由 AI 判斷是否需要人工（`AI_TRACK`）。路由不改變上面的決策。專案可以用 `.reviewer.json` 加入業務相關的單向門，例如把 `amount` 列為敏感運算元後，上例的 `FreezeService.php` 會變成必須人工確認（見 [專案設定](docs/project-config.md)）。AI 審查層尚未實作。
 
-選項（例如 `--json` 報表、讓 CI 在需要 review 時失敗的 `--fail-on-review`、只在需要人工確認時失敗的 `--fail-on-escalation`）、exit code、所有原因代碼、JSON 報表格式與限制見 [PR Review CLI](docs/review-cli.md)。
+選項（例如 `--json` 報表、讓 CI 在需要 review 時失敗的 `--fail-on-review`、只在命中單向門時失敗的 `--fail-on-escalation`）、exit code、所有原因代碼、JSON 報表格式與限制見 [PR Review CLI](docs/review-cli.md)。
 
 ## 已實作
 

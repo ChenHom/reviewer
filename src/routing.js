@@ -1,13 +1,15 @@
 import { DECISION } from './contracts.js';
 
 /**
- * 三層審查的路由：把第 1 層（機械）的 file-level 決策分成三條路。
+ * 三層審查的路由。核心流程是串接的：機械審查 → AI 審查剩下的 → AI 審查後需要人工的才交給人工。
  *
- * - `AUTO_PASS`：第 1 層判為不需要人工（`NOT_SELECTED_FOR_HUMAN_REVIEW`），不送 AI、不需人工。
- * - `AI_TRACK`：需要 review，但每個變更都已被 fact 解釋（`TARGETED`）且沒有單向門；交給 AI 審查。
- * - `ESCALATED`：有單向門、或有無法解釋 / 沒有分析的變更（`FULL`）；必須人工確認。
+ * - `AUTO_PASS`：機械審查判為不需要 review（`NOT_SELECTED_FOR_HUMAN_REVIEW`），不送 AI、不需人工。
+ * - `AI_TRACK`：交給 AI 審查，由 AI 判斷是否需要人工。包括每個變更都已被 fact 解釋的檔案，
+ *   以及機械審查無法解釋或沒有分析的檔案（`FULL`）。
+ * - `ESCALATED`：命中單向門。同樣先交給 AI 審查（AI 可以補充說明與流程圖），但 **AI 不能放行**，
+ *   之後一律交給人工確認。
  *
- * 路由只會讓結果維持或變嚴格：它不改變 `decision`，也不會把 `HUMAN_REVIEW_REQUIRED` 變成 `AUTO_PASS`。
+ * 路由不改變 `decision`：`HUMAN_REVIEW_REQUIRED` 表示機械審查之後還需要 review（AI，必要時人工）。
  */
 export const TRACK = Object.freeze({
   AUTO_PASS: 'AUTO_PASS',
@@ -40,16 +42,11 @@ export const DEFAULT_ONE_WAY_DOORS = Object.freeze([
   // 新增不可逆的外部副作用
   'SIDE_EFFECT_CALL_ADDED',
   'DATA_DELETION_ADDED',
-  // 受保護的路徑與審查規則本身
+  // 受保護的路徑與審查規則本身；設定無效時專案的單向門規則沒有套用，必須人工確認
   'PROTECTED_PATH',
   'POLICY_FILE_CHANGED',
+  'POLICY_CONFIG_INVALID',
 ]);
-
-/**
- * 只有「沒有分析」的原因時，`routing.aiTrackPaths` 才能把 `FULL` 檔案交給 AI。
- * 分析失敗或看不懂（`COV-*`、`ANALYZER_*` 等）、binary、symlink、submodule 一律需要人工。
- */
-const UNANALYZED_REASONS = new Set(['FILE_ADDED', 'FILE_DELETED', 'UNSUPPORTED_FILE_TYPE']);
 
 /**
  * 原因代碼的基本代碼（`FACT_UNHANDLED:php-1` → `FACT_UNHANDLED`）。
@@ -64,13 +61,12 @@ function baseCode(reason) {
 /**
  * 決定單一檔案的路由。
  *
- * @param {object} file - review file result（`decision`、`fallback`、`reasons`、`path`）。
+ * @param {object} file - review file result（`decision`、`reasons`）。
  * @param {object} [options={}] - 路由設定。
  * @param {Iterable<string>} [options.oneWayDoors=DEFAULT_ONE_WAY_DOORS] - 單向門代碼。
- * @param {function(string): boolean} [options.aiTrackPath] - 路徑是否可交給 AI（只用於沒有分析的 `FULL` 檔案）。
  * @returns {{track: string, oneWayDoors: string[]}} 路由與命中的單向門原因。
  */
-export function routeFile(file, { oneWayDoors = DEFAULT_ONE_WAY_DOORS, aiTrackPath = () => false } = {}) {
+export function routeFile(file, { oneWayDoors = DEFAULT_ONE_WAY_DOORS } = {}) {
   if (file?.decision === DECISION.NOT_SELECTED_FOR_HUMAN_REVIEW) {
     return { track: TRACK.AUTO_PASS, oneWayDoors: [] };
   }
@@ -78,17 +74,11 @@ export function routeFile(file, { oneWayDoors = DEFAULT_ONE_WAY_DOORS, aiTrackPa
   const reasons = Array.isArray(file?.reasons) ? file.reasons : [];
   const doors = new Set(oneWayDoors);
   const matched = reasons.filter((reason) => doors.has(baseCode(reason)));
+  // 不認得的 decision 視為需要人工（fail-closed）。
   if (matched.length > 0 || file?.decision !== DECISION.HUMAN_REVIEW_REQUIRED) {
     return { track: TRACK.ESCALATED, oneWayDoors: matched };
   }
-
-  if (file.fallback === 'TARGETED') return { track: TRACK.AI_TRACK, oneWayDoors: [] };
-
-  const unanalyzedOnly = reasons.length > 0 && reasons.every((reason) => UNANALYZED_REASONS.has(reason));
-  return {
-    track: unanalyzedOnly && aiTrackPath(file.path) ? TRACK.AI_TRACK : TRACK.ESCALATED,
-    oneWayDoors: [],
-  };
+  return { track: TRACK.AI_TRACK, oneWayDoors: [] };
 }
 
 /**

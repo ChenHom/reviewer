@@ -346,7 +346,7 @@
     "path": "src/wallet/debit.ts",
     "description": "Prisma $transaction wrapper is removed around a balance update.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
-    "expectedTrack": "ESCALATED",
+    "expectedTrack": "AI_TRACK",
     "expectedFactKinds": [],
     "expectedReasons": [
       "COV-TS-001:UNRECOGNIZED_TS_CHANGE"
@@ -359,7 +359,7 @@
     "path": "src/routes/refund.ts",
     "description": "Express requireAuth middleware is removed from the refund route.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
-    "expectedTrack": "ESCALATED",
+    "expectedTrack": "AI_TRACK",
     "expectedFactKinds": [],
     "expectedReasons": [
       "COV-TS-001:UNRECOGNIZED_TS_CHANGE"
@@ -372,7 +372,7 @@
     "path": "src/payments/charge.ts",
     "description": "A @ts-ignore hides passing a string amount to the gateway.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
-    "expectedTrack": "ESCALATED",
+    "expectedTrack": "AI_TRACK",
     "expectedFactKinds": [],
     "expectedReasons": [
       "COV-TS-001:DIRECTIVE_COMMENT_CHANGED"
@@ -385,7 +385,7 @@
     "path": "src/payments/payload.ts",
     "description": "Renaming a local used in object shorthand changes the payload key (amount → total).",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
-    "expectedTrack": "ESCALATED",
+    "expectedTrack": "AI_TRACK",
     "expectedFactKinds": [],
     "expectedReasons": [
       "COV-TS-001:UNRECOGNIZED_TS_CHANGE"
@@ -398,7 +398,7 @@
     "path": "src/orders/contact.ts",
     "description": "Parentheses break the optional chain; a missing order now throws.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
-    "expectedTrack": "ESCALATED",
+    "expectedTrack": "AI_TRACK",
     "expectedFactKinds": [],
     "expectedReasons": [
       "COV-TS-001:UNRECOGNIZED_TS_CHANGE"

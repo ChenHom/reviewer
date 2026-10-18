@@ -64,7 +64,7 @@ node bin/review.js --repo /path/to/project --base origin/master --head HEAD
 | `--json` | 關 | stdout 改為輸出 JSON 報表（取代文字輸出） |
 | `--out <file>` | 無 | 另外把 JSON 報表寫到檔案。不論有沒有 `--json` 都是同一份 JSON；上層目錄不存在時會自動建立 |
 | `--fail-on-review` | 關 | PR 層級決策為 `HUMAN_REVIEW_REQUIRED` 時 exit code 為 1 |
-| `--fail-on-escalation` | 關 | PR 層級路由為 `ESCALATED`（有檔案需要人工確認，見「路由」）時 exit code 為 1 |
+| `--fail-on-escalation` | 關 | PR 層級路由為 `ESCALATED`（有檔案命中單向門，AI 審查後必須人工確認，見「路由」）時 exit code 為 1 |
 | `--concurrency <n>` | CPU 數與 8 取小者 | 同時執行的 analyzer process 數；整數 1–64。不影響結果與輸出順序 |
 | `--timeout-ms <n>` | `30000` | 單一檔案的 analyzer deadline（毫秒）；整數 1–2147483647。逾時的 analyzer 會被終止，該檔案為 `FULL`，原因 `ANALYZER_ERROR:PHP_ANALYZER_ABORTED` |
 | `--help`、`-h` | | 印出用法並以 0 結束（忽略其他參數） |
@@ -162,15 +162,17 @@ TypeScript / JavaScript（第 1 階段）：analyzer（`analyzers/ts`，TypeScri
 
 ### 路由（三層審查）
 
-`decision` 之外，每個檔案另有路由 `track`（`src/routing.js`），把需要 review 的檔案再分成「交給 AI 審查」與「需要人工確認」。路由不改變 `decision`，也不會讓需要 review 的檔案變成不需要。
+核心流程是串接的：**機械審查（本 CLI）→ AI 審查剩下的 → AI 審查後需要人處理、確認的才交給人工**。`decision` 之外，每個檔案另有路由 `track`（`src/routing.js`），標示機械審查之後的去向。路由不改變 `decision`，也不會讓需要 review 的檔案變成不需要。
 
-| `track` | 條件 |
-|---|---|
-| `AUTO_PASS` | `decision` 為 `NOT_SELECTED_FOR_HUMAN_REVIEW` |
-| `AI_TRACK` | `TARGETED`，而且沒有任何原因屬於單向門 |
-| `ESCALATED` | 任一原因屬於單向門；或 `FULL`（有無法解釋的變更、analyzer 失敗或檔案沒有分析）；或 `decision` 不是這兩種已知的值 |
+| `track` | 條件 | 去向 |
+|---|---|---|
+| `AUTO_PASS` | `decision` 為 `NOT_SELECTED_FOR_HUMAN_REVIEW` | 不需要 review |
+| `AI_TRACK` | 需要 review，但沒有任何原因屬於單向門。包括 `FULL`（無法解釋的變更、analyzer 失敗、沒有分析的檔案） | 交給 AI 審查，由 AI 判斷是否需要人工 |
+| `ESCALATED` | 任一原因屬於單向門；或 `decision` 不是這兩種已知的值 | 一樣先交給 AI 審查，但 AI 不能放行，之後一律交給人工確認 |
 
-單向門（做了就難以回頭的變更）的預設清單：`TRANSACTION_BOUNDARY_REMOVED`、`TRANSACTION_ROLLBACK_REMOVED`、`ROW_LOCK_REMOVED`、`AUTHORIZATION_GUARD_REMOVED`、`AUTHORIZATION_ABILITY_CHANGED`、`MIDDLEWARE_GUARD_REMOVED`、`SIGNATURE_VERIFICATION_REMOVED`、`GUARD_CLAUSE_REMOVED`、`PROTECTED_CALL_REMOVED`、`PAYMENT_IDEMPOTENCY_IDENTITY_CHANGED`、`PROTECTED_ARGUMENT_CHANGED`、`SENSITIVE_OPERAND_CHANGED`、`MASS_ASSIGNMENT_CHANGED`、`SERIALIZED_ATTRIBUTES_CHANGED`、`SIDE_EFFECT_CALL_ADDED`、`DATA_DELETION_ADDED`、`PROTECTED_PATH`、`POLICY_FILE_CHANGED`。其中幾個代碼由專案設定的規則產生（見 [專案設定](project-config.md)）。
+AI 審查層尚未實作（見 [三層審查架構設計](superpowers/specs/2026-10-18-three-tier-review-design.md) §6）。
+
+單向門（做了就難以回頭的變更）的預設清單：`TRANSACTION_BOUNDARY_REMOVED`、`TRANSACTION_ROLLBACK_REMOVED`、`ROW_LOCK_REMOVED`、`AUTHORIZATION_GUARD_REMOVED`、`AUTHORIZATION_ABILITY_CHANGED`、`MIDDLEWARE_GUARD_REMOVED`、`SIGNATURE_VERIFICATION_REMOVED`、`GUARD_CLAUSE_REMOVED`、`PROTECTED_CALL_REMOVED`、`PAYMENT_IDEMPOTENCY_IDENTITY_CHANGED`、`PROTECTED_ARGUMENT_CHANGED`、`SENSITIVE_OPERAND_CHANGED`、`MASS_ASSIGNMENT_CHANGED`、`SERIALIZED_ATTRIBUTES_CHANGED`、`SIDE_EFFECT_CALL_ADDED`、`DATA_DELETION_ADDED`、`PROTECTED_PATH`、`POLICY_FILE_CHANGED`、`POLICY_CONFIG_INVALID`。其中幾個代碼由專案設定的規則產生（見 [專案設定](project-config.md)）。
 
 PR 層級的 `routing.track` 取所有檔案中最嚴格的一個（`ESCALATED` > `AI_TRACK` > `AUTO_PASS`）；沒有任何檔案變更時為 `AUTO_PASS`。
 
@@ -299,10 +301,10 @@ fact 沒有任何 domain interpreter 對應。fact id 的格式是 `php-` 加 20
 
 ```
 Review：<PR 決策>（<需要 review 的檔案數>/<檔案數> 個檔案需要 review；TARGETED <n>、FULL <n>）
-路由：<PR 路由>（需要人工確認 <n>、交給 AI 審查 <n>、不需要 review <n>）
+路由：<PR 路由>（交給 AI 審查 <n>，其中 <n> 個 AI 審查後必須人工確認；不需要 review <n>）
 <repository>  <base ref> (<base SHA 前 12 碼>) → <head ref> (<head SHA 前 12 碼>)[，比較起點為 merge base <SHA 前 12 碼>]
 
-需要人工確認（ESCALATED）：
+AI 審查後必須人工確認（ESCALATED，單向門）：
   <FULL|TARGETED> <path>[（原 <oldPath>）]
            - <原因代碼>[（說明）]
            - FACT_UNHANDLED ×<N>（有變更但沒有對應的 domain 規則，請看標示位置）
@@ -310,14 +312,14 @@ Review：<PR 決策>（<需要 review 的檔案數>/<檔案數> 個檔案需要 
            · <side>:L<start>[-<end>] <fact 描述>
            · …另有 <N> 項（見 --json）
 
-交給 AI 審查（AI_TRACK）：
+交給 AI 審查，由 AI 判斷是否需要人工（AI_TRACK）：
   （格式同上）
 
 不需要 review（<N>）：
   <path>
 ```
 
-- 需要 review 的檔案依路由分成「需要人工確認」與「交給 AI 審查」兩段（沒有檔案的段落不印）。每一段先列 `FULL` 再列 `TARGETED`，同一組依路徑排序；不需要 review 的檔案依 `git diff` 的順序。
+- 需要 review 的檔案依路由分成「AI 審查後必須人工確認」與「交給 AI 審查，由 AI 判斷是否需要人工」兩段（沒有檔案的段落不印）。每一段先列 `FULL` 再列 `TARGETED`，同一組依路徑排序；不需要 review 的檔案依 `git diff` 的順序。
 - `-` 行：每個原因一行。單向門標示「（單向門）」；部分代碼附中文說明（`format.js` 的 `REASON_HINTS`），其餘只顯示代碼。`FACT_UNHANDLED:<id>` 不逐一列出，合併成 `FACT_UNHANDLED ×N` 一行。不需要 review 的檔案不顯示原因。
 - 「變更位置」：`git diff -U0` 的 hunk。有新內容的 hunk 標 head 版本的行號；純刪除的 hunk 標 merge base 版本被刪除的行（`base:`）。只有修改與 rename 的檔案有這一行；最多列 8 處，超過時加上「等 N 處」。
 - `·` 行：analyzer 找到的 fact。`base:` 表示位置在 merge base 版本（通常是被移除的程式碼），`head:` 表示在 head 版本。最多列 8 項，其餘見 `--json`。`FULL` 的檔案也可能有 fact 行（已解釋的部分）。
@@ -327,22 +329,22 @@ Review：<PR 決策>（<需要 review 的檔案數>/<檔案數> 個檔案需要 
 
 ```
 Review：HUMAN_REVIEW_REQUIRED（5/6 個檔案需要 review；TARGETED 3、FULL 2）
-路由：ESCALATED（需要人工確認 3、交給 AI 審查 2、不需要 review 1）
+路由：ESCALATED（交給 AI 審查 5，其中 1 個 AI 審查後必須人工確認；不需要 review 1）
 shop  main (48016bdb0fe7) → feature (594959a22beb)，比較起點為 merge base ec4021f968a4
 
-需要人工確認（ESCALATED）：
+AI 審查後必須人工確認（ESCALATED，單向門）：
+  TARGETED app/Http/Controllers/PostController.php
+           - AUTHORIZATION_GUARD_REMOVED（單向門）
+           變更位置：base:L9-10
+           · base:L9 移除呼叫 $this->authorize
+
+交給 AI 審查，由 AI 判斷是否需要人工（AI_TRACK）：
   FULL     app/Services/ReportService.php
            - COV-PHP-001:UNRECOGNIZED_PHP_CHANGE（有無法自動解釋的變更，請看整個檔案）
            變更位置：head:L9-14
   FULL     composer.json
            - UNSUPPORTED_FILE_TYPE（不支援的檔案類型，未分析）
            變更位置：head:L3
-  TARGETED app/Http/Controllers/PostController.php
-           - AUTHORIZATION_GUARD_REMOVED（單向門）
-           變更位置：base:L9-10
-           · base:L9 移除呼叫 $this->authorize
-
-交給 AI 審查（AI_TRACK）：
   TARGETED app/Services/FreezeService.php
            - COMPARISON_OPERATOR_CHANGED
            變更位置：head:L9
@@ -356,7 +358,7 @@ shop  main (48016bdb0fe7) → feature (594959a22beb)，比較起點為 merge bas
   app/Services/LegacyHelper.php
 ```
 
-`LegacyHelper.php` 只有排版與註解變更，所以不需要 review。`FreezeService.php` 的運算子改變沒有命中單向門，所以交給 AI 審查；若專案設定把 `amount` 列為敏感運算元（[專案設定](project-config.md)），它會變成 `SENSITIVE_OPERAND_CHANGED` 而需要人工確認。超過 8 處時的截斷：
+`LegacyHelper.php` 只有排版與註解變更，所以不需要 review。`PostController.php` 移除了 `authorize`（單向門），AI 審查後必須人工確認。其餘需要 review 的檔案（包括機械審查無法解釋的 `ReportService.php` 與沒有分析的 `composer.json`）交給 AI 審查，由 AI 判斷是否需要人工。`FreezeService.php` 的運算子改變沒有命中單向門；若專案設定把 `amount` 列為敏感運算元（[專案設定](project-config.md)），它會變成 `SENSITIVE_OPERAND_CHANGED` 而需要人工確認。超過 8 處時的截斷：
 
 ```
   TARGETED Many.php
@@ -429,11 +431,12 @@ shop  main (48016bdb0fe7) → feature (594959a22beb)，比較起點為 merge bas
 
 ### Findings
 
-`files[].findings` 是二次 review 的追蹤單位（`src/findings.js`），之後的 GitHub 整合以它記錄「看過了」或「修好了」：
+`files[].findings` 是必須人工確認的項目，也是二次 review 的追蹤單位（`src/findings.js`），之後的 GitHub 整合以它記錄「看過了」或「修好了」。目前只有機械審查的單向門（AI 審查層加入的「需要人工」項目尚未實作）：
 
 - 每個帶單向門原因的 fact，每個原因一個 finding（`kind` 為 fact 種類）；
-- 檔案層級的單向門原因（`PROTECTED_PATH`、`POLICY_FILE_CHANGED`）各一個（`kind: "FILE"`）；
-- `FULL` 的檔案一個 `blocker: "FULL_REVIEW"`（`kind: "FILE"`）。
+- 檔案層級的單向門原因（`PROTECTED_PATH`、`POLICY_FILE_CHANGED`、`POLICY_CONFIG_INVALID`）各一個（`kind: "FILE"`）。
+
+`FULL` 本身不是人工項目：無法解釋的部分交給 AI 審查。
 
 | 欄位 | 型別 | 說明 |
 |---|---|---|
@@ -444,9 +447,9 @@ shop  main (48016bdb0fe7) → feature (594959a22beb)，比較起點為 merge bas
 | `location` | object \| null | fact 的位置 `{ side, startLine, endLine }`；檔案層級為 `null` |
 | `description` | string \| null | fact 的描述；檔案層級為 `null` |
 
-TypeScript / JavaScript 第 1 階段沒有 fact，所以只會有 `FULL_REVIEW` 等檔案層級的 finding。
+TypeScript / JavaScript 第 1 階段沒有 fact，所以只會有 `PROTECTED_PATH` 等檔案層級的 finding。
 
-範例（上面 `shop` 的報表，`files` 只節錄 3 筆：需要人工確認的 `PostController.php` 與 `composer.json`、交給 AI 審查的 `FreezeService.php`）：
+範例（上面 `shop` 的報表，`files` 只節錄 3 筆：AI 審查後必須人工確認的 `PostController.php`，以及交給 AI 審查的 `FreezeService.php` 與 `composer.json`）：
 
 ```json
 {
@@ -484,8 +487,8 @@ TypeScript / JavaScript 第 1 階段沒有 fact，所以只會有 `FULL_REVIEW` 
   "routing": {
     "track": "ESCALATED",
     "autoPass": 1,
-    "aiTrack": 2,
-    "escalated": 3
+    "aiTrack": 4,
+    "escalated": 1
   },
   "files": [
     {
@@ -616,22 +619,9 @@ TypeScript / JavaScript 第 1 階段沒有 fact，所以只會有 `FULL_REVIEW` 
           "endLine": 3
         }
       ],
-      "track": "ESCALATED",
+      "track": "AI_TRACK",
       "oneWayDoors": [],
-      "findings": [
-        {
-          "id": "7bf07725d790eb3494eaf0de096b7c34707062dd31f34969965fe2a9c6452400",
-          "path": "composer.json",
-          "subject": "composer.json",
-          "kind": "FILE",
-          "blocker": "FULL_REVIEW",
-          "anchor": "FULL_REVIEW",
-          "scopeHash": "git:b02624cbee377067feaae08dde39829b1f5cbe91",
-          "location": null,
-          "description": null,
-          "ordinal": 0
-        }
-      ]
+      "findings": []
     }
   ]
 }

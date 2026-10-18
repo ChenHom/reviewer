@@ -3,8 +3,9 @@
 各業務專案在自己的 repository 根目錄放 `.reviewer.json`，告訴 Reviewer：
 
 - 啟用哪些框架 / 業務 preset；
-- 哪些業務名詞、函式與路徑是單向門（做了就難以回頭，必須人工確認）；
-- 哪些沒有分析的檔案可以交給 AI 審查。
+- 哪些業務名詞、函式與路徑是單向門（做了就難以回頭：AI 審查後一律交給人工確認）。
+
+其他需要 review 的變更都交給 AI 審查，由 AI 判斷是否需要人工（見 [PR Review CLI「路由」](review-cli.md#路由三層審查)）。
 
 設計理由見 [三層審查架構設計](superpowers/specs/2026-10-18-three-tier-review-design.md) §3。軟性的團隊規範（命名、測試寫法等）不放這裡，放 `codingstandards.md` 給 AI 審查層讀。
 
@@ -12,7 +13,7 @@
 
 - **從 merge base 讀取，不從 PR 的 head 讀取。** PR 修改 `.reviewer.json` 不會影響這次 review，而且修改本身是單向門（`POLICY_FILE_CHANGED`）。`codingstandards.md`（根目錄）同樣是 `POLICY_FILE_CHANGED`。
 - 檔案不存在：使用預設值（PHP 啟用 `php-laravel` 與 `payments` preset、預設單向門、沒有專案規則）。
-- 檔案存在但無效（JSON 錯誤、未知欄位、型別錯誤、無效的正規表示式、未知 preset、不是一般檔案）：**每個變更檔案都是 `FULL` + `POLICY_CONFIG_INVALID`**，需要人工確認；錯誤細節在 JSON 報表的 `config.errors`。
+- 檔案存在但無效（JSON 錯誤、未知欄位、型別錯誤、無效的正規表示式、未知 preset、不是一般檔案）：**每個變更檔案都是 `FULL` + `POLICY_CONFIG_INVALID`**，而且 `POLICY_CONFIG_INVALID` 是單向門（專案規則沒有套用，必須人工確認）；錯誤細節在 JSON 報表的 `config.errors`。
 - 設定只能新增攔截：沒有「忽略某個 fact」或「移除預設單向門」的語法。要減少誤報，只能讓 analyzer 的等價判定變強。
 - 設定內容的 sha256 列在報表的 `config.digest`，並帶入規則引擎 interpreter 的版本（`config-rules@1.0.0+<digest 前 16 碼>`），所以設定不同時分析結果的 interpreter identity 也不同。
 
@@ -29,8 +30,7 @@
     "sideEffectCalls": [{ "receiver": "Mail" }, { "name": "/^notify/" }],
     "protectedPaths": ["database/migrations/**", "config/payment.php"],
     "oneWayDoors": ["CONSTANT_VALUE_CHANGED"]
-  },
-  "routing": { "aiTrackPaths": ["tests/**", "docs/**"] }
+  }
 }
 ```
 
@@ -46,7 +46,6 @@
 | `rules.protectedArguments` | 參數的值改變、被移除或被新增（`CALL_ARGUMENT_CHANGED` / `REMOVED` / `ADDED`）時產生 `PROTECTED_ARGUMENT_CHANGED`，或 `blocker` 指定的代碼（大寫英數與底線）。`argument` 是具名參數名稱（字串或 `/regex/`）或位置（從 0 開始的整數）；可加上 `name` / `receiver` 限定呼叫 |
 | `rules.protectedPaths` | 符合的檔案有任何變更都產生 `PROTECTED_PATH`（包括只有排版變更、原本不需要 review 的檔案）。rename 時比對新舊兩個路徑 |
 | `rules.oneWayDoors` | 加入單向門清單的原因代碼，例如 `CONSTANT_VALUE_CHANGED` |
-| `routing.aiTrackPaths` | 原因只有 `FILE_ADDED`、`FILE_DELETED`、`UNSUPPORTED_FILE_TYPE` 的 `FULL` 檔案，路徑符合時交給 AI 審查而不是人工確認。analyzer 失敗、無法解釋的變更、binary、symlink、submodule 不受影響；`protectedPaths` 優先 |
 
 ### 呼叫的比對（`protectedCalls`、`sideEffectCalls`、`protectedArguments`）
 
@@ -60,11 +59,11 @@
 
 ### Glob
 
-`protectedPaths` 與 `aiTrackPaths` 使用 repository 相對路徑的 glob：`*` 不跨 `/`，`**` 可跨目錄（`**/` 也符合零層目錄），`?` 為單一字元。例如 `database/migrations/**`、`**/*.md`、`docs/*.md`。
+`protectedPaths` 使用 repository 相對路徑的 glob：`*` 不跨 `/`，`**` 可跨目錄（`**/` 也符合零層目錄），`?` 為單一字元。例如 `database/migrations/**`、`**/*.md`、`docs/*.md`。
 
 ## 單向門
 
-產生的代碼都在預設單向門清單中（`SENSITIVE_OPERAND_CHANGED`、`PROTECTED_CALL_REMOVED`、`PROTECTED_ARGUMENT_CHANGED`、`SIDE_EFFECT_CALL_ADDED`、`PROTECTED_PATH`、`POLICY_FILE_CHANGED`），`protectedArguments` 自訂的 `blocker` 也自動加入。命中單向門的檔案路由為 `ESCALATED`（需要人工確認），見 [PR Review CLI「路由」](review-cli.md#路由三層審查)。
+產生的代碼都在預設單向門清單中（`SENSITIVE_OPERAND_CHANGED`、`PROTECTED_CALL_REMOVED`、`PROTECTED_ARGUMENT_CHANGED`、`SIDE_EFFECT_CALL_ADDED`、`PROTECTED_PATH`、`POLICY_FILE_CHANGED`、`POLICY_CONFIG_INVALID`），`protectedArguments` 自訂的 `blocker` 也自動加入。命中單向門的檔案路由為 `ESCALATED`（AI 審查後必須人工確認），見 [PR Review CLI「路由」](review-cli.md#路由三層審查)。
 
 ## 範例
 
@@ -91,7 +90,6 @@
     "sensitiveOperands": [{ "pattern": "/stock|inventory|qty/i" }],
     "protectedCalls": [{ "name": "reserveStock" }],
     "sideEffectCalls": [{ "receiver": "Mail" }, { "name": "dispatch" }]
-  },
-  "routing": { "aiTrackPaths": ["tests/**"] }
+  }
 }
 ```

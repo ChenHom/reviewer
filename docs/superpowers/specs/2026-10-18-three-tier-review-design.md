@@ -8,6 +8,7 @@
 - 二次 review 的狀態存在 GitHub PR 留言中，不另設資料庫（§4.4）。
 - 第二個支援的語言是 TypeScript / JavaScript（Node.js）（§3.5）。
 - 專案設定使用 `.reviewer.json`（JSON），不使用 YAML（§3.2）。
+- **核心流程是串接的：機械審查 → AI 審查剩下的 → AI 審查後需要人工處理、確認的才交給人工**（§2）。機械審查判為單向門的項目，AI 審查後一律交給人工，AI 不能放行；機械審查無法解釋或沒有分析的變更（`FULL`）交給 AI，由 AI 決定是否需要人工。
 
 ## 0. 先校正藍圖與目前程式碼的差異
 
@@ -32,22 +33,34 @@
 
 三層架構是加在現有 deterministic core **外面**的路由與呈現層，不改變 core 的語意：
 
-1. **只有第 1 層能放寬人工審查。** 第 2 層（AI）的輸出永遠是 advisory：可以讓結果變嚴格（補 comment、要求人工），不能把第 1 層判為需要人工的項目改成不需要。
+1. **單向門只有人能放行。** 機械審查判為單向門的項目，AI 審查後一律交給人工；AI 可以補充說明、流程圖或建議修正，但不能把它改成不需要人工。其他需要 review 的變更（包括機械審查無法解釋或沒有分析的 `FULL`）由 AI 決定是否需要人工，這是為了減少人工負擔而接受的取捨（2026-10-19 決定）。
 2. **Fail-closed 不變。** unknown / incomplete / analyzer failure / 設定檔讀不到或格式錯誤 / 狀態留言驗證失敗，一律走最嚴格的路由。
 3. **設定與規範從 base 讀，不從 head 讀。** `.reviewer.yaml` 與 `codingstandards.md` 若從 PR 本身讀取，PR 可以順手刪掉攔截自己的規則。兩者都從 merge base 讀；PR 修改這兩個檔案本身是單向門（§2）。
 4. **所有影響決策的輸入都綁入 digest。** 專案設定與 preset 的內容 digest 要和 `interpreterSetDigest` 一樣進入 `AnalysisContextBinding`，否則相同 base/head、不同設定的結果會共用 authority。
 5. **人工豁免綁定在內容上，不綁定在 PR 或時間上**（§4.2）。
 6. **分析不執行目標程式碼。** PHP 與 TS analyzer 都只解析原始碼，不安裝目標專案的依賴、不執行其 script，因此可以在沒有 secret 的 job 中分析 fork PR（§4.5）。
 
-## 2. 交接協議：第 1 層輸出 → 三種路由
+## 2. 交接協議：機械審查 → AI → 人工
 
-目前 reducer 只輸出兩種決策，而且**每個 fact 都會讓檔案需要 review**。三層架構需要在 file result 上加一個路由欄位 `track`，由新的 `src/routing.js` 根據 decision、fallback、reasons 與專案設定計算：
+核心流程：
+
+```
+機械審查 ──► 證明等價：不需要 review（不送 AI、不需人工）
+   │
+   ▼ 其餘全部
+AI 審查 ──► AI 修正或判斷沒問題：結束
+   │
+   ▼ 需要人處理、確認的
+人工審查（機械審查判為單向門的項目一定在這裡）
+```
+
+目前 reducer 只輸出兩種決策，而且**每個 fact 都會讓檔案需要 review**。file result 上的路由欄位 `track`（`src/routing.js`）標示機械審查之後的去向：
 
 | `track` | 條件 | 第 2 層（AI） | 第 3 層（人工） |
 |---|---|---|---|
 | `AUTO_PASS` | `decision === NOT_SELECTED_FOR_HUMAN_REVIEW` | 不送（不花 token） | 不需要 |
-| `AI_TRACK` | `HUMAN_REVIEW_REQUIRED`、`fallback === TARGETED`，且所有 reasons 都**不在** one-way-door 集合中 | 只送這些檔案的 diff 與 facts，對照 `codingstandards.md` | 預設不需要；AI 標記業務疑問時才請人看 |
-| `ESCALATED` | 任一 reason 在 one-way-door 集合中；或 `fallback === FULL`；或檔案符合 `protectedPaths`；或 PR 修改了 `.reviewer.yaml` / `codingstandards.md` | 只產生輔助材料（流程圖、摘要），不給結論 | 必須人工確認或豁免，Check 為 failure |
+| `AI_TRACK` | `HUMAN_REVIEW_REQUIRED`，且所有 reasons 都**不在** one-way-door 集合中（包括 `FULL`：無法解釋、analyzer 失敗、沒有分析的檔案） | 審查 diff、facts，對照 `codingstandards.md`；可以直接修正 | AI 判斷需要人處理、確認時才交給人工 |
+| `ESCALATED` | 任一 reason 在 one-way-door 集合中（含 `PROTECTED_PATH`、`POLICY_FILE_CHANGED`、`POLICY_CONFIG_INVALID`） | 一樣先審查，產生說明、流程圖與建議；**不能放行** | 一律交給人工確認或豁免，Check 為 failure |
 
 PR 層級的 `track` 取所有檔案中最嚴格的一個（`ESCALATED` > `AI_TRACK` > `AUTO_PASS`），與目前「所有檔案都不需 review 才是 NOT_SELECTED」的規則一致。
 
@@ -61,10 +74,7 @@ PR 層級的 `track` 取所有檔案中最嚴格的一個（`ESCALATED` > `AI_TR
 
 **PR 自我宣告與機械偵測交叉比對**：PR 描述可以宣告 `Merge-Risk: one-way | two-way` 與影響範圍，儀表板會顯示。宣告不會讓結果變寬鬆，只會讓結果變嚴格：宣告 `two-way` 但機械層偵測到單向門時，儀表板標示「宣告與偵測不一致」；宣告 `one-way` 時，即使機械層判為 `AI_TRACK` 也升級為 `ESCALATED`。
 
-**`FULL` 的路由**：`FULL` 包含「新增檔案」「非 PHP 檔」。若全部走 `ESCALATED`，幾乎每個 PR 都會鎖死，減負效果歸零；若全部走 `AI_TRACK`，等於讓 AI 決定第 1 層看不懂的東西。建議：
-
-- `COV-*`、`ANALYZER_*`、`PHP_*`、`TS_*` 這類「分析了但看不懂 / 失敗」→ 永遠 `ESCALATED`。
-- `FILE_ADDED`、`UNSUPPORTED_FILE_TYPE` 等「沒有分析」→ 預設 `ESCALATED`；專案可在 `.reviewer.yaml` 用 `routing.aiTrackPaths` 明列可交給 AI 的路徑（例如 `tests/**`、`docs/**`、`resources/lang/**`）。不給萬用字元 `**` 的捷徑；`protectedPaths` 優先於 `aiTrackPaths`。
+**`FULL` 的路由（已決定）**：`FULL` 包含「無法解釋的變更」「analyzer 失敗」「新增檔案」「不支援的檔案」，目前所有 TS / JS 的實質變更也是 `FULL`。依核心流程，這些都交給 AI，由 AI 判斷是否需要人工；同時命中單向門時為 `ESCALATED`。代價是機械審查偵測不到的單向門（例如 TS 第 1 階段的 Prisma transaction 被移除）完全依賴 AI 發現。
 
 ## 3. 去業務綁定：分層、設定檔與跨語言
 
@@ -128,10 +138,9 @@ rules:
   protectedPaths: ['database/migrations/**', 'config/payment.php']
   # 只能把代碼加入 one-way-door 集合，不能移除預設值
   oneWayDoors: [CONSTANT_VALUE_CHANGED]
-
-routing:
-  aiTrackPaths: ['tests/**', 'docs/**']
 ```
+
+（實作時改為 `.reviewer.json`，正規表示式寫成 `/regex/flags`，並移除了 `routing.aiTrackPaths`：依核心流程，沒有分析的檔案本來就交給 AI，見 [專案設定](../../project-config.md)。）
 
 物流專案只需換名詞，例如 `sensitiveOperands: [{ pattern: '(?i)stock|inventory|qty', operators: any }]`、`protectedCalls: [{ name: reserveStock }]`。
 
@@ -374,10 +383,11 @@ Check conclusion 由分析結果與 finding 狀態共同決定：存在 `OPEN` /
 
 ## 6. 第 2 層（AI）的邊界
 
-- **輸入**：`AI_TRACK` 檔案的 diff、facts、`codingstandards.md`（從 base 讀）。不傳 `AUTO_PASS` 檔案；`ESCALATED` 檔案只請 AI 產生流程圖與摘要，不請它下結論或修改。
+- **輸入**：所有 `AI_TRACK` 與 `ESCALATED` 檔案的 diff、facts、`codingstandards.md`（從 base 讀）；`FULL` 檔案另附「機械審查無法解釋」的位置。不傳 `AUTO_PASS` 檔案。
+- **輸出**：每個檔案「沒問題」「已修正」或「需要人工」（附理由與位置）。「需要人工」的項目成為 finding（`kind: AI`），與機械審查的單向門 finding 一起交給人工。`ESCALATED` 檔案的單向門 finding 不受 AI 輸出影響，AI 只能附上說明與流程圖。
 - **直接 commit 修正（待決，建議調整）**：藍圖與影片都預設直接 commit。AI 的 commit 是新的 head，第 1 層會重新分析，所以 AI 不可能用 commit 繞過單向門偵測；AI 產生的變更若觸發新的 finding，照常升級為 `ESCALATED`。剩下的風險只是 `AI_TRACK` 檔案中 AI 的修改沒有人看，這與「雙向門稍微看就好」的取捨一致。建議：`AI_TRACK` 檔案預設直接 commit；`ESCALATED` 檔案禁止 AI commit，只能留 suggestion。
 - **與 Agent Work Harness 的分工**不變（見 [Agent Work Harness Integration](../../integrations/agent-work-harness.md)）：Harness 判斷 agent 工作是否完成，Reviewer 判斷是否需要人工；第 2 層 AI 是 Reviewer 的一部分，輸出不回寫 Harness 狀態。
-- AI 呼叫失敗或逾時：該檔案升級為 `ESCALATED`（fail-closed），不是靜默略過。
+- AI 呼叫失敗或逾時：該檔案的 AI 結果視為「需要人工」（fail-closed），不是靜默略過。
 
 ## 7. Retro 閉環
 
@@ -406,7 +416,6 @@ Check conclusion 由分析結果與 finding 狀態共同決定：存在 `OPEN` /
 ## 9. 待決事項
 
 - 設定檔格式：JSON 或加入 YAML 依賴（§3.2）。
-- `FULL` 中「未分析」檔案的預設路由（§2）。
 - AI 是否在 `AI_TRACK` 檔案預設直接 commit（§6）。
 - 豁免權限：repository write 即可，或必須是 CODEOWNERS（§4.4）。
 - TS 型別變更是否在第 3 階段之後交給 `AI_TRACK`（§3.5）。

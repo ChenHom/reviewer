@@ -32,32 +32,29 @@ test('專案可以加入單向門', () => {
   assert.equal(routeFile(file('TARGETED', ['CONSTANT_VALUE_CHANGED'])).track, TRACK.AI_TRACK);
 });
 
-test('FULL 預設為 ESCALATED；只有沒有分析的檔案能被 aiTrackPath 交給 AI', () => {
-  const aiTrackPath = (path) => path.startsWith('tests/');
-  assert.equal(routeFile(file('FULL', ['COV-PHP-001:UNRECOGNIZED_PHP_CHANGE'])).track, TRACK.ESCALATED);
-  assert.equal(routeFile(file('FULL', ['UNSUPPORTED_FILE_TYPE'], 'tests/a.md')).track, TRACK.ESCALATED);
-  assert.equal(routeFile(file('FULL', ['UNSUPPORTED_FILE_TYPE'], 'tests/a.md'), { aiTrackPath }).track, TRACK.AI_TRACK);
-  assert.equal(routeFile(file('FULL', ['FILE_ADDED'], 'tests/B.php'), { aiTrackPath }).track, TRACK.AI_TRACK);
-  assert.equal(routeFile(file('FULL', ['FILE_DELETED'], 'tests/B.php'), { aiTrackPath }).track, TRACK.AI_TRACK);
-  // 分析失敗、binary、symlink、submodule、單向門不受 aiTrackPath 影響
+test('FULL（無法解釋或沒有分析）交給 AI；同時命中單向門時才必須人工', () => {
   for (const reasons of [
     ['COV-PHP-001:UNRECOGNIZED_PHP_CHANGE'],
+    ['COV-TS-001:UNRECOGNIZED_TS_CHANGE'],
     ['ANALYZER_ERROR:boom'],
+    ['UNSUPPORTED_FILE_TYPE'],
+    ['FILE_ADDED'],
     ['BINARY_FILE'],
-    ['SYMLINK_CHANGED'],
-    ['SUBMODULE_CHANGED'],
-    ['UNSUPPORTED_FILE_TYPE', 'PROTECTED_PATH'],
     [],
   ]) {
-    assert.equal(routeFile(file('FULL', reasons, 'tests/a.php'), { aiTrackPath }).track, TRACK.ESCALATED, reasons.join());
+    assert.equal(routeFile(file('FULL', reasons)).track, TRACK.AI_TRACK, reasons.join());
   }
-  assert.equal(routeFile(file('FULL', ['UNSUPPORTED_FILE_TYPE'], 'src/a.md'), { aiTrackPath }).track, TRACK.ESCALATED);
+  assert.deepEqual(routeFile(file('FULL', ['COV-PHP-001:UNRECOGNIZED_PHP_CHANGE', 'TRANSACTION_BOUNDARY_REMOVED'])), {
+    track: TRACK.ESCALATED, oneWayDoors: ['TRANSACTION_BOUNDARY_REMOVED'],
+  });
+  assert.equal(routeFile(file('FULL', ['UNSUPPORTED_FILE_TYPE', 'PROTECTED_PATH'])).track, TRACK.ESCALATED);
+  assert.equal(routeFile(file('FULL', ['POLICY_CONFIG_INVALID'])).track, TRACK.ESCALATED, '設定無效時必須人工');
 });
 
 test('不認得的 decision 或缺少欄位時 fail-closed 為 ESCALATED', () => {
   assert.equal(routeFile({ path: 'a.php', decision: 'SOMETHING', fallback: 'TARGETED', reasons: [] }).track, TRACK.ESCALATED);
   assert.equal(routeFile(undefined).track, TRACK.ESCALATED);
-  assert.equal(routeFile({ path: 'a.php', decision: HUMAN }).track, TRACK.ESCALATED);
+  assert.equal(routeFile({ path: 'a.php', decision: HUMAN }).track, TRACK.AI_TRACK, '沒有原因時交給 AI');
 });
 
 test('PR 路由取最嚴格的檔案路由；不認得的 track 視為 ESCALATED', () => {

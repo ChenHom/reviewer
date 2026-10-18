@@ -420,7 +420,7 @@ export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs
     },
   };
   const reviewed = await mapWithConcurrency(entries, concurrency, (entry) => reviewEntry(context, entry));
-  const routingOptions = { oneWayDoors: policy.oneWayDoors, aiTrackPath: policy.isAiTrackPath };
+  const routingOptions = { oneWayDoors: policy.oneWayDoors };
   const routed = reviewed.map((file) => ({ ...file, ...routeFile(file, routingOptions) }));
   const files = routed.map((file) => ({ ...file, findings: findingsFor(file, { oneWayDoors: policy.oneWayDoors }) }));
 

@@ -49,10 +49,9 @@ const config = {
     sensitiveOperands: [{ pattern: '/amount/', operators: 'comparison' }],
     protectedPaths: ['database/migrations/**'],
   },
-  routing: { aiTrackPaths: ['docs/**'] },
 };
 
-test('專案設定從 merge base 讀取：敏感運算元、受保護路徑、AI 路徑與修改設定本身', async () => {
+test('專案設定從 merge base 讀取：敏感運算元、受保護路徑與修改設定本身', async () => {
   const { repo, base, head } = await repository({
     '.reviewer.json': JSON.stringify(config),
     'src/Op.php': php('        return $q->amount < 10;'),
@@ -84,11 +83,14 @@ test('專案設定從 merge base 讀取：敏感運算元、受保護路徑、AI
   assert.equal(migration.track, 'ESCALATED');
   assert.ok(migration.changedLines.length > 0);
 
+  // 沒有分析的檔案交給 AI；沒有單向門所以不必人工。
   assert.deepEqual(byPath['docs/guide.md'].reasons, ['UNSUPPORTED_FILE_TYPE']);
   assert.equal(byPath['docs/guide.md'].track, 'AI_TRACK');
+  assert.deepEqual(byPath['docs/guide.md'].findings, []);
 
   assert.deepEqual(byPath['.reviewer.json'].reasons, ['UNSUPPORTED_FILE_TYPE', 'POLICY_FILE_CHANGED']);
   assert.equal(byPath['.reviewer.json'].track, 'ESCALATED');
+  assert.deepEqual(byPath['.reviewer.json'].findings.map(({ blocker }) => blocker), ['POLICY_FILE_CHANGED']);
 
   assert.match(formatReview(report), /PROTECTED_PATH（單向門）/);
 });

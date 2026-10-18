@@ -23,8 +23,7 @@ import { DEFAULT_ONE_WAY_DOORS } from '../routing.js';
  *     "sideEffectCalls": [{ "receiver": "Mail", "name": "/^(send|queue)$/" }],
  *     "protectedPaths": ["database/migrations/**"],
  *     "oneWayDoors": ["CONSTANT_VALUE_CHANGED"]
- *   },
- *   "routing": { "aiTrackPaths": ["tests/**", "docs/**"] }
+ *   }
  * }
  * ```
  */
@@ -130,7 +129,7 @@ export function parseProjectConfig(text) {
 
   const errors = [];
   for (const key of Object.keys(raw)) {
-    if (!['version', 'presets', 'rules', 'routing'].includes(key)) errors.push(`POLICY_CONFIG_KEY_UNKNOWN:${key}`);
+    if (!['version', 'presets', 'rules'].includes(key)) errors.push(`POLICY_CONFIG_KEY_UNKNOWN:${key}`);
   }
   if (raw.version !== 1) errors.push('POLICY_CONFIG_VERSION_UNSUPPORTED');
 
@@ -174,16 +173,6 @@ export function parseProjectConfig(text) {
     }
   }
 
-  const routing = raw.routing ?? {};
-  if (!isObject(routing)) {
-    errors.push('POLICY_CONFIG_FIELD_INVALID:routing');
-  } else {
-    for (const key of Object.keys(routing)) {
-      if (key !== 'aiTrackPaths') errors.push(`POLICY_CONFIG_KEY_UNKNOWN:routing.${key}`);
-    }
-    errors.push(...globListErrors(routing.aiTrackPaths, 'routing.aiTrackPaths'));
-  }
-
   if (errors.length > 0) return { valid: false, errors: [...new Set(errors)].sort() };
 
   const config = {
@@ -197,7 +186,6 @@ export function parseProjectConfig(text) {
       protectedPaths: rules.protectedPaths ?? [],
       oneWayDoors: rules.oneWayDoors ?? [],
     },
-    routing: { aiTrackPaths: routing.aiTrackPaths ?? [] },
   };
   const digest = createHash('sha256').update(JSON.stringify(canonicalizeJsonValue(config))).digest('hex');
   return { valid: true, config, digest };
@@ -207,7 +195,7 @@ export function parseProjectConfig(text) {
  * 依（已驗證的）專案設定建立審查 policy。沒有設定時為預設值。
  *
  * @param {{config: object, digest: string}|null} parsed - parseProjectConfig() 的有效結果，或 null。
- * @returns {object} policy：`interpretersFor(language)`、`oneWayDoors`、`isProtectedPath(path)`、`isAiTrackPath(path)`。
+ * @returns {object} policy：`interpretersFor(language)`、`oneWayDoors`、`isProtectedPath(path)`。
  */
 export function createProjectPolicy(parsed) {
   const config = parsed?.config ?? null;
@@ -217,7 +205,6 @@ export function createProjectPolicy(parsed) {
   ].some((list) => list.length > 0);
   const rulesInterpreter = hasRules ? createConfigRulesInterpreter(rules, parsed.digest) : null;
   const protectedPaths = (rules?.protectedPaths ?? []).map(globToRegExp);
-  const aiTrackPaths = (config?.routing.aiTrackPaths ?? []).map(globToRegExp);
 
   return Object.freeze({
     digest: parsed?.digest ?? null,
@@ -232,6 +219,5 @@ export function createProjectPolicy(parsed) {
       ...(rules?.protectedArguments ?? []).map((rule) => rule.blocker).filter(Boolean),
     ])]),
     isProtectedPath: (path) => protectedPaths.some((regex) => regex.test(path)),
-    isAiTrackPath: (path) => aiTrackPaths.some((regex) => regex.test(path)),
   });
 }
