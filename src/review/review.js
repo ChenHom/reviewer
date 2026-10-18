@@ -4,6 +4,7 @@ import { basename } from 'node:path';
 import { createAnalysisContextBinding } from '../adapters/contracts.js';
 import { CONFIG_FILE, POLICY_FILES, createProjectPolicy, parseProjectConfig } from '../config/project-config.js';
 import { createPhpLaravelAdapter } from '../adapters/php-laravel/adapter.js';
+import { createTypeScriptAdapter } from '../adapters/typescript/adapter.js';
 import { displayArgument, displayText } from '../facts/structured.js';
 import { createAuthorityState } from '../publication.js';
 import { routeFile, summarizeTracks } from '../routing.js';
@@ -23,6 +24,13 @@ export const LANGUAGES = Object.freeze([
     match: /\.php$/i,
     createAdapter: createPhpLaravelAdapter,
     presets: Object.freeze(['php-laravel', 'payments']),
+  }),
+  Object.freeze({
+    id: 'ts',
+    // 型別宣告檔（`.d.ts`）不送 analyzer。
+    match: /^(?!.*\.d\.[mc]?ts$).*\.(?:[mc]?ts|tsx|[mc]?js|jsx)$/i,
+    createAdapter: createTypeScriptAdapter,
+    presets: Object.freeze([]),
   }),
 ]);
 

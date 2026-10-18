@@ -340,6 +340,71 @@
     ]
   },
   {
+    "id": "MUT-TS-001",
+    "classification": "critical",
+    "fixture": "typescript/transaction-unwrapped",
+    "path": "src/wallet/debit.ts",
+    "description": "Prisma $transaction wrapper is removed around a balance update.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [],
+    "expectedReasons": [
+      "COV-TS-001:UNRECOGNIZED_TS_CHANGE"
+    ]
+  },
+  {
+    "id": "MUT-TS-002",
+    "classification": "critical",
+    "fixture": "typescript/auth-middleware-removed",
+    "path": "src/routes/refund.ts",
+    "description": "Express requireAuth middleware is removed from the refund route.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [],
+    "expectedReasons": [
+      "COV-TS-001:UNRECOGNIZED_TS_CHANGE"
+    ]
+  },
+  {
+    "id": "MUT-TS-003",
+    "classification": "critical",
+    "fixture": "typescript/ts-ignore-added",
+    "path": "src/payments/charge.ts",
+    "description": "A @ts-ignore hides passing a string amount to the gateway.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [],
+    "expectedReasons": [
+      "COV-TS-001:DIRECTIVE_COMMENT_CHANGED"
+    ]
+  },
+  {
+    "id": "MUT-TS-004",
+    "classification": "critical",
+    "fixture": "typescript/shorthand-key-renamed",
+    "path": "src/payments/payload.ts",
+    "description": "Renaming a local used in object shorthand changes the payload key (amount → total).",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [],
+    "expectedReasons": [
+      "COV-TS-001:UNRECOGNIZED_TS_CHANGE"
+    ]
+  },
+  {
+    "id": "MUT-TS-005",
+    "classification": "critical",
+    "fixture": "typescript/optional-chain-parenthesized",
+    "path": "src/orders/contact.ts",
+    "description": "Parentheses break the optional chain; a missing order now throws.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [],
+    "expectedReasons": [
+      "COV-TS-001:UNRECOGNIZED_TS_CHANGE"
+    ]
+  },
+  {
     "id": "SAFE-001",
     "classification": "safe",
     "fixture": "format-only",
@@ -378,5 +443,44 @@
     "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
     "expectedTrack": "AUTO_PASS",
     "expectedFactKinds": []
+  },
+  {
+    "id": "SAFE-TS-001",
+    "classification": "safe",
+    "fixture": "typescript/format-only",
+    "path": "src/orders/discount.ts",
+    "description": "Prettier-style formatting: quotes, semicolons, trailing commas, redundant parentheses, property key quotes, comments.",
+    "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "expectedTrack": "AUTO_PASS",
+    "expectedFactKinds": [],
+    "expectedReasons": [
+      "NO_REDUCTION_BLOCKER"
+    ]
+  },
+  {
+    "id": "SAFE-TS-002",
+    "classification": "safe",
+    "fixture": "typescript/local-rename",
+    "path": "src/ledger/settle.ts",
+    "description": "Consistent rename of local variables inside a function.",
+    "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "expectedTrack": "AUTO_PASS",
+    "expectedFactKinds": [],
+    "expectedReasons": [
+      "NO_REDUCTION_BLOCKER"
+    ]
+  },
+  {
+    "id": "SAFE-TS-003",
+    "classification": "safe",
+    "fixture": "typescript/jsx-reformat",
+    "path": "src/ui/Receipt.tsx",
+    "description": "JSX reformatted across lines without changing rendered whitespace.",
+    "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "expectedTrack": "AUTO_PASS",
+    "expectedFactKinds": [],
+    "expectedReasons": [
+      "NO_REDUCTION_BLOCKER"
+    ]
   }
 ]

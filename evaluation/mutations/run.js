@@ -1,9 +1,9 @@
 import { readFile } from 'node:fs/promises';
+import { extname } from 'node:path';
 import process from 'node:process';
 import { URL } from 'node:url';
 
 import { createAnalysisContextBinding } from '../../src/adapters/contracts.js';
-import { createPhpLaravelAdapter } from '../../src/adapters/php-laravel/adapter.js';
 import { createProjectPolicy, parseProjectConfig } from '../../src/config/project-config.js';
 import { createAuthorityState } from '../../src/publication.js';
 import { languageFor } from '../../src/review/review.js';
@@ -14,7 +14,18 @@ import {
   validateMutationEvaluation,
 } from './metrics.js';
 
-const adapter = createPhpLaravelAdapter();
+const adapters = new Map();
+
+/**
+ * 路徑對應語言的 adapter（每種語言共用一個）。
+ *
+ * @param {object} language - `LANGUAGES` 中的語言設定。
+ * @returns {object} executable adapter。
+ */
+function adapterFor(language) {
+  if (!adapters.has(language.id)) adapters.set(language.id, language.createAdapter());
+  return adapters.get(language.id);
+}
 
 /**
  * 讀取 JSON 檔。
@@ -27,18 +38,19 @@ async function readJson(url) {
 }
 
 /**
- * 讀取 mutation fixture source。
+ * 讀取 mutation fixture source。`fixture` 不含 `/` 時位於 `fixtures/php-laravel/`，
+ * 否則為 `<目錄>/<名稱>`（例如 `typescript/format-only`）；副檔名與 case 的 `path` 相同。
  *
- * @param {string} fixture - fixture directory name。
+ * @param {object} definition - case definition。
  * @param {'before'|'after'} side - source side。
- * @returns {Promise<string>} PHP source。
+ * @returns {Promise<string>} source。
  */
-async function readFixture(fixture, side) {
+async function readFixture(definition, side) {
+  const [directory, name] = definition.fixture.includes('/')
+    ? definition.fixture.split('/')
+    : ['php-laravel', definition.fixture];
   return readFile(
-    new URL(
-      `../../fixtures/php-laravel/${fixture}/${side}.php`,
-      import.meta.url,
-    ),
+    new URL(`../../fixtures/${directory}/${name}/${side}${extname(definition.path)}`, import.meta.url),
     'utf8',
   );
 }
@@ -82,10 +94,12 @@ function policyFor(definition) {
  */
 async function executeCase(definition) {
   const policy = policyFor(definition);
-  const interpreters = policy.interpretersFor(languageFor(definition.path));
+  const language = languageFor(definition.path);
+  const adapter = adapterFor(language);
+  const interpreters = policy.interpretersFor(language);
   const [beforeSource, afterSource] = await Promise.all([
-    readFixture(definition.fixture, 'before'),
-    readFixture(definition.fixture, 'after'),
+    readFixture(definition, 'before'),
+    readFixture(definition, 'after'),
   ]);
 
   const identity = identityFor(definition.id);

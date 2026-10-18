@@ -47,7 +47,7 @@ NOT_SELECTED_FOR_HUMAN_REVIEW
 Authoritative Candidate / Summary / Check
 ```
 
-目前第一個 executable Adapter 是 PHP/Laravel。
+目前的 executable Adapter：PHP/Laravel（AST 比對與 semantic facts），以及 TypeScript / JavaScript（第 1 階段，只判斷 AST 是否等價）。
 
 ## Review 一個 PR
 
@@ -68,7 +68,7 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
 
 需要人工確認（ESCALATED）：
   FULL     composer.json
-           - UNSUPPORTED_FILE_TYPE（非 PHP 檔案，未分析）
+           - UNSUPPORTED_FILE_TYPE（不支援的檔案類型，未分析）
            變更位置：head:L5
 
 交給 AI 審查（AI_TRACK）：
@@ -92,7 +92,7 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
 - `TARGETED`：每一處程式碼變更都已被 fact 解釋（或檔案只是 rename / 權限變更）；解釋變更的 fact 不一定有對應的 domain 規則，見下方 `FACT_UNHANDLED`。列出的原因與位置是 review 的起點，**整個檔案仍需 review**（reduction 是 file-level，見「目前能力邊界」）。
 - `FACT_UNHANDLED ×N`：有 N 個 fact 沒有對應的 domain 規則，例如上例 `->first()` → `->firstOrFail()` 產生的 `CALL_REMOVED` / `CALL_ADDED`。這些變更仍已被 fact 解釋，所以檔案沒有其他無法解釋的變更時是 `TARGETED`。
 - 每個 fact 都會讓檔案需要 review。PHP 檔只有在沒有任何 fact、AST 等價（排版、註解、一致的區域變數改名等，見「已實作」），而且不是 rename 或權限變更時，才會列在「不需要 review」，例如上例只加了註解、改了區域變數名稱的 `FreezeObserver.php`。
-- 只有 `.php` 的修改與 rename 會送進 analyzer；新增、刪除、非 PHP、binary、symlink、submodule 檔案一律 `FULL`。rename 與檔案權限變更即使內容等價也要求 review（`FILE_RENAMED`、`FILE_MODE_CHANGED`）。
+- 只有支援的語言（PHP，以及 TypeScript / JavaScript）的修改與 rename 會送進 analyzer；新增、刪除、不支援的檔案、binary、symlink、submodule 一律 `FULL`。TypeScript / JavaScript 目前是第 1 階段：只判斷 AST 是否等價（排版、註解、區域變數改名等不需要 review），其他變更一律 `FULL`（`COV-TS-001:*`），見 [PR Review CLI「檔案分類」](docs/review-cli.md#檔案分類)。rename 與檔案權限變更即使內容等價也要求 review（`FILE_RENAMED`、`FILE_MODE_CHANGED`）。
 - PR 層級的決策只有在**所有**檔案都不需 review 時才是 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
 - 路由（三層審查：機械 → AI → 人工）：需要 review 的檔案再分成兩段。有單向門（例如 `TRANSACTION_BOUNDARY_REMOVED`、`AUTHORIZATION_GUARD_REMOVED`）或 `FULL` 的檔案「需要人工確認」（`ESCALATED`）；其餘 `TARGETED` 檔案「交給 AI 審查」（`AI_TRACK`）。路由不改變上面的決策。專案可以用 `.reviewer.json` 加入業務相關的單向門，例如把 `amount` 列為敏感運算元後，上例的 `FreezeService.php` 會需要人工確認（見 [專案設定](docs/project-config.md)）。
 

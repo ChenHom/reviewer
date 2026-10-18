@@ -27,8 +27,10 @@
 - Composer 2，用來安裝 analyzer 依賴（[nikic/php-parser](https://github.com/nikic/PHP-Parser) 5.9.0，版本鎖定在 `analyzers/php/composer.lock`）：
 
   ```bash
-  npm run analyzer:install   # composer install --working-dir=analyzers/php --no-interaction
+  npm run analyzer:install   # composer install --working-dir=analyzers/php，再 npm ci --prefix analyzers/ts
   ```
+
+- TypeScript / JavaScript 檔案的 analyzer（`analyzers/ts`）以執行 CLI 的同一個 Node.js 執行，依賴 `typescript` 5.9.3（版本鎖定在 `analyzers/ts/package-lock.json`），同樣由 `npm run analyzer:install` 安裝。沒有安裝時每個送進 TS analyzer 的檔案為 `FULL`（`COV-TS-001:TS_ANALYZER_DEPENDENCY_MISSING`）。
 
 - 要 review 的 repository 必須同時有 base 與 head 的歷史，才找得到 merge base（見「比較範圍」）。
 
@@ -105,12 +107,12 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
 | 1 | git 狀態不是新增、刪除、修改或 rename。實際會遇到的是 `type-changed`（一般檔案、symlink、submodule 之間互換） | `FULL` | `UNSUPPORTED_CHANGE_TYPE:<status>` |
 | 2 | 任一側是 submodule（mode `160000`） | `FULL` | `SUBMODULE_CHANGED` |
 | 3 | 任一側是 symlink（mode `120000`） | `FULL` | `SYMLINK_CHANGED` |
-| 4 | 路徑不以 `.php` 結尾（不分大小寫；rename 看新路徑） | `FULL` | `UNSUPPORTED_FILE_TYPE` |
-| 5 | 新增的 PHP 檔 | `FULL` | `FILE_ADDED` |
-| 6 | 刪除的 PHP 檔 | `FULL` | `FILE_DELETED` |
+| 4 | 路徑不是支援的語言（不分大小寫；rename 看新路徑）：PHP 為 `.php`；TypeScript / JavaScript 為 `.ts`、`.tsx`、`.mts`、`.cts`、`.js`、`.jsx`、`.mjs`、`.cjs`，但型別宣告檔（`.d.ts`、`.d.mts`、`.d.cts`）除外 | `FULL` | `UNSUPPORTED_FILE_TYPE` |
+| 5 | 新增的檔案 | `FULL` | `FILE_ADDED` |
+| 6 | 刪除的檔案 | `FULL` | `FILE_DELETED` |
 | 7 | 任一側內容含 NUL byte | `FULL` | `BINARY_FILE` |
 | 8 | analyzer 執行失敗（找不到 `php`、逾時、非 0 結束、輸出不是 JSON） | `FULL` | `ANALYZER_ERROR:<訊息>` |
-| 9 | 其餘：修改或 rename 的 PHP 檔，由 analyzer 比較 merge base 與 head 兩個版本 | 見下 | 見「原因代碼」 |
+| 9 | 其餘：修改或 rename 的檔案，由該語言的 analyzer 比較 merge base 與 head 兩個版本 | 見下 | 見「原因代碼」 |
 
 第 1–8 步的檔案在 JSON 中 `analyzed` 為 `false`、`facts` 為空。因為判斷順序：
 
@@ -118,9 +120,9 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
 - 新增、刪除或改指向的 symlink 是 `SYMLINK_CHANGED`；一般檔案改成 symlink 則是 `UNSUPPORTED_CHANGE_TYPE:type-changed`。
 - `Upper.PHP` 這類大寫副檔名與 `*.blade.php` 都會送進 analyzer。Blade 指令與 HTML 對 PHP parser 來說都是 inline HTML，沒有對應的 fact，因此 template 內容的變更是 `FULL`（`COV-PHP-001:UNRECOGNIZED_PHP_CHANGE`）。
 
-第 9 步：
+第 9 步（TypeScript / JavaScript 見本節最後）：
 
-- analyzer 以 AST 比較兩個版本：兩側都能以最新 PHP 語法解析時使用最新語法，否則兩側一起改用 PHP 7.4 語法。每個被解釋的差異都對應一個 fact（`CALL_REMOVED`、`BINARY_OPERATOR_CHANGED` 等，完整清單見 [README「已實作」](../README.md#已實作)）。
+- PHP analyzer 以 AST 比較兩個版本：兩側都能以最新 PHP 語法解析時使用最新語法，否則兩側一起改用 PHP 7.4 語法。每個被解釋的差異都對應一個 fact（`CALL_REMOVED`、`BINARY_OPERATOR_CHANGED` 等，完整清單見 [README「已實作」](../README.md#已實作)）。
 - 每個 fact 交給 15 個 deterministic domain interpreter（`src/interpreters/`（語言層 `core.js`、框架 preset `presets/php-laravel.js`、業務 preset `presets/payments.js`），PHP 預設啟用 `php-laravel` 與 `payments` 兩個 preset）：有對應規則的 fact 產生具體的原因代碼，沒有的產生 `FACT_UNHANDLED:<fact id>`。
 - 結果：
   - 沒有任何 fact、兩個版本在 AST 比較下等價（排版、註解、區域變數一致改名等），而且 PHP 8 與 PHP 7 的解讀一致（不檢查 PHP 5 的語意，見「限制」）：`NOT_SELECTED_FOR_HUMAN_REVIEW`，原因 `NO_REDUCTION_BLOCKER`。
@@ -129,6 +131,12 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
 - rename 或檔案權限改變（例如 `100644` → `100755`）會再加上 `FILE_RENAMED` / `FILE_MODE_CHANGED`，因為 autoload 路徑或執行權限可能改變行為：
   - 內容等價（原本會是 `NOT_SELECTED_FOR_HUMAN_REVIEW`）時改為 `TARGETED`，原因只有 `FILE_RENAMED` / `FILE_MODE_CHANGED`。
   - 內容也有變更時，接在 analyzer 的原因之後，`TARGETED` / `FULL` 不變。
+
+TypeScript / JavaScript（第 1 階段）：analyzer（`analyzers/ts`，TypeScript compiler API）只判斷兩個版本的 AST 是否等價，**不輸出 fact**：
+
+- 等價（排版、一般註解、引號、分號、trailing comma、多餘括號、property key 是否加引號、數字寫法、JSX 依渲染空白規則的換行，以及 function 內一致的區域變數改名）：`NOT_SELECTED_FOR_HUMAN_REVIEW`。
+- 其他任何差異：`FULL`，原因 `COV-TS-001:<原因>`。因為沒有 fact，所以不會有 `TARGETED`，也不會產生 domain 原因代碼或命中專案規則；依路由一律需要人工確認。
+- 不視為等價的情況（寧可要求 review）：型別註記、`as` 轉型、`interface` / `type` 的變更；參數與頂層變數改名；物件簡寫 `{ x }` 或解構 `const { x } = o` 中的變數改名（會改變 key）；會被賦予匿名 function / class / arrow 的變數改名（`fn.name` 會改變）；`function` 與箭頭函式互換；import 順序；`'a'` 與 `` `a` `` 互換；optional chain 外的括號（`(a?.b).c`）。檔案中有 direct `eval(...)` 或 `with` 時不做區域變數改名正規化。
 
 ## 決策語意
 
@@ -212,14 +220,26 @@ analyzer process 沒有正常產生結果。訊息最多 200 字元：
 | `PHP_FILE_DELETION_UNSUPPORTED` | head 版本是空檔（檔案被清空但沒有刪除） |
 | `PHP_ANALYZER_DEPENDENCY_MISSING` | `analyzers/php/vendor` 不存在；先執行 `npm run analyzer:install`（需要 PHP 8.3 以上，否則安裝會因 platform requirement 失敗） |
 
+### `COV-TS-001:<原因>`（`FULL`）
+
+`COV-TS-001` 是 TypeScript / JavaScript analyzer 的 coverage obligation：
+
+| 原因 | 意義 |
+|---|---|
+| `UNRECOGNIZED_TS_CHANGE` | 兩個版本的 AST 不等價（第 1 階段沒有 fact，任何實質變更都是這個原因） |
+| `DIRECTIVE_COMMENT_CHANGED` | 有語意的註解改變或移動：`@ts-ignore` / `@ts-expect-error` / `@ts-nocheck`、`eslint-disable`、`#__PURE__`、webpack / vite 指示、coverage ignore、JSX pragma、triple-slash 指示，以及 shebang |
+| `TS_PARSE_ERROR` | 任一側有語法錯誤（包含 TypeScript parser 回報的文法錯誤） |
+| `TS_FILE_DELETION_UNSUPPORTED` | head 版本是空檔 |
+| `TS_ANALYZER_DEPENDENCY_MISSING` | `analyzers/ts/node_modules` 沒有 `typescript`；先執行 `npm run analyzer:install` |
+
 ### `FILE_RENAMED` / `FILE_MODE_CHANGED`
 
 | 代碼 | 意義 |
 |---|---|
-| `FILE_RENAMED` | PHP 檔改名或搬移（autoload 路徑可能改變） |
-| `FILE_MODE_CHANGED` | PHP 檔的權限改變（例如加上執行權限） |
+| `FILE_RENAMED` | 檔案改名或搬移（autoload / import 路徑可能改變） |
+| `FILE_MODE_CHANGED` | 檔案的權限改變（例如加上執行權限） |
 
-內容等價時檔案為 `TARGETED`，否則接在 analyzer 的原因之後（見「檔案分類」）。非 PHP 檔的 rename 或權限變更只會是 `UNSUPPORTED_FILE_TYPE`。
+內容等價時檔案為 `TARGETED`，否則接在 analyzer 的原因之後（見「檔案分類」）。不支援的檔案的 rename 或權限變更只會是 `UNSUPPORTED_FILE_TYPE`。
 
 ### `FACT_UNHANDLED:<fact id>`
 
@@ -315,7 +335,7 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
            - COV-PHP-001:UNRECOGNIZED_PHP_CHANGE（有無法自動解釋的變更，請看整個檔案）
            變更位置：head:L9-14
   FULL     composer.json
-           - UNSUPPORTED_FILE_TYPE（非 PHP 檔案，未分析）
+           - UNSUPPORTED_FILE_TYPE（不支援的檔案類型，未分析）
            變更位置：head:L3
   TARGETED app/Http/Controllers/PostController.php
            - AUTHORIZATION_GUARD_REMOVED（單向門）

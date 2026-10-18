@@ -1,0 +1,86 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import { analyze, scriptKindFor } from '../../analyzers/ts/src/analyze.js';
+import { cleanJsxText } from '../../analyzers/ts/src/canonicalizer.js';
+
+const fn = (body, params = 'x') => `export function f(${params}) {\n${body}\n}\n`;
+
+const cases = [
+  // [label, path, before, after, expectedReasonOrNull]
+  ['format/quotes/semis/trailing comma', 'a.ts', fn("const a = ['x', 'y',];\nreturn a;"), fn('const a = ["x", "y"]; return a'), null],
+  ['parens redundant', 'a.ts', fn('return (x + 1) * 2;'), fn('return ((x + 1)) * (2);'), null],
+  ['parens precedence change', 'a.ts', fn('return (x + 1) * 2;'), fn('return x + 1 * 2;'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['optional chain parens', 'a.ts', fn('return (x?.a).b;'), fn('return x?.a.b;'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['numeric forms', 'a.ts', fn('return 1000 + 16;'), fn('return 1_000 + 0x10;'), null],
+  ['key quoting', 'a.ts', fn('return { a: 1, "b-c": 2, 3: x };'), fn("return { 'a': 1, 'b-c': 2, '3': x };"), null],
+  ['local rename', 'a.ts', fn('const total = x * 2; let i = 0; for (const item of [total]) { i += item; } return i;'), fn('const sum = x * 2; let n = 0; for (const value of [sum]) { n += value; } return n;'), null],
+  ['param rename not normalized', 'a.ts', fn('return x;'), fn('return y;', 'y'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['shorthand key changes', 'a.ts', fn('const a = x; return { a };'), fn('const b = x; return { b };'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['shorthand expanded same key', 'a.ts', fn('const a = x; return { a };'), fn('const b = x; return { a: b };'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['destructuring shorthand rename', 'a.ts', fn('const { a } = x; return a;'), fn('const { b } = x; return b;'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['destructuring alias rename', 'a.ts', fn('const { a: p } = x; return p;'), fn('const { a: q } = x; return q;'), null],
+  ['swap variables', 'a.ts', fn('let a = 1, b = 2; return a - b;'), fn('let b = 1, a = 2; return a - b;'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['canonical vs global $0 collision', 'a.ts', fn('let a = 1; return a;'), fn('let b = 1; return $0;'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['arrow name inference excluded', 'a.ts', fn('const handler = () => x; return handler.name;'), fn('const cb = () => x; return cb.name;'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['top-level rename not normalized', 'a.js', 'var total = 1; console.log(total);\n', 'var sum = 1; console.log(sum);\n', 'UNRECOGNIZED_TS_CHANGE'],
+  ['eval disables rename', 'a.js', fn('const a = 1; eval("a"); return a;'), fn('const b = 1; eval("a"); return b;'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['shadowing rename', 'a.ts', fn('const a = 1; { const a = 2; x(a); } return a;'), fn('const p = 1; { const q = 2; x(q); } return p;'), null],
+  ['shadowing wrong', 'a.ts', fn('const a = 1; { const b = 2; x(a); } return a;'), fn('const p = 1; { const q = 2; x(q); } return p;'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['type annotation change', 'a.ts', fn('const a: number = x; return a;'), fn('const a: any = x; return a;'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['as any added', 'a.ts', fn('return x.y;'), fn('return (x as any).y;'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['ts-ignore added', 'a.ts', fn('return x.y;'), fn('// @ts-ignore\nreturn x.y;'), 'DIRECTIVE_COMMENT_CHANGED'],
+  ['plain comment added', 'a.ts', fn('return x.y;'), fn('// explain\nreturn x.y; /* more */'), null],
+  ['pure annotation', 'a.js', 'export const a = make();\n', 'export const a = /*#__PURE__*/ make();\n', 'DIRECTIVE_COMMENT_CHANGED'],
+  ['use strict raw', 'a.js', '"use strict";\nfoo();\n', "'use strict';\nfoo();\n", null],
+  ['use strict escaped', 'a.js', '"use strict";\nfoo();\n', '"use\\x20strict";\nfoo();\n', 'UNRECOGNIZED_TS_CHANGE'],
+  ['string escape same value', 'a.ts', fn("return 'A';"), fn("return '\\x41';"), null],
+  ['template vs string', 'a.ts', fn("return 'a';"), fn('return `a`;'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['jsx reformat', 'a.tsx', 'export const A = () => <div className="a"><span>Hello world</span></div>;\n', 'export const A = () => (\n  <div className="a">\n    <span>Hello world</span>\n  </div>\n);\n', null],
+  ['jsx text change', 'a.tsx', 'export const A = () => <p>Hello world</p>;\n', 'export const A = () => <p>Hello  world</p>;\n', 'UNRECOGNIZED_TS_CHANGE'],
+  ['jsx inline space vs newline', 'a.tsx', 'export const A = () => <p>a <b>b</b></p>;\n', 'export const A = () => <p>a\n<b>b</b></p>;\n', 'UNRECOGNIZED_TS_CHANGE'],
+  ['jsx comment text not directive', 'a.tsx', 'export const A = () => <p>// @ts-ignore</p>;\n', 'export const A = () => <p>// @ts-ignore</p>;\n', null],
+  ['function to arrow', 'a.ts', 'export const f = function () { return this; };\n', 'export const f = () => { return this; };\n', 'UNRECOGNIZED_TS_CHANGE'],
+  ['import order', 'a.ts', "import './a';\nimport './b';\n", "import './b';\nimport './a';\n", 'UNRECOGNIZED_TS_CHANGE'],
+  ['empty statements', 'a.ts', fn('x();'), fn('x();;'), null],
+  ['let to const', 'a.ts', fn('let a = 1; return a;'), fn('const a = 1; return a;'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['operator change', 'a.ts', fn('return x < 1;'), fn('return x <= 1;'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['prefix operator', 'a.ts', fn('return -x;'), fn('return +x;'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['type-only import', 'a.ts', "import type { A } from './a';\nexport let x: A;\n", "import { A } from './a';\nexport let x: A;\n", 'UNRECOGNIZED_TS_CHANGE'],
+  ['parse error', 'a.ts', fn('return 1;'), fn('return 1 +;'), 'TS_PARSE_ERROR'],
+  ['bigint forms', 'a.ts', fn('return 16n;'), fn('return 0x10n;'), null],
+  ['catch var rename', 'a.ts', fn('try { x(); } catch (err) { return err; }'), fn('try { x(); } catch (e) { return e; }'), null],
+  ['jsx component vs intrinsic', 'a.tsx', 'export function A(x) { const Foo = x; return <Foo />; }\n', 'export function A(x) { const foo = x; return <foo />; }\n', 'UNRECOGNIZED_TS_CHANGE'],
+  ['shebang changed', 'a.js', '#!/usr/bin/env node\nfoo();\n', '#!/usr/bin/env bun\nfoo();\n', 'DIRECTIVE_COMMENT_CHANGED'],
+  ['class semicolon', 'a.ts', 'export class A { a = 1; }\n', 'export class A { a = 1;; }\n', null],
+];
+
+test('TS analyzer：等價判定與 fail-closed 的邊界', () => {
+  for (const [label, path, before, after, expected] of cases) {
+    const result = analyze({ path, beforeSource: before, afterSource: after });
+    const actual = result.ok ? result.reasonCode : result.code;
+    assert.equal(actual, expected, label);
+    if (result.ok) {
+      assert.equal(result.complete, expected === null, label);
+      assert.equal(result.status, expected === null ? 'COMPLETE' : 'PARTIAL_PARSE', label);
+      assert.deepEqual(result.facts, [], label);
+    }
+  }
+});
+
+test('TS analyzer：副檔名對應與不支援的檔案', () => {
+  assert.notEqual(scriptKindFor('a.ts'), null);
+  assert.notEqual(scriptKindFor('A.TSX'), null);
+  assert.notEqual(scriptKindFor('a.cjs'), null);
+  assert.equal(scriptKindFor('a.json'), null);
+  assert.equal(scriptKindFor('Makefile'), null);
+  assert.deepEqual(analyze({ path: 'a.json', beforeSource: '{}', afterSource: '{}' }).code, 'TS_FILE_TYPE_UNSUPPORTED');
+});
+
+test('JSX 文字依 JSX 空白規則正規化', () => {
+  assert.equal(cleanJsxText('Hello world'), 'Hello world');
+  assert.equal(cleanJsxText('\n    Hello\n    world\n  '), 'Hello world');
+  assert.equal(cleanJsxText('\n   \n'), '');
+  assert.equal(cleanJsxText(' a '), ' a ');
+  assert.equal(cleanJsxText('a\t\n b'), 'a b');
+});

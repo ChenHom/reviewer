@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
-import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+
+import { executeAnalyzer } from '../analyzer-process.js';
 
 export const PHP_LARAVEL_ADAPTER_DESCRIPTOR = Object.freeze({
   id: 'php-laravel-v1',
@@ -72,72 +73,6 @@ function changedRegion(path, source, phpVersion) {
 }
 
 /**
- * 透過 PHP CLI 執行 analyzer，並解析 JSON stdout。
- *
- * @param {object} options - analyzer execution options。
- * @param {string} options.analyzerPath - analyzer PHP script path。
- * @param {string} options.phpBinary - PHP executable。
- * @param {object} options.payload - analyzer stdin payload。
- * @param {AbortSignal|undefined} options.signal - abort signal。
- * @returns {Promise<object>} analyzer JSON result。
- */
-function executePhpAnalyzer({
-  analyzerPath,
-  phpBinary,
-  payload,
-  signal,
-}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(phpBinary, [analyzerPath], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-
-    const onAbort = () => {
-      child.kill('SIGTERM');
-    };
-    signal?.addEventListener('abort', onAbort, { once: true });
-
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk;
-    });
-
-    child.on('error', (error) => {
-      signal?.removeEventListener('abort', onAbort);
-      reject(error);
-    });
-    child.on('close', (code) => {
-      signal?.removeEventListener('abort', onAbort);
-      if (signal?.aborted) {
-        reject(new Error('PHP_ANALYZER_ABORTED'));
-        return;
-      }
-      if (code !== 0) {
-        reject(new Error(`PHP_ANALYZER_EXIT_${code}:${stderr.trim()}`));
-        return;
-      }
-
-      try {
-        resolve(JSON.parse(stdout));
-      } catch {
-        reject(new Error('PHP_ANALYZER_OUTPUT_INVALID'));
-      }
-    });
-
-    // analyzer 可能在讀完 stdin 前就結束（例如缺少依賴時直接回報錯誤）。寫入失敗（EPIPE）
-    // 不可成為未處理的 error 事件；結果一律由 close 時的 exit code 與 stdout 決定。
-    child.stdin.on('error', () => {});
-    child.stdin.end(JSON.stringify(payload));
-  });
-}
-
-/**
  * 建立真實 PHP/Laravel executable adapter。
  *
  * Adapter 只產生 syntax/semantic facts，不產生 risk 或 review decision。
@@ -170,11 +105,12 @@ export function createPhpLaravelAdapter({
         return terminalResult('PHP_FILE_DELETION_UNSUPPORTED', 'UNSUPPORTED');
       }
 
-      const analysis = await executePhpAnalyzer({
-        analyzerPath,
-        phpBinary,
+      const analysis = await executeAnalyzer({
+        command: phpBinary,
+        args: [analyzerPath],
         payload: { path, beforeSource, afterSource },
         signal,
+        prefix: 'PHP_ANALYZER',
       });
 
       if (!analysis?.ok) {

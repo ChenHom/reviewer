@@ -53,3 +53,24 @@
 7. **鏈式呼叫的副作用規則要比對鏈的開頭**：`Mail::to($u)->send(...)` 中 `->send` 沒有 receiver（fact schema v2 的鏈式 call `receiver` 為 `null`）。文件說明以 `{ "receiver": "Mail" }` 比對 `Mail::to`。
 8. **正規表示式的效能（ReDoS）**：設定來自 merge base（已審查過），沒有加逾時保護。
 9. **`protectedArguments` 新增了 `PROTECTED_ARGUMENT_CHANGED`**：設計文件的單向門清單沒有它；已加入預設單向門，`blocker` 自訂的代碼也自動成為單向門。
+
+## 步驟 5：TypeScript / JavaScript adapter（第 1 階段）
+
+**做了什麼**：`analyzers/ts/`（TypeScript compiler API，`typescript` 鎖定 5.9.3，以子行程執行）、`src/adapters/typescript/adapter.js`（`typescript-v1@0.1.0`，obligation `COV-TS-001`）、`src/adapters/analyzer-process.js`（PHP / TS 共用的子行程執行）。`LANGUAGES` 加入 `ts`（`.ts`、`.tsx`、`.mts`、`.cts`、`.js`、`.jsx`、`.mjs`、`.cjs`，排除 `.d.ts`）。`npm run analyzer:install` 與 CI 都會安裝 `analyzers/ts` 的依賴；`npm run lint` 也檢查 `analyzers/ts`。mutation corpus 新增 3 個 safe、5 個 critical TS case（全部符合預期）。
+
+**問題與處理**：
+
+1. **TypeScript 版本**：npm 上最新是 7.x（原生移植版，JS API 不同），所以鎖定最後一個 JS 實作的穩定版 5.9.3。
+2. **第 1 階段沒有 fact**：TS 的實質變更一律 `FULL` → `ESCALATED`，不會有 `TARGETED` / `AI_TRACK`，也不會命中專案規則（`.reviewer.json` 的規則要等第 2 階段輸出 call fact）。mutation 的 Critical Direct Fact Coverage 因此從 100% 降到 80%（5 個 TS critical case 是 fallback-only），這是預期的，不是退步。
+3. **區域變數改名的範圍比設計文件更保守**：除了設計列的排除條件（`eval`、`with`、物件簡寫、export、class member），另外排除：
+   - 參數（與 PHP 一致；`fn.toString()` 與部分 DI 框架看得到參數名稱）；
+   - 會被賦予匿名 function / class / arrow 的變數（`const f = () => {}` 會讓 `f.name === 'f'`，改名會改變 `.name`）；
+   - 解構簡寫 `const { a } = o`（改名會改變取用的 key）。
+   - 有 direct `eval` 或 `with` 時整個檔案不做正規化（設計寫的是 scope 層級，但 `eval` 可以透過 closure 存取外層變數，以檔案為單位比較簡單也比較安全）。
+4. **`fn.toString()` 的限制**：JavaScript 可以用 `Function.prototype.toString()` 讀到原始碼，所以理論上連排版變更都可觀察。與 PHP 接受反射的取捨相同，排版與註解仍視為等價，不另外處理。
+5. **指示註解的位置是近似的**：以「註解文字 + 下一個 token 的文字」比較。同一個 `@ts-ignore` 移到另一個 token 前面會被視為不同（要求 review）；移到同名 token 前面則無法分辨。
+6. **TypeScript parser 的文法錯誤也算 `TS_PARSE_ERROR`**：例如 `.js` 中的舊式八進位 `010` 會被 parser 回報為錯誤，因此該檔案為 `FULL`。寧可要求 review。
+7. **字串與 template literal 不互相正規化**：`'a'` 與 `` `a` `` 在 tagged template 中語意不同，第 1 階段一律視為不同。
+8. **real-repo evaluation 沒有 TS 版本**：產生器（`evaluation/real-repo/generate.php`）是 PHP 專用，TS 需要另寫，留待之後。
+9. **執行環境**：本機（Node 22）與 CI（Node 24）都會跑 TS analyzer；TS analyzer 用執行 CLI 的同一個 Node（`process.execPath`）。
+10. **測試時觀察到一次不穩定**：`tests/evaluation/real-repo-cli.test.js` 的「收到 SIGTERM 時移除 snapshot」在整個 suite 平行執行時失敗一次，單獨執行與重跑都通過。這個測試依賴時序，與本次變更無關；新增的 TS 測試讓 suite 的負載變高，可能更容易觸發。

@@ -8,7 +8,7 @@ const REASON_HINTS = Object.freeze({
   FILE_DELETED: '刪除的檔案',
   FILE_RENAMED: '檔案改名或搬移（autoload 路徑可能改變）',
   FILE_MODE_CHANGED: '檔案權限改變',
-  UNSUPPORTED_FILE_TYPE: '非 PHP 檔案，未分析',
+  UNSUPPORTED_FILE_TYPE: '不支援的檔案類型，未分析',
   BINARY_FILE: 'binary 檔案，未分析',
   SYMLINK_CHANGED: 'symlink 變更',
   SUBMODULE_CHANGED: 'submodule 變更',
@@ -16,6 +16,10 @@ const REASON_HINTS = Object.freeze({
   'COV-PHP-001:PHP_GRAMMAR_DIVERGENCE': 'PHP 7 與 PHP 8 的解讀不同，請看整個檔案',
   'COV-PHP-001:PHP_PARSE_ERROR': '無法解析，請看整個檔案',
   'COV-PHP-001:PHP_FILE_DELETION_UNSUPPORTED': '檔案被清空',
+  'COV-TS-001:UNRECOGNIZED_TS_CHANGE': '有排版、註解、區域變數改名以外的變更，請看整個檔案',
+  'COV-TS-001:DIRECTIVE_COMMENT_CHANGED': '有語意的註解（@ts-ignore、eslint-disable 等）改變，請看整個檔案',
+  'COV-TS-001:TS_PARSE_ERROR': '無法解析，請看整個檔案',
+  'COV-TS-001:TS_FILE_DELETION_UNSUPPORTED': '檔案被清空',
 });
 
 /**
