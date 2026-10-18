@@ -120,7 +120,7 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
 第 9 步：
 
 - analyzer 以 AST 比較兩個版本：兩側都能以最新 PHP 語法解析時使用最新語法，否則兩側一起改用 PHP 7.4 語法。每個被解釋的差異都對應一個 fact（`CALL_REMOVED`、`BINARY_OPERATOR_CHANGED` 等，完整清單見 [README「已實作」](../README.md#已實作)）。
-- 每個 fact 交給 `src/interpreters/php-laravel-domain.js` 的 15 個 deterministic domain interpreter：有對應規則的 fact 產生具體的原因代碼，沒有的產生 `FACT_UNHANDLED:<fact id>`。
+- 每個 fact 交給 15 個 deterministic domain interpreter（`src/interpreters/`（語言層 `core.js`、框架 preset `presets/php-laravel.js`、業務 preset `presets/payments.js`），PHP 預設啟用 `php-laravel` 與 `payments` 兩個 preset）：有對應規則的 fact 產生具體的原因代碼，沒有的產生 `FACT_UNHANDLED:<fact id>`。
 - 結果：
   - 沒有任何 fact、兩個版本在 AST 比較下等價（排版、註解、區域變數一致改名等），而且 PHP 8 與 PHP 7 的解讀一致（不檢查 PHP 5 的語意，見「限制」）：`NOT_SELECTED_FOR_HUMAN_REVIEW`，原因 `NO_REDUCTION_BLOCKER`。
   - 每個差異都有 fact 解釋：`TARGETED`，原因是 fact 產生的代碼。
@@ -210,7 +210,7 @@ fact 沒有任何 domain interpreter 對應。fact id 的格式是 `php-` 加 20
 
 ### Domain 原因代碼
 
-由 `src/interpreters/php-laravel-domain.js` 產生。檔案沒有 `COV-PHP-001:*` 時為 `TARGETED`。同一個 fact 可能產生多個代碼，例如 `rules()` 的回傳值改變同時產生 `RETURN_VALUE_CHANGED` 與 `VALIDATION_RULE_CHANGED`。
+由 `src/interpreters/`（語言層 `core.js`、框架 preset `presets/php-laravel.js`、業務 preset `presets/payments.js`） 產生。檔案沒有 `COV-PHP-001:*` 時為 `TARGETED`。同一個 fact 可能產生多個代碼，例如 `rules()` 的回傳值改變同時產生 `RETURN_VALUE_CHANGED` 與 `VALIDATION_RULE_CHANGED`。
 
 | 代碼 | 來源 fact | 意義 |
 |---|---|---|

@@ -145,7 +145,7 @@ Adapter 只說「發生什麼」。
 
 Interpreter 才說「這件事對 Review policy 代表什麼」。
 
-目前 `PHP_LARAVEL_DOMAIN_INTERPRETERS`（`src/interpreters/php-laravel-domain.js`）註冊 15 個 interpreter。Interpreter 比對 fact schema v2 的結構化 `callee` / `container`（`name`、`receiver`、`type`、`keys` 等），不解析 PHP 語法字串；`receiver` 不含 fully-qualified 前導 `\`，所以 `\DB::transaction` 與 `DB::transaction` 相同。例如：
+目前 PHP 預設的 interpreter set 共 15 個，依層拆成語言層 `src/interpreters/core.js`（運算子、guard clause、反轉、回傳值、參數順序、變數、常數）、框架 preset `src/interpreters/presets/php-laravel.js`（transaction、授權、middleware、row lock、validation、model attributes）與業務 preset `src/interpreters/presets/payments.js`（`idempotencyKey`、簽章驗證）；`resolveInterpreters(presets)` 依名稱組出 set，`PHP_LARAVEL_DOMAIN_INTERPRETERS` 是三者的合集。Interpreter 比對 fact schema v2 的結構化 `callee` / `container`（`name`、`receiver`、`type`、`keys` 等），不解析 PHP 語法字串；`receiver` 不含 fully-qualified 前導 `\`，所以 `\DB::transaction` 與 `DB::transaction` 相同。例如：
 
 ```
 CALL_ARGUMENT_CHANGED（named argument idempotencyKey）
@@ -248,7 +248,7 @@ flowchart TD
 | PHP Analyzer classes | `analyzers/php/src/*` | `CallExtractor`（AST method / static call 抽取）、`CallFacts`（call facts）、`StructuralDiff`（AST 結構比對、completeness 判定與結構性 facts）、`Canonicalizer`（忽略排版、註解等的 canonical AST hash）、`VariableScopes`（scope-aware 區域變數 canonical 名稱） |
 | Fact Contract | `src/facts/contracts.js` | Fact validation、JSON-safe canonicalization |
 | Fact Interpreter | `src/facts/interpreter.js` | versioned interpreter boundary、fail-closed handling |
-| PHP/Laravel Rules | `src/interpreters/php-laravel-domain.js` | 15 個 deterministic domain interpreters |
+| PHP/Laravel Rules | `src/interpreters/core.js`、`src/interpreters/presets/` | 15 個 deterministic domain interpreters（語言層 + `php-laravel` / `payments` preset） |
 | Coverage | `src/coverage.js` | required obligations |
 | Evidence / Impact / Invariants | `src/{evidence,impact,invariants}.js` | unresolved fact blockers |
 | Reducer | `src/reducer.js` | eligibility aggregation、review scope decision（`TARGETED` / `FULL`） |

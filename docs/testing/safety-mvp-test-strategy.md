@@ -126,9 +126,9 @@ real-repo generator 以 seed 與檔案路徑重設 `mt_srand`，相同 seed 產�
 - 沒有受信任 interpreter 處理的 fact 必須產生 `FACT_UNHANDLED:<fact id>` 並保留 Human Review；只有被明確處理且沒有 blocker 的 fact 才可沿用既有 reduction；增加 unresolved fact 只能增加 blocker。
 - interpreter 丟出 exception 時產生 `ANALYZER_FACT_INTERPRETER_FAILED:<interpreter>:<fact>` 並採 Full Review。interpreter 回傳非法 result（`ANALYZER_FACT_INTERPRETER_INVALID_RESULT:*`）與 facts 不是陣列（`ANALYZER_SEMANTIC_FACTS_INVALID`）目前沒有專用測試。
 
-### PHP/Laravel Domain Interpreters（`src/interpreters/php-laravel-domain.js`）
+### PHP/Laravel Domain Interpreters（`src/interpreters/`）
 
-測試：`tests/interpreters/php-laravel-domain.test.js`（直接呼叫 interpreter），以及 `tests/adapters/php-laravel.test.js` 中經真實 analyzer 的整合案例。各 interpreter 產生的原因代碼見 [PR Review CLI「Domain 原因代碼」](../review-cli.md#domain-原因代碼)。
+測試：`tests/interpreters/php-laravel-domain.test.js`（直接呼叫 interpreter）、`tests/interpreters/presets.test.js`（preset 組合），以及 `tests/adapters/php-laravel.test.js` 中經真實 analyzer 的整合案例。各 interpreter 產生的原因代碼見 [PR Review CLI「Domain 原因代碼」](../review-cli.md#domain-原因代碼)。
 
 - `PHP_LARAVEL_DOMAIN_INTERPRETERS`（15 個）通過 `validateFactInterpreters()`，且 id 唯一。
 - `calleeParts()` 先移除 fully-qualified 前導 `\`，再拆出 receiver / method（含 `?->` 與鏈式 `->x`）；空字串或非字串回傳 `null`。
@@ -272,7 +272,7 @@ npm run test:all
 
 pre-commit hook 只執行 `npm run lint`。Pull request 不得只執行 lint 或單一 test file。若新增 production branch，必須同一變更補上至少一個正向、反向、邊界或整合案例，並在本文件矩陣中留下對應項目。
 
-修改 `analyzers/php` 或 `src/interpreters/php-laravel-domain.js` 時，應另外對真實 PHP 專案執行 real-repo evaluation，並以 `--baseline-ref` 與修改前的版本比較；`RISKY_REDUCED` 必須為 0：
+修改 `analyzers/php` 或 `src/interpreters/` 時，應另外對真實 PHP 專案執行 real-repo evaluation，並以 `--baseline-ref` 與修改前的版本比較；`RISKY_REDUCED` 必須為 0：
 
 ```bash
 npm run eval:real-repo -- evaluate --repo <label>=/path/to/php-repo --baseline-ref <base ref>

@@ -95,7 +95,7 @@ callee=$this->authorize / Gate::authorize
 AUTHORIZATION_GUARD_REMOVED
 ```
 
-之後 interpreter 已從 3 個擴充為 15 個（`PHP_LARAVEL_DOMAIN_INTERPRETERS`）：原本三個中，transaction boundary 與 authorization guard 也擴大了範圍（例如 `rollBack` 移除 → `TRANSACTION_ROLLBACK_REMOVED`、authorize 的 ability 字串改值 → `AUTHORIZATION_ABILITY_CHANGED`），另新增 middleware guard、row lock、payment signature verification、運算子、guard clause、運算式反轉、回傳值、參數順序、改用另一個變數（部分改名、合併變數）/ 參數改名、`const` 宣告的常數改值、Laravel validation rules、Laravel model attributes。各 interpreter 的範圍見 [README「已實作」](../README.md#已實作)；完整的 blocker 代碼以 `src/interpreters/php-laravel-domain.js` 為準。
+之後 interpreter 已從 3 個擴充為 15 個（`PHP_LARAVEL_DOMAIN_INTERPRETERS`）：原本三個中，transaction boundary 與 authorization guard 也擴大了範圍（例如 `rollBack` 移除 → `TRANSACTION_ROLLBACK_REMOVED`、authorize 的 ability 字串改值 → `AUTHORIZATION_ABILITY_CHANGED`），另新增 middleware guard、row lock、payment signature verification、運算子、guard clause、運算式反轉、回傳值、參數順序、改用另一個變數（部分改名、合併變數）/ 參數改名、`const` 宣告的常數改值、Laravel validation rules、Laravel model attributes。各 interpreter 的範圍見 [README「已實作」](../README.md#已實作)；完整的 blocker 代碼以 `src/interpreters/`（語言層 `core.js`、框架 preset `presets/php-laravel.js`、業務 preset `presets/payments.js`） 為準；`src/interpreters/php-laravel-domain.js` 的 `PHP_LARAVEL_DOMAIN_INTERPRETERS` 是三者的合集。
 
 這個分層很重要：
 

@@ -4,13 +4,37 @@ import { basename } from 'node:path';
 import { createAnalysisContextBinding } from '../adapters/contracts.js';
 import { createPhpLaravelAdapter } from '../adapters/php-laravel/adapter.js';
 import { displayArgument, displayText } from '../facts/structured.js';
-import { PHP_LARAVEL_DOMAIN_INTERPRETERS } from '../interpreters/php-laravel-domain.js';
+import { resolveInterpreters } from '../interpreters/presets/index.js';
 import { createAuthorityState } from '../publication.js';
 import { runAdapterPipeline } from '../runner.js';
 import { diffEntries, diffHunks, mergeBase, readBlob, repositoryRoot, resolveCommit } from './git.js';
 
 export const NOT_SELECTED = 'NOT_SELECTED_FOR_HUMAN_REVIEW';
 export const HUMAN_REVIEW = 'HUMAN_REVIEW_REQUIRED';
+
+/**
+ * 依副檔名選擇 adapter 與 interpreter presets。未列出的副檔名不送 analyzer（`UNSUPPORTED_FILE_TYPE`）。
+ * `presets` 是沒有專案設定時的預設值。
+ */
+export const LANGUAGES = Object.freeze([
+  Object.freeze({
+    id: 'php',
+    match: /\.php$/i,
+    createAdapter: createPhpLaravelAdapter,
+    presets: Object.freeze(['php-laravel', 'payments']),
+  }),
+]);
+
+/**
+ * 找出路徑對應的語言設定。
+ *
+ * @param {string} path - repository 相對路徑。
+ * @param {object[]} [languages=LANGUAGES] - 語言設定。
+ * @returns {object|null} 語言設定；不支援時為 null。
+ */
+export function languageFor(path, languages = LANGUAGES) {
+  return languages.find((language) => language.match.test(path)) ?? null;
+}
 
 const STATUS_NAMES = Object.freeze({
   A: 'added', D: 'deleted', M: 'modified', R: 'renamed', C: 'copied', T: 'type-changed',
@@ -164,8 +188,8 @@ async function analyzeFile({ adapter, interpreters, identity, timeoutMs }, path,
 /**
  * 決定單一 diff entry 的 review 結果。
  *
- * - 只有 `.php` 的修改（含 rename）會送進 analyzer；新增、刪除、非 PHP、binary、
- *   symlink、submodule 一律要求完整 review。
+ * - 只有 `LANGUAGES` 支援的檔案的修改（含 rename）會送進 analyzer；新增、刪除、不支援的檔案、
+ *   binary、symlink、submodule 一律要求完整 review。
  * - rename 或權限變更即使內容等價也要求 review（autoload 路徑、執行權限可能改變行為）。
  *
  * @param {object} context - analysis context。
@@ -195,7 +219,8 @@ async function classifyEntry(context, entry) {
   if (!['A', 'D', 'M', 'R'].includes(entry.status)) return fullReview(base, `UNSUPPORTED_CHANGE_TYPE:${base.status}`);
   if ([entry.oldMode, entry.newMode].includes('160000')) return fullReview(base, 'SUBMODULE_CHANGED');
   if ([entry.oldMode, entry.newMode].includes('120000')) return fullReview(base, 'SYMLINK_CHANGED');
-  if (!path.toLowerCase().endsWith('.php')) return fullReview(base, 'UNSUPPORTED_FILE_TYPE');
+  const language = languageFor(path, context.languages);
+  if (!language) return fullReview(base, 'UNSUPPORTED_FILE_TYPE');
   if (entry.status === 'A') return fullReview(base, 'FILE_ADDED');
   if (entry.status === 'D') return fullReview(base, 'FILE_DELETED');
 
@@ -209,7 +234,7 @@ async function classifyEntry(context, entry) {
   const afterSource = after.toString('utf8');
   let analysis;
   try {
-    analysis = await analyzeFile(context, path, beforeSource, afterSource);
+    analysis = await analyzeFile({ ...context, ...language }, path, beforeSource, afterSource);
   } catch (error) {
     return fullReview(base, `ANALYZER_ERROR:${String(error?.message ?? error).slice(0, 200)}`);
   }
@@ -295,7 +320,7 @@ export function summarizeFiles(files) {
  * @param {string} options.head - head ref。
  * @param {number} [options.concurrency=4] - 同時執行的 analyzer 數。
  * @param {number} [options.timeoutMs=30000] - 單一檔案的 analyzer deadline。
- * @param {object} [options.adapterOptions={}] - createPhpLaravelAdapter 選項。
+ * @param {object} [options.adapterOptions={}] - 各語言 adapter 的選項，以語言 id 為 key（例如 `{ php: { phpBinary } }`）。
  * @returns {Promise<object>} review report。
  */
 export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs = 30_000, adapterOptions = {} }) {
@@ -309,8 +334,11 @@ export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs
   const entries = await diffEntries(root, forkPoint, headSha);
   const context = {
     repo: root,
-    adapter: createPhpLaravelAdapter(adapterOptions),
-    interpreters: PHP_LARAVEL_DOMAIN_INTERPRETERS,
+    languages: LANGUAGES.map((language) => ({
+      ...language,
+      adapter: language.createAdapter(adapterOptions[language.id]),
+      interpreters: resolveInterpreters(language.presets),
+    })),
     timeoutMs,
     identity: {
       repository: basename(root),

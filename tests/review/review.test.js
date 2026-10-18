@@ -238,7 +238,7 @@ test('reviewRange：只有排版變更時 PR 為 NOT_SELECTED；相同 commit �
 
 test('reviewRange：analyzer 失敗時該檔案 fail-closed 為 FULL', async () => {
   const report = await reviewRange({
-    repo, base, head: formatOnly, adapterOptions: { phpBinary: join(repo, 'no-such-php') },
+    repo, base, head: formatOnly, adapterOptions: { php: { phpBinary: join(repo, 'no-such-php') } },
   });
   assert.equal(report.decision.status, HUMAN_REVIEW);
   assert.match(report.files[0].reasons[0], /^ANALYZER_ERROR:/);
