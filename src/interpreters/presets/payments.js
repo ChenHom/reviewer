@@ -22,7 +22,7 @@ export const PAYMENT_IDEMPOTENCY_INTERPRETER = Object.freeze({
   },
 });
 
-const signatureVerificationMethod = /(verif\w*sign|check\w*sign|validate\w*sign|sign\w*(verif|check|valid))/i;
+export const signatureVerificationMethod = /(verif\w*sign|check\w*sign|validate\w*sign|sign\w*(verif|check|valid))/i;
 
 export const SIGNATURE_VERIFICATION_INTERPRETER = Object.freeze({
   id: 'php-laravel-signature-verification',

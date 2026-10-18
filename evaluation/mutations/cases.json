@@ -346,10 +346,12 @@
     "path": "src/wallet/debit.ts",
     "description": "Prisma $transaction wrapper is removed around a balance update.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
-    "expectedTrack": "AI_TRACK",
-    "expectedFactKinds": [],
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_REMOVED"
+    ],
     "expectedReasons": [
-      "COV-TS-001:UNRECOGNIZED_TS_CHANGE"
+      "TRANSACTION_BOUNDARY_REMOVED"
     ]
   },
   {
@@ -359,10 +361,12 @@
     "path": "src/routes/refund.ts",
     "description": "Express requireAuth middleware is removed from the refund route.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
-    "expectedTrack": "AI_TRACK",
-    "expectedFactKinds": [],
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_ARGUMENT_REMOVED"
+    ],
     "expectedReasons": [
-      "COV-TS-001:UNRECOGNIZED_TS_CHANGE"
+      "MIDDLEWARE_GUARD_REMOVED"
     ]
   },
   {
@@ -373,9 +377,11 @@
     "description": "A @ts-ignore hides passing a string amount to the gateway.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
     "expectedTrack": "AI_TRACK",
-    "expectedFactKinds": [],
+    "expectedFactKinds": [
+      "DIRECTIVE_COMMENT_CHANGED"
+    ],
     "expectedReasons": [
-      "COV-TS-001:DIRECTIVE_COMMENT_CHANGED"
+      "DIRECTIVE_COMMENT_CHANGED"
     ]
   },
   {
@@ -386,10 +392,11 @@
     "description": "Renaming a local used in object shorthand changes the payload key (amount → total).",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
     "expectedTrack": "AI_TRACK",
-    "expectedFactKinds": [],
-    "expectedReasons": [
-      "COV-TS-001:UNRECOGNIZED_TS_CHANGE"
-    ]
+    "expectedFactKinds": [
+      "ARRAY_ITEM_ADDED",
+      "ARRAY_ITEM_REMOVED"
+    ],
+    "expectedReasons": []
   },
   {
     "id": "MUT-TS-005",
@@ -402,6 +409,178 @@
     "expectedFactKinds": [],
     "expectedReasons": [
       "COV-TS-001:UNRECOGNIZED_TS_CHANGE"
+    ]
+  },
+  {
+    "id": "MUT-TS-006",
+    "classification": "critical",
+    "fixture": "typescript/nest-guard-removed",
+    "path": "src/orders/refund.controller.ts",
+    "description": "NestJS @UseGuards(AuthGuard) is removed from the refund endpoint.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "ANNOTATION_REMOVED"
+    ],
+    "expectedReasons": [
+      "AUTHORIZATION_GUARD_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-TS-007",
+    "classification": "critical",
+    "fixture": "typescript/nest-roles-changed",
+    "path": "src/users/users.controller.ts",
+    "description": "Deleting users now requires the 'support' role instead of 'admin'.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "LITERAL_CHANGED"
+    ],
+    "expectedReasons": [
+      "AUTHORIZATION_ABILITY_CHANGED"
+    ]
+  },
+  {
+    "id": "MUT-TS-008",
+    "classification": "critical",
+    "fixture": "typescript/jwt-verify-to-decode",
+    "path": "src/auth/current-user.ts",
+    "description": "jwt.verify is replaced by jwt.decode, so token signatures are no longer checked.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_REMOVED"
+    ],
+    "expectedReasons": [
+      "SIGNATURE_VERIFICATION_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-TS-009",
+    "classification": "critical",
+    "fixture": "typescript/knex-row-lock-removed",
+    "path": "src/stock/reserve.ts",
+    "description": "knex .forUpdate() is removed from a stock read inside a transaction.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_REMOVED"
+    ],
+    "expectedReasons": [
+      "ROW_LOCK_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-TS-010",
+    "classification": "critical",
+    "fixture": "typescript/prisma-delete-added",
+    "path": "src/orders/cancel.ts",
+    "description": "Cancelling an order now hard-deletes its items with Prisma deleteMany.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_ADDED"
+    ],
+    "expectedReasons": [
+      "DATA_DELETION_ADDED"
+    ]
+  },
+  {
+    "id": "MUT-TS-011",
+    "classification": "critical",
+    "fixture": "typescript/sequelize-transaction-option-removed",
+    "path": "src/accounts/transfer.ts",
+    "description": "The credit side of a transfer no longer passes { transaction: t } and runs outside the transaction.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "ARRAY_ITEM_REMOVED"
+    ],
+    "expectedReasons": [
+      "TRANSACTION_BOUNDARY_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-TS-012",
+    "classification": "critical",
+    "fixture": "typescript/guard-removed",
+    "path": "src/refunds/approve.ts",
+    "description": "The admin check (guard clause) before approving a refund is removed.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "GUARD_REMOVED"
+    ],
+    "expectedReasons": [
+      "GUARD_CLAUSE_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-TS-013",
+    "classification": "critical",
+    "fixture": "typescript/wallet-sign-flip",
+    "path": "src/wallet/wallet.service.ts",
+    "description": "Debit adds the amount instead of subtracting it; the project config marks balance/amount operands as sensitive.",
+    "config": {
+      "version": 1,
+      "rules": {
+        "sensitiveOperands": [
+          {
+            "pattern": "/balance|amount/i",
+            "operators": "arithmetic"
+          }
+        ]
+      }
+    },
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "BINARY_OPERATOR_CHANGED"
+    ],
+    "expectedReasons": [
+      "ARITHMETIC_OPERATOR_CHANGED",
+      "SENSITIVE_OPERAND_CHANGED"
+    ]
+  },
+  {
+    "id": "MUT-TS-014",
+    "classification": "critical",
+    "fixture": "typescript/mailer-call-added",
+    "path": "src/orders/ship.ts",
+    "description": "Shipping now sends an email; the project config declares mailer calls as irreversible side effects.",
+    "config": {
+      "version": 1,
+      "rules": {
+        "sideEffectCalls": [
+          {
+            "receiver": "mailer"
+          }
+        ]
+      }
+    },
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_ADDED"
+    ],
+    "expectedReasons": [
+      "SIDE_EFFECT_CALL_ADDED"
+    ]
+  },
+  {
+    "id": "MUT-TS-015",
+    "classification": "critical",
+    "fixture": "typescript/zod-rule-relaxed",
+    "path": "src/transfers/body.ts",
+    "description": "The zod schema now accepts a zero transfer amount (min(1) → min(0)).",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "AI_TRACK",
+    "expectedFactKinds": [
+      "LITERAL_CHANGED"
+    ],
+    "expectedReasons": [
+      "VALIDATION_RULE_CHANGED"
     ]
   },
   {
@@ -476,6 +655,19 @@
     "fixture": "typescript/jsx-reformat",
     "path": "src/ui/Receipt.tsx",
     "description": "JSX reformatted across lines without changing rendered whitespace.",
+    "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "expectedTrack": "AUTO_PASS",
+    "expectedFactKinds": [],
+    "expectedReasons": [
+      "NO_REDUCTION_BLOCKER"
+    ]
+  },
+  {
+    "id": "SAFE-TS-004",
+    "classification": "safe",
+    "fixture": "typescript/nest-reformat",
+    "path": "src/reports/reports.controller.ts",
+    "description": "NestJS controller reformatted: quotes, decorator line breaks, a comment and a consistent local rename.",
     "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
     "expectedTrack": "AUTO_PASS",
     "expectedFactKinds": [],

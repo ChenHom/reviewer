@@ -155,6 +155,10 @@ test('describeFact 為每種 fact 產生可讀描述', () => {
   const described = describe('RETURN_VALUE_CHANGED', { before: long, after: 'null' });
   assert.ok(!described.includes('\n'));
   assert.match(described, /^回傳值 \[ 'a' => 1, .{60,}… → null$/u);
+  assert.equal(describe('ANNOTATION_REMOVED', { value: '@UseGuards(AuthGuard)' }), '移除 @UseGuards(AuthGuard)');
+  assert.equal(describe('ANNOTATION_ADDED', { value: '@Public()' }), '新增 @Public()');
+  assert.equal(describe('DIRECTIVE_COMMENT_CHANGED', { comment: '// @ts-ignore', changeSide: 'after' }), '新增指示註解 // @ts-ignore');
+  assert.equal(describe('DIRECTIVE_COMMENT_CHANGED', { comment: '/* eslint-disable */', changeSide: 'before' }), '移除指示註解 /* eslint-disable */');
   assert.equal(describeFact({ kind: 'SOMETHING_NEW' }), 'SOMETHING_NEW');
 });
 

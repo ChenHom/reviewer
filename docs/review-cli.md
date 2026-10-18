@@ -123,7 +123,7 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
 第 9 步（TypeScript / JavaScript 見本節最後）：
 
 - PHP analyzer 以 AST 比較兩個版本：兩側都能以最新 PHP 語法解析時使用最新語法，否則兩側一起改用 PHP 7.4 語法。每個被解釋的差異都對應一個 fact（`CALL_REMOVED`、`BINARY_OPERATOR_CHANGED` 等，完整清單見 [README「已實作」](../README.md#已實作)）。
-- 每個 fact 交給 15 個 deterministic domain interpreter（`src/interpreters/`（語言層 `core.js`、框架 preset `presets/php-laravel.js`、業務 preset `presets/payments.js`），PHP 預設啟用 `php-laravel` 與 `payments` 兩個 preset）：有對應規則的 fact 產生具體的原因代碼，沒有的產生 `FACT_UNHANDLED:<fact id>`。
+- 每個 fact 交給 deterministic domain interpreters（`src/interpreters/`：語言層 `core.js`、框架 preset `presets/php-laravel.js` / `presets/node.js`、業務 preset `presets/payments.js`；PHP 預設啟用 `php-laravel` 與 `payments`，TypeScript / JavaScript 預設啟用 `node`）：有對應規則的 fact 產生具體的原因代碼，沒有的產生 `FACT_UNHANDLED:<fact id>`。
 - 結果：
   - 沒有任何 fact、兩個版本在 AST 比較下等價（排版、註解、區域變數一致改名等），而且 PHP 8 與 PHP 7 的解讀一致（不檢查 PHP 5 的語意，見「限制」）：`NOT_SELECTED_FOR_HUMAN_REVIEW`，原因 `NO_REDUCTION_BLOCKER`。
   - 每個差異都有 fact 解釋：`TARGETED`，原因是 fact 產生的代碼。
@@ -132,11 +132,12 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
   - 內容等價（原本會是 `NOT_SELECTED_FOR_HUMAN_REVIEW`）時改為 `TARGETED`，原因只有 `FILE_RENAMED` / `FILE_MODE_CHANGED`。
   - 內容也有變更時，接在 analyzer 的原因之後，`TARGETED` / `FULL` 不變。
 
-TypeScript / JavaScript（第 1 階段）：analyzer（`analyzers/ts`，TypeScript compiler API）只判斷兩個版本的 AST 是否等價，**不輸出 fact**：
+TypeScript / JavaScript：analyzer（`analyzers/ts`，TypeScript compiler API）與 PHP 相同，比較兩個版本的 AST 並以 fact 解釋差異：
 
 - 等價（排版、一般註解、引號、分號、trailing comma、多餘括號、property key 是否加引號、數字寫法、JSX 依渲染空白規則的換行，以及 function 內一致的區域變數改名）：`NOT_SELECTED_FOR_HUMAN_REVIEW`。
-- 其他任何差異：`FULL`，原因 `COV-TS-001:<原因>`。因為沒有 fact，所以不會有 `TARGETED`，也不會產生 domain 原因代碼或命中專案規則；依路由一律需要人工確認。
-- 不視為等價的情況（寧可要求 review）：型別註記、`as` 轉型、`interface` / `type` 的變更；參數與頂層變數改名；物件簡寫 `{ x }` 或解構 `const { x } = o` 中的變數改名（會改變 key）；會被賦予匿名 function / class / arrow 的變數改名（`fn.name` 會改變）；`function` 與箭頭函式互換；import 順序；`'a'` 與 `` `a` `` 互換；optional chain 外的括號（`(a?.b).c`）。檔案中有 direct `eval(...)` 或 `with` 時不做區域變數改名正規化。
+- 每個差異都有 fact 解釋：`TARGETED`。fact 與 PHP 相同（`CALL_REMOVED`、`CALL_ARGUMENT_REMOVED`、`BINARY_OPERATOR_CHANGED`、`GUARD_REMOVED`、`LITERAL_CHANGED` 等），另有 decorator 的 `ANNOTATION_REMOVED` / `ANNOTATION_ADDED` 與指示註解的 `DIRECTIVE_COMMENT_CHANGED`（`@ts-ignore` / `@ts-expect-error` / `@ts-nocheck`、`eslint-disable`、`#__PURE__`、webpack / vite 指示、coverage ignore、JSX pragma、triple-slash 指示、shebang 的增減或移動）。`node` preset 與 `.reviewer.json` 的規則比對這些 fact（見下方「Domain 原因代碼」）。
+- 有差異無法解釋：`FULL`，原因含 `COV-TS-001:<原因>`；已找到的 fact 的原因也一起列出。
+- 不視為等價、也不以 fact 解釋的情況（寧可要求 review）：型別註記、`as` 轉型、`interface` / `type` 的變更；參數與頂層變數改名；物件簡寫 `{ x }` 或解構 `const { x } = o` 中的變數改名（會改變 key）；會被賦予匿名 function / class / arrow 的變數改名（`fn.name` 會改變）；`function` 與箭頭函式互換；import 順序；`'a'` 與 `` `a` `` 互換；optional chain 外的括號（`(a?.b).c`）。檔案中有 direct `eval(...)` 或 `with` 時不做區域變數改名正規化。
 
 ## 決策語意
 
@@ -228,8 +229,7 @@ analyzer process 沒有正常產生結果。訊息最多 200 字元：
 
 | 原因 | 意義 |
 |---|---|
-| `UNRECOGNIZED_TS_CHANGE` | 兩個版本的 AST 不等價（第 1 階段沒有 fact，任何實質變更都是這個原因） |
-| `DIRECTIVE_COMMENT_CHANGED` | 有語意的註解改變或移動：`@ts-ignore` / `@ts-expect-error` / `@ts-nocheck`、`eslint-disable`、`#__PURE__`、webpack / vite 指示、coverage ignore、JSX pragma、triple-slash 指示，以及 shebang |
+| `UNRECOGNIZED_TS_CHANGE` | 有差異無法以 fact 解釋（例如型別註記、`as` 轉型、property key 改變、運算子優先順序、`function` 與箭頭函式互換、modifier 增減） |
 | `TS_PARSE_ERROR` | 任一側有語法錯誤（包含 TypeScript parser 回報的文法錯誤） |
 | `TS_FILE_DELETION_UNSUPPORTED` | head 版本是空檔 |
 | `TS_ANALYZER_DEPENDENCY_MISSING` | `analyzers/ts/node_modules` 沒有 `typescript`；先執行 `npm run analyzer:install` |
@@ -245,18 +245,18 @@ analyzer process 沒有正常產生結果。訊息最多 200 字元：
 
 ### `FACT_UNHANDLED:<fact id>`
 
-fact 沒有任何 domain interpreter 對應。fact id 的格式是 `php-` 加 20 個十六進位字元。與 domain 原因代碼相同，檔案沒有 `COV-PHP-001:*` 時為 `TARGETED`（變更已被 fact 解釋，只是沒有對應的 domain 規則）；有 `COV-PHP-001:*` 時為 `FULL`，已找到的 fact 照樣列出。
+fact 沒有任何 domain interpreter 對應。fact id 的格式是 `php-` 或 `ts-` 加 20 個十六進位字元。與 domain 原因代碼相同，檔案沒有 `COV-PHP-001:*` / `COV-TS-001:*` 時為 `TARGETED`（變更已被 fact 解釋，只是沒有對應的 domain 規則）；有的話為 `FULL`，已找到的 fact 照樣列出。
 
 例外：位置參數的變更無法被更細的 fact 解釋時，analyzer 仍輸出 `CALL_ARGUMENT_CHANGED` 標示位置（描述為「`<callee>` 的參數 #<index>：<原值> → <新值>」），但這個 fact 不視為已解釋，所以同一檔案也會有 `COV-PHP-001:UNRECOGNIZED_PHP_CHANGE`，為 `FULL`。例如 `$q->take(10)` 改成 `$q->take($n)`：原因是 `COV-PHP-001:UNRECOGNIZED_PHP_CHANGE` 與這個 fact 的 `FACT_UNHANDLED:<id>`。
 
 - 參數純移除或純新增（`CALL_ARGUMENT_REMOVED` / `CALL_ARGUMENT_ADDED`，描述為「`<callee>` 移除參數 <位置或名稱>：<值>」）是已解釋的變更：沒有對應的 domain 規則時是 `TARGETED` 的 `FACT_UNHANDLED`。
-- 例如 `CALL_ADDED`（新增呼叫）目前沒有任何 interpreter 處理，一律是 `FACT_UNHANDLED`；其他 fact 只有符合下一節的模式時才有具體代碼。
+- 例如 `CALL_ADDED`（新增呼叫）只有資料刪除（`DATA_DELETION_ADDED`）與專案設定的 `sideEffectCalls` 會處理，其餘是 `FACT_UNHANDLED`；其他 fact 只有符合下一節的模式時才有具體代碼。
 - 文字輸出把它們合併成一行 `FACT_UNHANDLED ×N`；JSON 逐一列出。
 - JSON 的 `facts` 不含 fact id，無法以 id 對應到個別 fact；請以 fact 的 `kind` 與位置判斷。
 
 ### Domain 原因代碼
 
-由 `src/interpreters/`（語言層 `core.js`、框架 preset `presets/php-laravel.js`、業務 preset `presets/payments.js`） 產生。檔案沒有 `COV-PHP-001:*` 時為 `TARGETED`。同一個 fact 可能產生多個代碼，例如 `rules()` 的回傳值改變同時產生 `RETURN_VALUE_CHANGED` 與 `VALIDATION_RULE_CHANGED`。
+由 `src/interpreters/`（語言層 `core.js`、框架 preset `presets/php-laravel.js` / `presets/node.js`、業務 preset `presets/payments.js`） 產生。檔案沒有 `COV-PHP-001:*` / `COV-TS-001:*` 時為 `TARGETED`。下表的「意義」欄是 PHP / Laravel 的規則；TypeScript / JavaScript 的 `node` preset 產生相同的代碼，範圍見表後。同一個 fact 可能產生多個代碼，例如 `rules()` 的回傳值改變同時產生 `RETURN_VALUE_CHANGED` 與 `VALIDATION_RULE_CHANGED`。
 
 | 代碼 | 來源 fact | 意義 |
 |---|---|---|
@@ -285,6 +285,25 @@ fact 沒有任何 domain interpreter 對應。fact id 的格式是 `php-` 加 20
 | `MASS_ASSIGNMENT_CHANGED` | 同上 | model 的 `$fillable` / `$guarded` 改變 |
 | `SERIALIZED_ATTRIBUTES_CHANGED` | 同上 | model 的 `$hidden` / `$visible` 改變 |
 | `ATTRIBUTE_CAST_CHANGED` | 同上 | model 的 `$casts` 或 `casts()` 的回傳值改變 |
+| `DATA_DELETION_ADDED` | `CALL_ADDED` | 新增刪除資料或 schema 的呼叫：`forceDelete`、`truncate`、`dropColumn`、`Schema::drop` / `dropIfExists`、`Storage::delete` / `File::delete`、`DB::delete`、`unlink`。一般的 `->delete()` 可能是 soft delete，不列入 |
+| `ANNOTATION_REMOVED` / `ANNOTATION_ADDED` | 同名 fact | decorator 被移除 / 新增（目前只有 TS analyzer 輸出） |
+| `DIRECTIVE_COMMENT_CHANGED` | 同名 fact | 有語意的註解被新增、移除或移動（目前只有 TS analyzer 輸出） |
+
+TypeScript / JavaScript 的 `node` preset（`src/interpreters/presets/node.js`）：
+
+| 代碼 | 範圍 |
+|---|---|
+| `TRANSACTION_BOUNDARY_REMOVED` | 移除 `prisma.$transaction`、`startTransaction` / `beginTransaction` / `commitTransaction` / `withTransaction`、DB 或 ORM receiver（`prisma`、`db`、`knex`、`sequelize`、`dataSource`、`manager`、`queryRunner`…）的 `transaction`、transaction 物件（`t`、`tx`、`trx`…）的 `commit`、knex `.transacting()`、`@Transactional()`；移除 Sequelize `{ transaction: t }` 或 Mongoose `{ session }` 選項。Sentry 等 tracing 的 transaction 不算 |
+| `TRANSACTION_ROLLBACK_REMOVED` | 移除 `rollbackTransaction` / `abortTransaction`，或 DB / transaction 物件的 `rollback` |
+| `ROW_LOCK_REMOVED` | 移除 knex `.forUpdate()` / `.forShare()` / `.forNoKeyUpdate()` / `.forKeyShare()`、TypeORM `.setLock()`，或選項物件中的 `lock` / `lockMode`（`where: { lock: 1 }` 這種巢狀 key 不算） |
+| `AUTHORIZATION_GUARD_REMOVED` | 移除 `@UseGuards` / `@Roles` / `@Permissions` / `@Auth` 等授權 decorator、`@UseGuards` 少了 guard 或換掉、加上 `@Public()` / `@AllowAnonymous()` / `@SkipAuth()` 等、移除 `authorize` / `throwUnlessCan` 等授權呼叫或 `app.useGlobalGuards` |
+| `AUTHORIZATION_ABILITY_CHANGED` | `@Roles` / `@Permissions` / `@Scopes` 等的參數改變、增加或減少 |
+| `MIDDLEWARE_GUARD_REMOVED` | app / router（`app`、`server`、`router`、`fastify`、`*Router`、`*App`）的路由註冊（`get`、`post`、`use`…）少了路徑以外的參數、參數換成另一個 middleware、middleware 陣列少了元素；`app.use` / `addHook`、Nest `consumer.apply`、`passport.authenticate` 被移除；Fastify 路由選項的 `onRequest` / `preParsing` / `preValidation` / `preHandler` 被移除或少了元素。`axios.post`、`api.post` 等不是路由註冊 |
+| `SIGNATURE_VERIFICATION_REMOVED` | 移除 `jwtVerify`、`timingSafeEqual`、`constructEvent`、`verifyIdToken`，jwt / jose / crypto / token / verifier 等 receiver 的 `verify` / `verifyAsync`，或名稱像簽章驗證的 method |
+| `VALIDATION_RULE_CHANGED` | zod / joi / yup 的 schema（`z.object(...)` 的參數、`.min()` / `.optional()` 等規則 method 的增減與參數）、class-validator decorator（`@IsInt`、`@Min`…）、`new ValidationPipe(...)`、移除 `@UsePipes` / `useGlobalPipes` / `safeParse` / `validateOrReject` / schema 的 `parse`、Fastify 路由的 `schema` 選項 |
+| `DATA_DELETION_ADDED` | 新增 `deleteMany`、`dropTable` / `dropColumn`、`findByIdAndDelete`、S3 `deleteObject`、knex `.del()` / `.truncate()`、DB / repository / model receiver 上的 `delete` / `deleteOne` / `remove` / `destroy` / `clear`、Sequelize `User.destroy`、`fs.rm` / `unlink` / `rmdir` / `rimraf`。`map.delete`、`socket.destroy`、`cacheManager.del` 不算 |
+
+名稱判斷是啟發式的：receiver 名稱不在上述範圍（例如把 router 命名為 `r`）時不會命中，fact 仍會以 `FACT_UNHANDLED` 交給 AI 審查。請以 `.reviewer.json` 的 `protectedCalls` 等規則補上專案自己的命名。
 
 ### 其他
 
@@ -447,7 +466,7 @@ AI 審查後必須人工確認（ESCALATED，單向門）：
 | `location` | object \| null | fact 的位置 `{ side, startLine, endLine }`；檔案層級為 `null` |
 | `description` | string \| null | fact 的描述；檔案層級為 `null` |
 
-TypeScript / JavaScript 第 1 階段沒有 fact，所以只會有 `PROTECTED_PATH` 等檔案層級的 finding。
+TypeScript / JavaScript 的 finding 與 PHP 相同，由 fact 產生（`scopeHash` 為 `ts:` 開頭的所屬 function hash，或整個檔案的 hash）。
 
 範例（上面 `shop` 的報表，`files` 只節錄 3 筆：AI 審查後必須人工確認的 `PostController.php`，以及交給 AI 審查的 `FreezeService.php` 與 `composer.json`）：
 

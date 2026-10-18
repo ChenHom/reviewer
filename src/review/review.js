@@ -32,7 +32,7 @@ export const LANGUAGES = Object.freeze([
     // 型別宣告檔（`.d.ts`）不送 analyzer。
     match: /^(?!.*\.d\.[mc]?ts$).*\.(?:[mc]?ts|tsx|[mc]?js|jsx)$/i,
     createAdapter: createTypeScriptAdapter,
-    presets: Object.freeze([]),
+    presets: Object.freeze(['node']),
   }),
 ]);
 
@@ -132,6 +132,12 @@ export function describeFact(fact) {
       return `回傳值 ${p.before || '（無）'} → ${p.after || '（無）'}`;
     case 'CALL_ARGUMENTS_REORDERED':
       return `${p.callee} 的參數順序：(${p.before}) → (${p.after})`;
+    case 'ANNOTATION_REMOVED':
+      return `移除 ${p.value}`;
+    case 'ANNOTATION_ADDED':
+      return `新增 ${p.value}`;
+    case 'DIRECTIVE_COMMENT_CHANGED':
+      return `${p.changeSide === 'before' ? '移除' : '新增'}指示註解 ${snippet(p.comment)}`;
     case 'VARIABLE_CHANGED':
       return `${raw.container?.type === 'param' ? '參數' : '變數'} ${p.before} → ${p.after}`;
     default:

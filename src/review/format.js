@@ -16,8 +16,7 @@ const REASON_HINTS = Object.freeze({
   'COV-PHP-001:PHP_GRAMMAR_DIVERGENCE': 'PHP 7 與 PHP 8 的解讀不同，請看整個檔案',
   'COV-PHP-001:PHP_PARSE_ERROR': '無法解析，請看整個檔案',
   'COV-PHP-001:PHP_FILE_DELETION_UNSUPPORTED': '檔案被清空',
-  'COV-TS-001:UNRECOGNIZED_TS_CHANGE': '有排版、註解、區域變數改名以外的變更，請看整個檔案',
-  'COV-TS-001:DIRECTIVE_COMMENT_CHANGED': '有語意的註解（@ts-ignore、eslint-disable 等）改變，請看整個檔案',
+  'COV-TS-001:UNRECOGNIZED_TS_CHANGE': '有無法自動解釋的變更，請看整個檔案',
   'COV-TS-001:TS_PARSE_ERROR': '無法解析，請看整個檔案',
   'COV-TS-001:TS_FILE_DELETION_UNSUPPORTED': '檔案被清空',
 });

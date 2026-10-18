@@ -1,4 +1,4 @@
-# 三層審查架構實作紀錄（步驟 1–6）
+# 三層審查架構實作紀錄（步驟 1–6、8、9）
 
 對應設計：[三層審查架構設計](../specs/2026-10-18-three-tier-review-design.md) §8 的步驟 1–6。本文記錄實作時遇到的問題、採用的處理方式（依設計中的建議）與仍待決定的事項。
 
@@ -89,11 +89,37 @@
 6. **TS analyzer 沒有輸出 scope hash**：設計寫「PHP 與 TS analyzer 都輸出 scope hash」，但 TS 第 1 階段沒有 fact，per-fact 的 scope hash 沒有地方可放。處理：TS 檔案只有檔案層級的 `FULL_REVIEW` finding，綁定 `contentHash`；scope hash 與 TS 第 2 階段的 fact 一起實作。
 7. **狀態（OPEN / FIXED / ACKNOWLEDGED / REOPENED）沒有在這一步實作**：依設計 §8，狀態機與 GitHub 留言中的狀態屬於步驟 7。這一步提供它需要的輸入（穩定的 finding id 與 scope hash），並以測試驗證：上方插入程式碼與區域變數改名後 id 與 scope hash 不變、同一 method 的邏輯改變時 id 不變但 scope hash 改變、加回被移除的呼叫後 finding 消失、同一 method 中兩個相同的移除產生兩個 finding。
 
+## 步驟 8：TypeScript / JavaScript adapter 第 2、3 階段與 `node` preset
+
+**做了什麼**：
+
+- TS analyzer：`analyzers/ts/src/syntax.js`（結構化 callee、subject、字面值判斷、UTF-8 byte offset）、`calls.js`（呼叫的擷取與 `CALL_REMOVED` / `CALL_ADDED`）、`structural-diff.js`（與 PHP `StructuralDiff` 相同的結構比對，產生其餘 facts 與 decorator 的 `ANNOTATION_*`）、`scope-hashes.js`（每個 fact 的 `properties.scope`，`ts:` 前綴）。`analyze.js` 以三次比較判定：原始名稱、scope-aware canonical 名稱、原始名稱加上 `VARIABLE_CHANGED`。指示註解從 `COV-TS-001:DIRECTIVE_COMMENT_CHANGED` 改為 `DIRECTIVE_COMMENT_CHANGED` fact。adapter 版本 `typescript-v1@0.2.0`。
+- 語言層新增 `core-annotation`（`ANNOTATION_REMOVED` / `ANNOTATION_ADDED`）與 `core-directive-comment`（`DIRECTIVE_COMMENT_CHANGED`）。
+- `src/interpreters/presets/node.js`：transaction、row lock、授權、middleware、token / 簽章驗證、validation、資料刪除共 7 個 interpreter；TS / JS 預設啟用 `node`。`php-laravel` 新增 `laravel-data-deletion`。`DATA_DELETION_ADDED` 原本已在預設單向門中但沒有任何 interpreter 產生，現在 PHP 與 TS 都會產生。
+- mutation corpus：重新釘住 4 個既有 TS case（3 個改由 fact 偵測，其中 2 個變成 `ESCALATED`），新增 10 個 TS critical case（含 2 個帶 `.reviewer.json` 的 case，驗證專案規則也適用於 TS）與 1 個 TS safe case。43 個 case 全部符合預期：Critical Recall 100%、Safe Reduction 100%、Critical Direct Fact Coverage 97.1%、Critical Escalation Rate 77.1%。
+
+**問題與處理**：
+
+1. **第 2、3 階段一起實作**：設計把「呼叫 / decorator facts」與「其餘詞彙」分成兩個階段，但兩者來自同一個結構比對（與 PHP 相同），分開做只會重工。兩個階段的 gate（該語言 Critical Recall 100%、False Negative 0）都以同一份 mutation corpus 驗證。
+2. **寧可不解釋的地方**（都會讓檔案為 `FULL`，交給 AI）：property key 改變（不以字面值變更解釋）、物件簡寫與解構的 key、modifier 增減（`static`、`async`）、node flags 或運算子以外的純量欄位不同、子節點比較找不到差異但 canonical hash 不同（`hash-only`）、`new Date` ↔ `new Date()`（等價，但 canonical 形式不同）。位置參數的 `CALL_ARGUMENT_CHANGED` 與 PHP 相同，只標示位置、不視為已解釋。
+3. **沒有 NodeArray 與空的 NodeArray 視為相同**：`@Transactional() m()` → `m()` 時 after 的 `modifiers` 是 `undefined`。原本一邊缺欄位一律未解釋，導致「只移除一個 decorator」無法產生 `ANNOTATION_REMOVED`；改成把缺少的 NodeArray 當成空 list 比較（list 中無法解釋的增減照樣未解釋）。
+4. **`DIRECTIVE_COMMENT_CHANGED` 不是單向門**：`@ts-ignore` 會隱藏型別錯誤，但不是做了就難以回頭的變更；改成 fact 後路由為 `AI_TRACK`（原本是 `FULL` → `AI_TRACK`，路由不變）。需要的專案可以把它加進 `rules.oneWayDoors`。
+5. **`new` 不產生呼叫 fact**（與 PHP 相同）：`new Error(...)` 出現在被移除的 guard 中會產生雜訊。`new ValidationPipe({ whitelist: true })` 的參數變更仍以 container（callee `kind: constructor`）表示。
+6. **JS 沒有具名參數**：`payments` 的 `idempotencyKey` 規則與 `.reviewer.json` 的具名 `protectedArguments` 對 TS 無效；選項物件中的值改變是 `LITERAL_CHANGED` 等 fact（container 的 `keys` 含 `idempotencyKey`）。暫不擴充規則語法，記在 `docs/project-config.md`；TS 的預設 preset 只有 `node`（`node` 已包含簽章驗證名稱的規則）。
+7. **名稱判斷是啟發式的**：Node 生態沒有 Laravel facade 這種固定名稱，`node` preset 以 receiver 名稱判斷（`app` / `router` / `*Router` 是路由、`prisma` / `*Repository` / `*Model` 是資料庫）。命名不同時不會命中，fact 照樣以 `FACT_UNHANDLED` 交給 AI；反過來也可能誤判成單向門（例如非 ORM class 的 `User.destroy`、名為 `*Table` 的雜湊表的 `delete`）。取捨是寧可多送人工；`axios.post`、`api.post`、`map.delete`、`socket.destroy`、Sentry 的 transaction、`{ session: false }`、巢狀的 `where: { lock: 1 }` 都有測試確認不會誤判。
+8. **鏈的中段沒有 receiver**：`z.number().min(1)` 的 `.min` 無法知道鏈的開頭是 `z`。只把不常出現在一般鏈式呼叫的規則名稱（`min`、`optional`、`email`…）視為 schema 規則，`trim`、`includes`、`startsWith` 等字串 / 陣列 method 不列入。`VALIDATION_RULE_CHANGED` 不是單向門，誤標的代價只是標籤不準。
+9. **subject 的寫法**：TS 為 `Class.method`（PHP 為 `Class::method`）；指派給變數 / property 的匿名 function 以該名稱為 subject。`php-laravel` 中依 subject 判斷的規則（`rules()`、`casts()`）只適用 PHP。
+10. **`presets` 取代所有語言的預設值**：寫了 `"presets": ["php-laravel"]` 的 PHP + TS 混合 repo 不會套用 `node`。維持「寫了就取代」的單純規則，在文件中提醒混合 repo 要列出 `node`。
+11. **PHP 的 interpreter set 也改變了**（語言層多 2 個、`php-laravel` 多 1 個）：`interpreterSetDigest` 不同，既有 PHP mutation case 的決策不變。real-repo evaluation 無法在本機重跑（目標專案不在 repo 內），建議合併前以 `--baseline-ref` 重跑，確認 `RISKY_REDUCED` 仍為 0。
+12. **未解釋的檔案也會套用 fact 的單向門**：`@Roles(Role.Admin)` → `@Roles(Role.User)` 是 property access 的改變，無法解釋（`FULL`），但 fallback 的 `CALL_ARGUMENT_CHANGED` 仍會讓 `node` preset 產生 `AUTHORIZATION_ABILITY_CHANGED` → `ESCALATED`。
+13. **Laravel 的一般 `->delete()` 不算資料刪除**（可能是 soft delete），`DB::table('x')->delete()` 這種鏈也偵測不到（鏈的中段沒有 receiver），交給 AI。
+14. **real-repo evaluation 仍沒有 TS 版本**（步驟 5 的第 8 點）。
+
 ## 跨步驟的注意事項
 
 1. **real-repo evaluation 的 `compare`**：`--baseline-ref` 指向 fact schema v2 之前的 commit 時，每筆有 fact 的結果在 `facts` 欄位都會不同（`callee` / `container` 的形狀改變，且多了 `properties.scope`）。這是預期的；比較時請看 `decision`、`fallback`、`reasons` 與 gate。`evaluation/real-repo/run.js` 以 baseline snapshot 自己的 `PHP_LARAVEL_DOMAIN_INTERPRETERS` 執行，所以保留了這個相容入口。
 2. **real-repo evaluation 沒有在本機重跑**：目標專案不在 repo 內（見 `docs/current-state.md`）。步驟 1、2 是行為不變的重構，mutation corpus 結果相同；但 `CALL_ARGUMENT_REMOVED` / `ADDED` 會讓部分真實檔案從 `FULL` 變成 `TARGETED`，建議合併前在本機對目標專案執行 `npm run eval:real-repo -- evaluate --baseline-ref <修改前>`，確認 `RISKY_REDUCED` 仍為 0。
-3. **尚未實作**（設計 §8 步驟 7–9）：GitHub 留言中的狀態與 ack 指令、置頂儀表板、Check、PR 自我宣告的風險、TS 第 2 / 3 階段、第 2 層 AI、retro。
+3. **尚未實作**（設計 §8 步驟 7）：GitHub 留言中的狀態與 ack 指令、置頂儀表板、Check、PR 自我宣告的風險。使用者決定步驟 7 最後處理，先完成步驟 8、9。
 4. **待決事項**（設計 §9）中仍未決定的：`FULL` 中「未分析」檔案的預設路由（目前依建議為 `ESCALATED`，可用 `aiTrackPaths` 放寬）、AI 是否直接 commit、豁免權限、TS 型別變更的路由。
 
 ## 流程調整（2026-10-19，步驟 1–6 完成後）

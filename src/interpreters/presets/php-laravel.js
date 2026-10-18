@@ -1,6 +1,6 @@
 /**
- * 框架 preset `php-laravel`：Laravel 的 transaction、授權、middleware、row lock、validation
- * 與 model attributes。callee 與 container 使用 fact schema v2 的結構化欄位。
+ * 框架 preset `php-laravel`：Laravel 的 transaction、授權、middleware、row lock、validation、
+ * model attributes 與資料刪除。callee 與 container 使用 fact schema v2 的結構化欄位。
  */
 import { receiverIs, receiverLast, structuredCallee, structuredContainer } from '../../facts/structured.js';
 import { groupMiddlewares, removedStrings } from './strings.js';
@@ -292,6 +292,34 @@ export const LARAVEL_MODEL_ATTRIBUTES_INTERPRETER = Object.freeze({
   },
 });
 
+/** 名稱本身就表示刪除資料或 schema（`$user->forceDelete()`、`Model::truncate()`、`$table->dropColumn('x')`）。 */
+const deletionMethods = new Set(['forceDelete', 'forceDeleteQuietly', 'truncate', 'dropColumn', 'dropColumns', 'dropIfExists', 'dropSoftDeletes', 'dropTimestamps']);
+const schemaReceivers = ['Schema', 'Illuminate\\Support\\Facades\\Schema'];
+const fileReceivers = ['Storage', 'File', 'Illuminate\\Support\\Facades\\Storage', 'Illuminate\\Support\\Facades\\File'];
+const fileDeletionMethods = new Set(['delete', 'deleteDirectory', 'deleteDirectories', 'cleanDirectory']);
+const databaseReceivers = ['DB', 'Illuminate\\Support\\Facades\\DB'];
+
+export const LARAVEL_DATA_DELETION_INTERPRETER = Object.freeze({
+  id: 'laravel-data-deletion',
+  version: '1.0.0',
+  interpret(fact) {
+    const callee = structuredCallee(fact?.properties?.callee);
+    if (fact?.kind !== 'CALL_ADDED' || !callee) return { handled: false };
+
+    // 一般的 `->delete()` 可能是 soft delete，不列入；`DB::delete(...)` 是 raw SQL。
+    if (
+      deletionMethods.has(callee.name)
+      || (callee.kind === 'static' && receiverIs(callee, schemaReceivers) && ['drop', 'dropIfExists', 'dropAllTables'].includes(callee.name))
+      || (callee.kind === 'static' && receiverIs(callee, fileReceivers) && fileDeletionMethods.has(callee.name))
+      || (callee.kind === 'static' && receiverIs(callee, databaseReceivers) && callee.name === 'delete')
+      || (callee.kind === 'function' && ['unlink', 'rmdir'].includes(callee.name))
+    ) {
+      return { handled: true, blockers: ['DATA_DELETION_ADDED'] };
+    }
+    return { handled: false };
+  },
+});
+
 export const PHP_LARAVEL_PRESET = Object.freeze([
   TRANSACTION_BOUNDARY_INTERPRETER,
   AUTHORIZATION_GUARD_INTERPRETER,
@@ -299,4 +327,5 @@ export const PHP_LARAVEL_PRESET = Object.freeze([
   ROW_LOCK_INTERPRETER,
   LARAVEL_VALIDATION_INTERPRETER,
   LARAVEL_MODEL_ATTRIBUTES_INTERPRETER,
+  LARAVEL_DATA_DELETION_INTERPRETER,
 ]);

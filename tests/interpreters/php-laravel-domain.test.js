@@ -6,6 +6,7 @@ import {
   AUTHORIZATION_GUARD_INTERPRETER,
   CONSTANT_VALUE_INTERPRETER,
   GUARD_CLAUSE_INTERPRETER,
+  LARAVEL_DATA_DELETION_INTERPRETER,
   LARAVEL_MODEL_ATTRIBUTES_INTERPRETER,
   LARAVEL_VALIDATION_INTERPRETER,
   NEGATION_INTERPRETER,
@@ -483,4 +484,19 @@ test('Laravel model attributes：fillable / guarded / hidden / casts', () => {
   assert.equal(blockers(item('ARRAY_ITEM_ADDED', 'property:constructor')), null);
   assert.equal(blockers(item('ARRAY_ITEM_ADDED', 'return', 'User::toArray')), null);
   assert.equal(blockers(removed('$a->b')), null);
+});
+
+test('Laravel 資料刪除：forceDelete、truncate、drop schema、刪除檔案、raw DELETE；一般 delete 不列入', () => {
+  const added = (callee) => ({ id: 'php-a', kind: 'CALL_ADDED', properties: { callee: phpCallee(callee), changeSide: 'after' } });
+  const blockers = (fact) => blockersOf(LARAVEL_DATA_DELETION_INTERPRETER, fact);
+  for (const callee of [
+    '$user->forceDelete', 'Order::truncate', '->truncate', '$table->dropColumn', 'Schema::dropIfExists', 'Schema::drop',
+    '\\Illuminate\\Support\\Facades\\Schema::dropAllTables', 'Storage::delete', 'File::deleteDirectory', 'DB::delete', 'unlink',
+  ]) {
+    assert.deepEqual(blockers(added(callee)), ['DATA_DELETION_ADDED'], callee);
+  }
+  for (const callee of ['$user->delete', '->delete', 'Cache::delete', 'Schema::create', 'DB::select', '$file->unlink']) {
+    assert.equal(blockers(added(callee)), null, callee);
+  }
+  assert.equal(blockers(removed('$user->forceDelete')), null);
 });

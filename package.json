@@ -24,5 +24,8 @@
     "eslint": "^10.8.1",
     "eslint-plugin-jsdoc": "^63.3.3",
     "simple-git-hooks": "^2.13.1"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.131.0"
   }
 }

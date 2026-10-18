@@ -11,7 +11,7 @@ import ts from 'typescript';
  * 是否加引號、多餘的空 statement。型別註記、`as`、`interface` 等型別資訊仍納入比較。
  */
 
-const FLAG_MASK = [
+export const FLAG_MASK = [
   ts.NodeFlags.Let,
   ts.NodeFlags.Const,
   ts.NodeFlags.Using,
@@ -22,9 +22,9 @@ const FLAG_MASK = [
 ].reduce((mask, flag) => mask | (flag ?? 0), 0);
 
 /** 帶語意的非 Node 欄位（運算子、keyword、type-only 等）。 */
-const SCALAR_PROPERTIES = ['operator', 'keywordToken', 'token', 'isTypeOnly', 'isTypeOf', 'isExportEquals', 'phaseModifier'];
+export const SCALAR_PROPERTIES = ['operator', 'keywordToken', 'token', 'isTypeOnly', 'isTypeOf', 'isExportEquals', 'phaseModifier'];
 
-const PROPERTY_NAME_PARENTS = new Set([
+export const PROPERTY_NAME_PARENTS = new Set([
   ts.SyntaxKind.PropertyAssignment,
   ts.SyntaxKind.MethodDeclaration,
   ts.SyntaxKind.PropertyDeclaration,
@@ -88,7 +88,7 @@ function propertyKey(name) {
  * @param {ts.Node} node - node。
  * @returns {boolean} 是否省略。
  */
-function isRedundantEmpty(node) {
+export function isRedundantEmpty(node) {
   return (node.kind === ts.SyntaxKind.EmptyStatement && STATEMENT_LIST_PARENTS.has(node.parent?.kind))
     || node.kind === ts.SyntaxKind.SemicolonClassElement;
 }
@@ -100,9 +100,11 @@ function isRedundantEmpty(node) {
  * @param {Map<object, string>} [options.names=new Map()] - symbol → canonical 名稱（區域變數改名正規化）。
  * @param {function(ts.Identifier): object|undefined} [options.symbolOf] - identifier 的 symbol。
  * @param {function(ts.ShorthandPropertyAssignment): object|undefined} [options.valueSymbolOf] - 物件簡寫的值 symbol。
- * @returns {{serialize: function(ts.Node): string, hash: function(ts.Node): string}} canonicalizer。
+ * @returns {{serialize: function(ts.Node): string, hash: function(ts.Node): string, identifier: function(ts.Identifier): string}} canonicalizer。
  */
 export function createCanonicalizer({ names = new Map(), symbolOf = () => undefined, valueSymbolOf = () => undefined } = {}) {
+  // 結構比對會反覆序列化同一棵子樹，以 node 為 key 快取。
+  const cache = new WeakMap();
   // canonical 名稱用 `C:`、原名用 `I:`，兩者不會互相碰撞（原名可能剛好就是 `$0`）。
   const identifier = (node) => {
     const name = names.size > 0 ? names.get(symbolOf(node)) : undefined;
@@ -116,6 +118,21 @@ export function createCanonicalizer({ names = new Map(), symbolOf = () => undefi
    * @returns {string} 序列化結果；省略的 node 為空字串。
    */
   function serialize(node) {
+    let text = cache.get(node);
+    if (text === undefined) {
+      text = serializeUncached(node);
+      cache.set(node, text);
+    }
+    return text;
+  }
+
+  /**
+   * serialize 的實作（不經快取）。
+   *
+   * @param {ts.Node} node - node。
+   * @returns {string} 序列化結果。
+   */
+  function serializeUncached(node) {
     switch (node.kind) {
       case ts.SyntaxKind.ParenthesizedExpression:
         // `(a?.b).c` 與 `a?.b.c` 語意不同：optional chain 外的括號保留。
@@ -207,5 +224,6 @@ export function createCanonicalizer({ names = new Map(), symbolOf = () => undefi
   return {
     serialize,
     hash: (node) => createHash('sha256').update(serialize(node)).digest('hex'),
+    identifier,
   };
 }

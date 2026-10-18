@@ -19,11 +19,12 @@ const write = async (path, content) => {
   await writeFile(join(repo, path), content);
 };
 
-test('TS / JS 檔案送進 TS analyzer：等價的變更不需 review，其餘為 FULL 並交給 AI；.d.ts 不分析', async () => {
+test('TS / JS 檔案送進 TS analyzer：等價的變更不需 review，可解釋的變更為 TARGETED，無法解釋的為 FULL；.d.ts 不分析', async () => {
   await git('init', '-q');
   await write('src/format.ts', "export function f(x: number) { const total = x * 2; return { total, label: 'a' } }\n");
   await write('src/logic.js', 'export const limit = (x) => x < 10;\n');
   await write('src/types.d.ts', 'export type A = string;\n');
+  await write('src/calc.ts', 'export const calc = (x: number) => (x + 1) * 2;\n');
   await git('add', '-A');
   await git('commit', '-q', '-m', 'base');
   const base = (await git('rev-parse', 'HEAD')).stdout.trim();
@@ -31,6 +32,7 @@ test('TS / JS 檔案送進 TS analyzer：等價的變更不需 review，其餘�
   await write('src/format.ts', 'export function f(x: number) {\n  const total = x * 2;\n  return { total, label: "a" };\n}\n');
   await write('src/logic.js', 'export const limit = (x) => x <= 10;\n');
   await write('src/types.d.ts', 'export type A = number;\n');
+  await write('src/calc.ts', 'export const calc = (x: number) => x + 1 * 2;\n');
   await git('commit', '-q', '-am', 'head');
 
   const report = await reviewRange({ repo, base, head: 'HEAD' });
@@ -41,11 +43,17 @@ test('TS / JS 檔案送進 TS analyzer：等價的變更不需 review，其餘�
 
   const logic = byPath['src/logic.js'];
   assert.equal(logic.analyzed, true);
-  assert.equal(logic.fallback, 'FULL');
-  assert.deepEqual(logic.reasons, ['COV-TS-001:UNRECOGNIZED_TS_CHANGE']);
-  // TS 第 1 階段沒有 fact，偵測不到單向門：交給 AI 審查。
+  assert.equal(logic.fallback, 'TARGETED');
+  assert.deepEqual(logic.reasons, ['COMPARISON_OPERATOR_CHANGED']);
+  assert.equal(logic.facts[0].subject, 'limit');
+  assert.equal(logic.facts[0].description, '運算子 < → <=：x < 10 → x <= 10');
   assert.equal(logic.track, 'AI_TRACK');
 
+  const calc = byPath['src/calc.ts'];
+  assert.equal(calc.fallback, 'FULL');
+  assert.deepEqual(calc.reasons, ['COV-TS-001:UNRECOGNIZED_TS_CHANGE']);
+  assert.equal(calc.track, 'AI_TRACK');
+
   assert.deepEqual(byPath['src/types.d.ts'].reasons, ['UNSUPPORTED_FILE_TYPE']);
-  assert.match(formatReview(report), /COV-TS-001:UNRECOGNIZED_TS_CHANGE（有排版、註解、區域變數改名以外的變更，請看整個檔案）/);
+  assert.match(formatReview(report), /COV-TS-001:UNRECOGNIZED_TS_CHANGE（有無法自動解釋的變更，請看整個檔案）/);
 });

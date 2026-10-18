@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
+import { Buffer } from 'node:buffer';
 
 import { validateAdapterResult } from '../../src/adapters/contracts.js';
 import { createTypeScriptAdapter } from '../../src/adapters/typescript/adapter.js';
@@ -28,16 +29,47 @@ test('等價的 TS 變更為 COMPLETE、沒有 fact，通過 AdapterResult 驗�
   assert.equal(region.runtimeContext.id, 'server:node');
 });
 
-test('無法證明等價時為 COV-TS-001 的 PARTIAL_PARSE；JS 檔案的語言為 javascript', async () => {
-  const changed = await adapter.analyze(request('export const a = 1;\n', 'export const a = 2;\n', 'src/a.js'));
+test('結構變更產生 fact（含 scope hash 與 UTF-8 byte provenance）；JS 檔案的語言為 javascript', async () => {
+  const changed = await adapter.analyze(request("const s = '中文';\nexport const a = 1;\n", "const s = '中文';\nexport const a = 2;\n", 'src/a.js'));
+  assert.deepEqual(validateAdapterResult(changed), { valid: true, errors: [] });
+  assert.equal(changed.complete, true);
+  assert.equal(changed.obligations[0].status, 'COMPLETE');
+  assert.equal(changed.obligations[0].changedRegions[0].language, 'javascript');
+  const [fact] = changed.facts;
+  assert.equal(fact.kind, 'LITERAL_CHANGED');
+  assert.equal(fact.subject, 'src/a.js');
+  assert.deepEqual(fact.properties.container, { type: 'const', name: 'a', keys: [], text: 'const:a' });
+  assert.equal(fact.properties.scope.kind, 'file');
+  assert.match(fact.properties.scope.hash, /^ts:[0-9a-f]{64}$/);
+  // `中文` 是 6 個 byte：`2` 位於第 2 行 `export const a = ` 之後。
+  const offset = Buffer.byteLength("const s = '中文';\nexport const a = ");
+  assert.deepEqual(fact.provenance, { path: 'src/a.js', startByte: offset, endByte: offset + 1 });
+  assert.deepEqual(fact.source, { adapterId: 'typescript-v1', adapterVersion: '0.2.0' });
+
+  const method = (body) => `export class S {\n  handle(x: number) {\n    ${body}\n  }\n}\n`;
+  const scoped = await adapter.analyze(request(method('return x < 10;'), method('return x <= 10;')));
+  assert.equal(scoped.facts[0].kind, 'BINARY_OPERATOR_CHANGED');
+  assert.equal(scoped.facts[0].subject, 'S.handle');
+  assert.equal(scoped.facts[0].properties.scope.kind, 'function');
+  // 同一個 method 只改排版時 scope hash 不變。
+  const reformatted = await adapter.analyze(request(method('return x < 10;'), method('return x  <=  10 ;')));
+  assert.equal(reformatted.facts[0].properties.scope.hash, scoped.facts[0].properties.scope.hash);
+
+  const directive = await adapter.analyze(request('f();\n', '// eslint-disable-next-line\nf();\n'));
+  assert.equal(directive.complete, true);
+  assert.deepEqual(directive.facts.map(({ kind, properties }) => [kind, properties.comment, properties.changeSide]), [
+    ['DIRECTIVE_COMMENT_CHANGED', '// eslint-disable-next-line', 'after'],
+  ]);
+});
+
+test('無法解釋的變更為 COV-TS-001 的 PARTIAL_PARSE', async () => {
+  const fn = (body) => `export function f(x) { ${body} }\n`;
+  const changed = await adapter.analyze(request(fn('return (x + 1) * 2;'), fn('return x + 1 * 2;')));
   assert.deepEqual(validateAdapterResult(changed), { valid: true, errors: [] });
   assert.equal(changed.complete, false);
   assert.equal(changed.reasonCode, 'UNRECOGNIZED_TS_CHANGE');
+  assert.equal(changed.obligations[0].status, 'PARTIAL_PARSE');
   assert.equal(changed.obligations[0].reasonCode, 'UNRECOGNIZED_TS_CHANGE');
-  assert.equal(changed.obligations[0].changedRegions[0].language, 'javascript');
-
-  const directive = await adapter.analyze(request('f();\n', '// eslint-disable-next-line\nf();\n'));
-  assert.equal(directive.reasonCode, 'DIRECTIVE_COMMENT_CHANGED');
 });
 
 test('語法錯誤、刪除與不合法輸入 fail-closed', async () => {

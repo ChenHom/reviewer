@@ -15,27 +15,27 @@ const cases = [
   ['numeric forms', 'a.ts', fn('return 1000 + 16;'), fn('return 1_000 + 0x10;'), null],
   ['key quoting', 'a.ts', fn('return { a: 1, "b-c": 2, 3: x };'), fn("return { 'a': 1, 'b-c': 2, '3': x };"), null],
   ['local rename', 'a.ts', fn('const total = x * 2; let i = 0; for (const item of [total]) { i += item; } return i;'), fn('const sum = x * 2; let n = 0; for (const value of [sum]) { n += value; } return n;'), null],
-  ['param rename not normalized', 'a.ts', fn('return x;'), fn('return y;', 'y'), 'UNRECOGNIZED_TS_CHANGE'],
-  ['shorthand key changes', 'a.ts', fn('const a = x; return { a };'), fn('const b = x; return { b };'), 'UNRECOGNIZED_TS_CHANGE'],
-  ['shorthand expanded same key', 'a.ts', fn('const a = x; return { a };'), fn('const b = x; return { a: b };'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['param rename not normalized', 'a.ts', fn('return x;'), fn('return y;', 'y'), ['VARIABLE_CHANGED', 'VARIABLE_CHANGED']],
+  ['shorthand key changes', 'a.ts', fn('const a = x; return { a };'), fn('const b = x; return { b };'), ['ARRAY_ITEM_ADDED', 'ARRAY_ITEM_REMOVED']],
+  ['shorthand expanded same key', 'a.ts', fn('const a = x; return { a };'), fn('const b = x; return { a: b };'), ['ARRAY_ITEM_ADDED', 'ARRAY_ITEM_REMOVED']],
   ['destructuring shorthand rename', 'a.ts', fn('const { a } = x; return a;'), fn('const { b } = x; return b;'), 'UNRECOGNIZED_TS_CHANGE'],
   ['destructuring alias rename', 'a.ts', fn('const { a: p } = x; return p;'), fn('const { a: q } = x; return q;'), null],
-  ['swap variables', 'a.ts', fn('let a = 1, b = 2; return a - b;'), fn('let b = 1, a = 2; return a - b;'), 'UNRECOGNIZED_TS_CHANGE'],
-  ['canonical vs global $0 collision', 'a.ts', fn('let a = 1; return a;'), fn('let b = 1; return $0;'), 'UNRECOGNIZED_TS_CHANGE'],
-  ['arrow name inference excluded', 'a.ts', fn('const handler = () => x; return handler.name;'), fn('const cb = () => x; return cb.name;'), 'UNRECOGNIZED_TS_CHANGE'],
-  ['top-level rename not normalized', 'a.js', 'var total = 1; console.log(total);\n', 'var sum = 1; console.log(sum);\n', 'UNRECOGNIZED_TS_CHANGE'],
-  ['eval disables rename', 'a.js', fn('const a = 1; eval("a"); return a;'), fn('const b = 1; eval("a"); return b;'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['swap variables', 'a.ts', fn('let a = 1, b = 2; return a - b;'), fn('let b = 1, a = 2; return a - b;'), ['VARIABLE_CHANGED', 'VARIABLE_CHANGED']],
+  ['canonical vs global $0 collision', 'a.ts', fn('let a = 1; return a;'), fn('let b = 1; return $0;'), ['VARIABLE_CHANGED', 'VARIABLE_CHANGED']],
+  ['arrow name inference excluded', 'a.ts', fn('const handler = () => x; return handler.name;'), fn('const cb = () => x; return cb.name;'), ['VARIABLE_CHANGED', 'VARIABLE_CHANGED']],
+  ['top-level rename not normalized', 'a.js', 'var total = 1; console.log(total);\n', 'var sum = 1; console.log(sum);\n', ['VARIABLE_CHANGED', 'VARIABLE_CHANGED']],
+  ['eval disables rename', 'a.js', fn('const a = 1; eval("a"); return a;'), fn('const b = 1; eval("a"); return b;'), ['VARIABLE_CHANGED', 'VARIABLE_CHANGED']],
   ['shadowing rename', 'a.ts', fn('const a = 1; { const a = 2; x(a); } return a;'), fn('const p = 1; { const q = 2; x(q); } return p;'), null],
-  ['shadowing wrong', 'a.ts', fn('const a = 1; { const b = 2; x(a); } return a;'), fn('const p = 1; { const q = 2; x(q); } return p;'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['shadowing wrong', 'a.ts', fn('const a = 1; { const b = 2; x(a); } return a;'), fn('const p = 1; { const q = 2; x(q); } return p;'), ['VARIABLE_CHANGED', 'VARIABLE_CHANGED', 'VARIABLE_CHANGED', 'VARIABLE_CHANGED']],
   ['type annotation change', 'a.ts', fn('const a: number = x; return a;'), fn('const a: any = x; return a;'), 'UNRECOGNIZED_TS_CHANGE'],
   ['as any added', 'a.ts', fn('return x.y;'), fn('return (x as any).y;'), 'UNRECOGNIZED_TS_CHANGE'],
-  ['ts-ignore added', 'a.ts', fn('return x.y;'), fn('// @ts-ignore\nreturn x.y;'), 'DIRECTIVE_COMMENT_CHANGED'],
+  ['ts-ignore added', 'a.ts', fn('return x.y;'), fn('// @ts-ignore\nreturn x.y;'), ['DIRECTIVE_COMMENT_CHANGED']],
   ['plain comment added', 'a.ts', fn('return x.y;'), fn('// explain\nreturn x.y; /* more */'), null],
-  ['pure annotation', 'a.js', 'export const a = make();\n', 'export const a = /*#__PURE__*/ make();\n', 'DIRECTIVE_COMMENT_CHANGED'],
+  ['pure annotation', 'a.js', 'export const a = make();\n', 'export const a = /*#__PURE__*/ make();\n', ['DIRECTIVE_COMMENT_CHANGED']],
   ['use strict raw', 'a.js', '"use strict";\nfoo();\n', "'use strict';\nfoo();\n", null],
   ['use strict escaped', 'a.js', '"use strict";\nfoo();\n', '"use\\x20strict";\nfoo();\n', 'UNRECOGNIZED_TS_CHANGE'],
   ['string escape same value', 'a.ts', fn("return 'A';"), fn("return '\\x41';"), null],
-  ['template vs string', 'a.ts', fn("return 'a';"), fn('return `a`;'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['template vs string', 'a.ts', fn("return 'a';"), fn('return `a`;'), ['LITERAL_CHANGED']],
   ['jsx reformat', 'a.tsx', 'export const A = () => <div className="a"><span>Hello world</span></div>;\n', 'export const A = () => (\n  <div className="a">\n    <span>Hello world</span>\n  </div>\n);\n', null],
   ['jsx text change', 'a.tsx', 'export const A = () => <p>Hello world</p>;\n', 'export const A = () => <p>Hello  world</p>;\n', 'UNRECOGNIZED_TS_CHANGE'],
   ['jsx inline space vs newline', 'a.tsx', 'export const A = () => <p>a <b>b</b></p>;\n', 'export const A = () => <p>a\n<b>b</b></p>;\n', 'UNRECOGNIZED_TS_CHANGE'],
@@ -44,27 +44,39 @@ const cases = [
   ['import order', 'a.ts', "import './a';\nimport './b';\n", "import './b';\nimport './a';\n", 'UNRECOGNIZED_TS_CHANGE'],
   ['empty statements', 'a.ts', fn('x();'), fn('x();;'), null],
   ['let to const', 'a.ts', fn('let a = 1; return a;'), fn('const a = 1; return a;'), 'UNRECOGNIZED_TS_CHANGE'],
-  ['operator change', 'a.ts', fn('return x < 1;'), fn('return x <= 1;'), 'UNRECOGNIZED_TS_CHANGE'],
+  ['operator change', 'a.ts', fn('return x < 1;'), fn('return x <= 1;'), ['BINARY_OPERATOR_CHANGED']],
   ['prefix operator', 'a.ts', fn('return -x;'), fn('return +x;'), 'UNRECOGNIZED_TS_CHANGE'],
   ['type-only import', 'a.ts', "import type { A } from './a';\nexport let x: A;\n", "import { A } from './a';\nexport let x: A;\n", 'UNRECOGNIZED_TS_CHANGE'],
   ['parse error', 'a.ts', fn('return 1;'), fn('return 1 +;'), 'TS_PARSE_ERROR'],
   ['bigint forms', 'a.ts', fn('return 16n;'), fn('return 0x10n;'), null],
   ['catch var rename', 'a.ts', fn('try { x(); } catch (err) { return err; }'), fn('try { x(); } catch (e) { return e; }'), null],
   ['jsx component vs intrinsic', 'a.tsx', 'export function A(x) { const Foo = x; return <Foo />; }\n', 'export function A(x) { const foo = x; return <foo />; }\n', 'UNRECOGNIZED_TS_CHANGE'],
-  ['shebang changed', 'a.js', '#!/usr/bin/env node\nfoo();\n', '#!/usr/bin/env bun\nfoo();\n', 'DIRECTIVE_COMMENT_CHANGED'],
+  ['shebang changed', 'a.js', '#!/usr/bin/env node\nfoo();\n', '#!/usr/bin/env bun\nfoo();\n', ['DIRECTIVE_COMMENT_CHANGED', 'DIRECTIVE_COMMENT_CHANGED']],
   ['class semicolon', 'a.ts', 'export class A { a = 1; }\n', 'export class A { a = 1;; }\n', null],
+  ['only decorator removed', 'a.ts', 'export class A {\n  @Transactional()\n  m() {}\n}\n', 'export class A {\n  m() {}\n}\n', ['ANNOTATION_REMOVED']],
+  ['only decorator added', 'a.ts', 'export class A {\n  m() {}\n}\n', 'export class A {\n  @Public()\n  m() {}\n}\n', ['ANNOTATION_ADDED']],
+  ['modifier added', 'a.ts', 'export class A {\n  m() {}\n}\n', 'export class A {\n  static m() {}\n}\n', 'UNRECOGNIZED_TS_CHANGE'],
+  // 保守：`new Date` 與 `new Date()` 等價，但 canonical 形式不同，不自動判定。
+  ['new without parens', 'a.ts', fn('return new Date;'), fn('return new Date();'), 'UNRECOGNIZED_TS_CHANGE'],
 ];
 
-test('TS analyzer：等價判定與 fail-closed 的邊界', () => {
+// expected：null = 等價（COMPLETE、沒有 fact）；字串 = 未解釋的原因或錯誤代碼；陣列 = COMPLETE 且產生這些 fact。
+test('TS analyzer：等價判定、fact 解釋與 fail-closed 的邊界', () => {
   for (const [label, path, before, after, expected] of cases) {
     const result = analyze({ path, beforeSource: before, afterSource: after });
-    const actual = result.ok ? result.reasonCode : result.code;
-    assert.equal(actual, expected, label);
-    if (result.ok) {
-      assert.equal(result.complete, expected === null, label);
-      assert.equal(result.status, expected === null ? 'COMPLETE' : 'PARTIAL_PARSE', label);
-      assert.deepEqual(result.facts, [], label);
+    if (!result.ok) {
+      assert.equal(result.code, expected, label);
+      continue;
     }
+    if (Array.isArray(expected)) {
+      assert.equal(result.complete, true, label);
+      assert.deepEqual(result.facts.map(({ kind }) => kind).sort(), expected, label);
+      continue;
+    }
+    assert.equal(result.reasonCode, expected, label);
+    assert.equal(result.complete, expected === null, label);
+    assert.equal(result.status, expected === null ? 'COMPLETE' : 'PARTIAL_PARSE', label);
+    if (expected === null) assert.deepEqual(result.facts, [], label);
   }
 });
 

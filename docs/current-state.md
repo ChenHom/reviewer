@@ -243,7 +243,7 @@ Real-repo evaluation（`evaluation/real-repo/`，說明見 [Real-repo Evaluation
 
 CI（`.github/workflows/review-reduction-safety.yml`，PHP 8.4）在 `npm run test:all` 之前先執行 `composer install --working-dir=analyzers/php`，並對 `analyzers/php/bin`、`analyzers/php/src` 與 `evaluation` 下的 `.php` 檔執行 `php -l`。
 
-### 三層審查（機械 → AI → 人工）：步驟 1–6
+### 三層審查（機械 → AI → 人工）：步驟 1–6、8
 
 設計見 [三層審查架構設計](superpowers/specs/2026-10-18-three-tier-review-design.md)，實作中的問題與處理見 [實作紀錄](superpowers/notes/2026-10-19-three-tier-implementation-notes.md)。
 
@@ -251,10 +251,10 @@ CI（`.github/workflows/review-reduction-safety.yml`，PHP 8.4）在 `npm run te
 - Interpreter 依層拆成語言層（`src/interpreters/core.js`）、框架 preset（`php-laravel`）與業務 preset（`payments`）；CLI 依副檔名選擇語言。
 - 路由：核心流程是機械審查 → AI 審查剩下的 → AI 審查後需要人工的才交給人工。需要 review 的檔案都交給 AI；命中單向門的（`ESCALATED`）AI 不能放行，之後一律人工確認；其他（`AI_TRACK`，包括 `FULL`）由 AI 判斷。`--fail-on-escalation`。AI 審查層尚未實作。
 - 專案設定 `.reviewer.json`（從 merge base 讀取，只能新增攔截），見 [專案設定](project-config.md)。
-- TypeScript / JavaScript adapter 第 1 階段：只判斷 AST 是否等價，不輸出 fact。
+- TypeScript / JavaScript adapter：AST 等價判定（第 1 階段），以及結構比對輸出與 PHP 相同的 facts、decorator 與指示註解的 facts、scope hash（第 2、3 階段）；`node` preset（transaction、row lock、授權、middleware、token 驗證、validation、資料刪除），`.reviewer.json` 的規則也適用於 TS。
 - 二次 review 的輸入：每個 fact 的 scope hash（所屬 method 的 canonical AST hash）與 finding 指紋（`files[].findings`）。狀態機與 GitHub 整合（設計的步驟 7）尚未實作。
 
-目前 mutation evaluation（`npm run eval:mutations`）：32 個 case（critical 25、safe 7，含 8 個 TS case 與 4 個帶專案設定的 case），Critical Recall 100%、Safe Reduction Rate 100%、Critical Direct Fact Coverage 80%（5 個 TS critical case 沒有 fact）、Critical Escalation Rate 64%（9 個 critical case 沒有命中單向門，只靠 AI 審查判斷是否需要人工：4 個 PHP case 與 5 個 TS case，見實作紀錄的「流程調整」）。
+目前 mutation evaluation（`npm run eval:mutations`）：43 個 case（critical 35、safe 8，含 19 個 TS case 與 6 個帶專案設定的 case），Critical Recall 100%、Safe Reduction Rate 100%、Critical Direct Fact Coverage 97.1%（只剩 optional chain 加括號的 TS case 沒有 fact）、Critical Escalation Rate 77.1%（8 個 critical case 沒有命中單向門，只靠 AI 審查判斷是否需要人工：4 個 PHP case，以及 TS 的 `@ts-ignore`、物件簡寫 key、optional chain、zod 規則放寬）。
 
 ## 2. 現在的完整 Pipeline
 

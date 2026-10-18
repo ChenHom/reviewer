@@ -5,14 +5,15 @@ import { fileURLToPath } from 'node:url';
 import { executeAnalyzer } from '../analyzer-process.js';
 
 /**
- * TypeScript / JavaScript adapter（第 1 階段）。
+ * TypeScript / JavaScript adapter。
  *
- * analyzer（`analyzers/ts`，TypeScript compiler API）只判斷兩個版本的 AST 是否等價，不輸出 fact：
- * 等價時 `COMPLETE`，否則 `COV-TS-001:<原因>`（`FULL`）。
+ * analyzer（`analyzers/ts`，TypeScript compiler API）以 AST 結構比對兩個版本，輸出與 PHP adapter 相同詞彙的
+ * semantic facts；有無法解釋的差異時為 `COV-TS-001:<原因>`（`FULL`）。
  */
 export const TYPESCRIPT_ADAPTER_DESCRIPTOR = Object.freeze({
   id: 'typescript-v1',
-  version: '0.1.0',
+  // 0.2.0：第 2、3 階段，輸出 semantic facts。
+  version: '0.2.0',
   languages: ['typescript', 'javascript'],
   capabilities: [
     'changed-regions',

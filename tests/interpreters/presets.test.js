@@ -10,7 +10,7 @@ import { LANGUAGES, languageFor } from '../../src/review/review.js';
 test('php-laravel + payments 組出的 set 與原本的 PHP_LARAVEL_DOMAIN_INTERPRETERS 相同', () => {
   const resolved = resolveInterpreters(['php-laravel', 'payments']);
   assert.deepEqual(canonicalInterpreterSet(resolved), canonicalInterpreterSet(PHP_LARAVEL_DOMAIN_INTERPRETERS));
-  assert.equal(PHP_LARAVEL_DOMAIN_INTERPRETERS.length, 15);
+  assert.equal(PHP_LARAVEL_DOMAIN_INTERPRETERS.length, 18);
   assert.deepEqual(validateFactInterpreters(resolved), { valid: true, errors: [] });
 });
 

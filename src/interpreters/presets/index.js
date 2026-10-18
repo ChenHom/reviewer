@@ -2,12 +2,14 @@
  * Preset registry：依名稱組出 interpreter set（語言層 interpreters 一律包含）。
  */
 import { CORE_INTERPRETERS } from '../core.js';
+import { NODE_PRESET } from './node.js';
 import { PAYMENTS_PRESET } from './payments.js';
 import { PHP_LARAVEL_PRESET } from './php-laravel.js';
 
 export const PRESETS = Object.freeze({
   'php-laravel': PHP_LARAVEL_PRESET,
   payments: PAYMENTS_PRESET,
+  node: NODE_PRESET,
 });
 
 /**
@@ -17,6 +19,7 @@ export const PRESETS = Object.freeze({
 export const PRESET_LANGUAGES = Object.freeze({
   'php-laravel': Object.freeze(['php']),
   payments: Object.freeze(['php', 'ts']),
+  node: Object.freeze(['ts']),
 });
 
 /**

@@ -1,6 +1,7 @@
 /**
  * 語言層 interpreters：與框架、業務無關的變更（運算子、guard clause、條件反轉、回傳值、
- * 參數順序、變數、常數）。所有語言共用；id 沿用原本的 `php-` 前綴以維持 interpreter identity。
+ * 參數順序、變數、常數、decorator / attribute、指示註解）。所有語言共用；
+ * 原有的 id 沿用 `php-` 前綴以維持 interpreter identity，之後新增的用 `core-`。
  *
  * 運算子集合目前以 PHP 為準（含 `<>`、`and` / `or` / `xor`）；其他語言的運算子不在集合中時
  * 回傳 `OPERATOR_CHANGED`，仍是 blocker。
@@ -137,6 +138,26 @@ export const CONSTANT_VALUE_INTERPRETER = Object.freeze({
   },
 });
 
+export const ANNOTATION_INTERPRETER = Object.freeze({
+  id: 'core-annotation',
+  version: '1.0.0',
+  interpret(fact) {
+    if (fact?.kind === 'ANNOTATION_REMOVED') return { handled: true, blockers: ['ANNOTATION_REMOVED'] };
+    if (fact?.kind === 'ANNOTATION_ADDED') return { handled: true, blockers: ['ANNOTATION_ADDED'] };
+    return { handled: false };
+  },
+});
+
+export const DIRECTIVE_COMMENT_INTERPRETER = Object.freeze({
+  id: 'core-directive-comment',
+  version: '1.0.0',
+  interpret(fact) {
+    return fact?.kind === 'DIRECTIVE_COMMENT_CHANGED'
+      ? { handled: true, blockers: ['DIRECTIVE_COMMENT_CHANGED'] }
+      : { handled: false };
+  },
+});
+
 export const CORE_INTERPRETERS = Object.freeze([
   OPERATOR_CHANGE_INTERPRETER,
   GUARD_CLAUSE_INTERPRETER,
@@ -145,4 +166,6 @@ export const CORE_INTERPRETERS = Object.freeze([
   ARGUMENT_ORDER_INTERPRETER,
   VARIABLE_CHANGE_INTERPRETER,
   CONSTANT_VALUE_INTERPRETER,
+  ANNOTATION_INTERPRETER,
+  DIRECTIVE_COMMENT_INTERPRETER,
 ]);
