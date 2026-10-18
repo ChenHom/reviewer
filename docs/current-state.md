@@ -243,6 +243,19 @@ Real-repo evaluation（`evaluation/real-repo/`，說明見 [Real-repo Evaluation
 
 CI（`.github/workflows/review-reduction-safety.yml`，PHP 8.4）在 `npm run test:all` 之前先執行 `composer install --working-dir=analyzers/php`，並對 `analyzers/php/bin`、`analyzers/php/src` 與 `evaluation` 下的 `.php` 檔執行 `php -l`。
 
+### 三層審查（機械 → AI → 人工）：步驟 1–6
+
+設計見 [三層審查架構設計](superpowers/specs/2026-10-18-three-tier-review-design.md)，實作中的問題與處理見 [實作紀錄](superpowers/notes/2026-10-19-three-tier-implementation-notes.md)。
+
+- Fact schema v2：`callee` / `container` 改為語言中立的結構化欄位；新增 `CALL_ARGUMENT_REMOVED` / `CALL_ARGUMENT_ADDED`。
+- Interpreter 依層拆成語言層（`src/interpreters/core.js`）、框架 preset（`php-laravel`）與業務 preset（`payments`）；CLI 依副檔名選擇語言。
+- 路由：需要 review 的檔案再分成 `AI_TRACK`（交給 AI 審查）與 `ESCALATED`（單向門或 `FULL`，需要人工確認）；`--fail-on-escalation`。
+- 專案設定 `.reviewer.json`（從 merge base 讀取，只能新增攔截），見 [專案設定](project-config.md)。
+- TypeScript / JavaScript adapter 第 1 階段：只判斷 AST 是否等價，不輸出 fact。
+- 二次 review 的輸入：每個 fact 的 scope hash（所屬 method 的 canonical AST hash）與 finding 指紋（`files[].findings`）。狀態機與 GitHub 整合（設計的步驟 7）尚未實作。
+
+目前 mutation evaluation（`npm run eval:mutations`）：32 個 case（critical 25、safe 7，含 8 個 TS case 與 4 個帶專案設定的 case），Critical Recall 100%、Safe Reduction Rate 100%、Critical Direct Fact Coverage 80%（5 個 TS critical case 沒有 fact）、Critical Escalation Rate 84%（4 個 critical case 只會交給 AI 審查，見實作紀錄步驟 3）。
+
 ## 2. 現在的完整 Pipeline
 
 ```

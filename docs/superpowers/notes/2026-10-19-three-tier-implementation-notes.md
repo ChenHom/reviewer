@@ -88,3 +88,10 @@
 5. **class 層級的 fact 以整個檔案為 scope**：property 預設值（例如 `$fillable`）等 fact 的 `subject` 是檔案路徑（步驟 1 的第 5 點），因此 scope 是整個檔案的 hash，同一檔案的任何邏輯變更都會讓這類豁免失效（保守）。
 6. **TS analyzer 沒有輸出 scope hash**：設計寫「PHP 與 TS analyzer 都輸出 scope hash」，但 TS 第 1 階段沒有 fact，per-fact 的 scope hash 沒有地方可放。處理：TS 檔案只有檔案層級的 `FULL_REVIEW` finding，綁定 `contentHash`；scope hash 與 TS 第 2 階段的 fact 一起實作。
 7. **狀態（OPEN / FIXED / ACKNOWLEDGED / REOPENED）沒有在這一步實作**：依設計 §8，狀態機與 GitHub 留言中的狀態屬於步驟 7。這一步提供它需要的輸入（穩定的 finding id 與 scope hash），並以測試驗證：上方插入程式碼與區域變數改名後 id 與 scope hash 不變、同一 method 的邏輯改變時 id 不變但 scope hash 改變、加回被移除的呼叫後 finding 消失、同一 method 中兩個相同的移除產生兩個 finding。
+
+## 跨步驟的注意事項
+
+1. **real-repo evaluation 的 `compare`**：`--baseline-ref` 指向 fact schema v2 之前的 commit 時，每筆有 fact 的結果在 `facts` 欄位都會不同（`callee` / `container` 的形狀改變，且多了 `properties.scope`）。這是預期的；比較時請看 `decision`、`fallback`、`reasons` 與 gate。`evaluation/real-repo/run.js` 以 baseline snapshot 自己的 `PHP_LARAVEL_DOMAIN_INTERPRETERS` 執行，所以保留了這個相容入口。
+2. **real-repo evaluation 沒有在本機重跑**：目標專案不在 repo 內（見 `docs/current-state.md`）。步驟 1、2 是行為不變的重構，mutation corpus 結果相同；但 `CALL_ARGUMENT_REMOVED` / `ADDED` 會讓部分真實檔案從 `FULL` 變成 `TARGETED`，建議合併前在本機對目標專案執行 `npm run eval:real-repo -- evaluate --baseline-ref <修改前>`，確認 `RISKY_REDUCED` 仍為 0。
+3. **尚未實作**（設計 §8 步驟 7–9）：GitHub 留言中的狀態與 ack 指令、置頂儀表板、Check、PR 自我宣告的風險、TS 第 2 / 3 階段、第 2 層 AI、retro。
+4. **待決事項**（設計 §9）中仍未決定的：`FULL` 中「未分析」檔案的預設路由（目前依建議為 `ESCALATED`，可用 `aiTrackPaths` 放寬）、AI 是否直接 commit、豁免權限、TS 型別變更的路由。
