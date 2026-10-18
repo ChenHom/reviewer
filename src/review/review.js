@@ -6,6 +6,7 @@ import { createPhpLaravelAdapter } from '../adapters/php-laravel/adapter.js';
 import { displayArgument, displayText } from '../facts/structured.js';
 import { resolveInterpreters } from '../interpreters/presets/index.js';
 import { createAuthorityState } from '../publication.js';
+import { routeFile, summarizeTracks } from '../routing.js';
 import { runAdapterPipeline } from '../runner.js';
 import { diffEntries, diffHunks, mergeBase, readBlob, repositoryRoot, resolveCommit } from './git.js';
 
@@ -349,7 +350,8 @@ export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs
       runnerVersion: '1',
     },
   };
-  const files = await mapWithConcurrency(entries, concurrency, (entry) => reviewEntry(context, entry));
+  const reviewed = await mapWithConcurrency(entries, concurrency, (entry) => reviewEntry(context, entry));
+  const files = reviewed.map((file) => ({ ...file, ...routeFile(file) }));
 
   return {
     repository: basename(root),
@@ -357,6 +359,7 @@ export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs
     head: { ref: head, sha: headSha },
     mergeBase: forkPoint,
     decision: summarizeFiles(files),
+    routing: summarizeTracks(files),
     files,
   };
 }

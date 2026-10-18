@@ -62,6 +62,7 @@ node bin/review.js --repo /path/to/project --base origin/master --head HEAD
 | `--json` | 關 | stdout 改為輸出 JSON 報表（取代文字輸出） |
 | `--out <file>` | 無 | 另外把 JSON 報表寫到檔案。不論有沒有 `--json` 都是同一份 JSON；上層目錄不存在時會自動建立 |
 | `--fail-on-review` | 關 | PR 層級決策為 `HUMAN_REVIEW_REQUIRED` 時 exit code 為 1 |
+| `--fail-on-escalation` | 關 | PR 層級路由為 `ESCALATED`（有檔案需要人工確認，見「路由」）時 exit code 為 1 |
 | `--concurrency <n>` | CPU 數與 8 取小者 | 同時執行的 analyzer process 數；整數 1–64。不影響結果與輸出順序 |
 | `--timeout-ms <n>` | `30000` | 單一檔案的 analyzer deadline（毫秒）；整數 1–2147483647。逾時的 analyzer 會被終止，該檔案為 `FULL`，原因 `ANALYZER_ERROR:PHP_ANALYZER_ABORTED` |
 | `--help`、`-h` | | 印出用法並以 0 結束（忽略其他參數） |
@@ -150,6 +151,20 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
 - `status`：**所有**檔案都是 `NOT_SELECTED_FOR_HUMAN_REVIEW` 時才是 `NOT_SELECTED_FOR_HUMAN_REVIEW`；任何一個檔案需要 review 就是 `HUMAN_REVIEW_REQUIRED`。沒有任何檔案變更時是 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
 - `reasons`：需要 review 的檔案的原因，去重後依字母排序（`FACT_UNHANDLED:<id>` 逐一列出）。有檔案變更但都不需要 review 時為 `[]`；沒有任何檔案變更時為 `["NO_CHANGES"]`。
 - `files` / `notSelected` / `targeted` / `full`：檔案數。`targeted + full` 是需要 review 的檔案數。
+
+### 路由（三層審查）
+
+`decision` 之外，每個檔案另有路由 `track`（`src/routing.js`），把需要 review 的檔案再分成「交給 AI 審查」與「需要人工確認」。路由不改變 `decision`，也不會讓需要 review 的檔案變成不需要。
+
+| `track` | 條件 |
+|---|---|
+| `AUTO_PASS` | `decision` 為 `NOT_SELECTED_FOR_HUMAN_REVIEW` |
+| `AI_TRACK` | `TARGETED`，而且沒有任何原因屬於單向門 |
+| `ESCALATED` | 任一原因屬於單向門；或 `FULL`（有無法解釋的變更、analyzer 失敗或檔案沒有分析）；或 `decision` 不是這兩種已知的值 |
+
+單向門（做了就難以回頭的變更）的預設清單：`TRANSACTION_BOUNDARY_REMOVED`、`TRANSACTION_ROLLBACK_REMOVED`、`ROW_LOCK_REMOVED`、`AUTHORIZATION_GUARD_REMOVED`、`AUTHORIZATION_ABILITY_CHANGED`、`MIDDLEWARE_GUARD_REMOVED`、`SIGNATURE_VERIFICATION_REMOVED`、`GUARD_CLAUSE_REMOVED`、`PROTECTED_CALL_REMOVED`、`PAYMENT_IDEMPOTENCY_IDENTITY_CHANGED`、`SENSITIVE_OPERAND_CHANGED`、`MASS_ASSIGNMENT_CHANGED`、`SERIALIZED_ATTRIBUTES_CHANGED`、`SIDE_EFFECT_CALL_ADDED`、`DATA_DELETION_ADDED`、`PROTECTED_PATH`、`POLICY_FILE_CHANGED`。其中幾個代碼由專案設定的規則產生（見 [專案設定](project-config.md)）。
+
+PR 層級的 `routing.track` 取所有檔案中最嚴格的一個（`ESCALATED` > `AI_TRACK` > `AUTO_PASS`）；沒有任何檔案變更時為 `AUTO_PASS`。
 
 ## 原因代碼
 
@@ -255,9 +270,10 @@ fact 沒有任何 domain interpreter 對應。fact id 的格式是 `php-` 加 20
 
 ```
 Review：<PR 決策>（<需要 review 的檔案數>/<檔案數> 個檔案需要 review；TARGETED <n>、FULL <n>）
+路由：<PR 路由>（需要人工確認 <n>、交給 AI 審查 <n>、不需要 review <n>）
 <repository>  <base ref> (<base SHA 前 12 碼>) → <head ref> (<head SHA 前 12 碼>)[，比較起點為 merge base <SHA 前 12 碼>]
 
-需要 review：
+需要人工確認（ESCALATED）：
   <FULL|TARGETED> <path>[（原 <oldPath>）]
            - <原因代碼>[（說明）]
            - FACT_UNHANDLED ×<N>（有變更但沒有對應的 domain 規則，請看標示位置）
@@ -265,23 +281,27 @@ Review：<PR 決策>（<需要 review 的檔案數>/<檔案數> 個檔案需要 
            · <side>:L<start>[-<end>] <fact 描述>
            · …另有 <N> 項（見 --json）
 
+交給 AI 審查（AI_TRACK）：
+  （格式同上）
+
 不需要 review（<N>）：
   <path>
 ```
 
-- 需要 review 的檔案先列 `FULL` 再列 `TARGETED`，同一組依路徑排序；不需要 review 的檔案依 `git diff` 的順序。
-- `-` 行：每個原因一行。部分代碼附中文說明（`format.js` 的 `REASON_HINTS`），其餘只顯示代碼。`FACT_UNHANDLED:<id>` 不逐一列出，合併成 `FACT_UNHANDLED ×N` 一行。不需要 review 的檔案不顯示原因。
+- 需要 review 的檔案依路由分成「需要人工確認」與「交給 AI 審查」兩段（沒有檔案的段落不印）。每一段先列 `FULL` 再列 `TARGETED`，同一組依路徑排序；不需要 review 的檔案依 `git diff` 的順序。
+- `-` 行：每個原因一行。單向門標示「（單向門）」；部分代碼附中文說明（`format.js` 的 `REASON_HINTS`），其餘只顯示代碼。`FACT_UNHANDLED:<id>` 不逐一列出，合併成 `FACT_UNHANDLED ×N` 一行。不需要 review 的檔案不顯示原因。
 - 「變更位置」：`git diff -U0` 的 hunk。有新內容的 hunk 標 head 版本的行號；純刪除的 hunk 標 merge base 版本被刪除的行（`base:`）。只有修改與 rename 的檔案有這一行；最多列 8 處，超過時加上「等 N 處」。
 - `·` 行：analyzer 找到的 fact。`base:` 表示位置在 merge base 版本（通常是被移除的程式碼），`head:` 表示在 head 版本。最多列 8 項，其餘見 `--json`。`FULL` 的檔案也可能有 fact 行（已解釋的部分）。
-- 沒有任何檔案變更時，只印前兩行與「沒有任何檔案變更。」。
+- 沒有任何檔案變更時，只印前三行與「沒有任何檔案變更。」。
 
 範例（`feature` 分支從 `main` 分出後，`main` 又多了一個修改 `README.md` 的 commit；這個變更不屬於 PR，所以不在清單中）：
 
 ```
 Review：HUMAN_REVIEW_REQUIRED（5/6 個檔案需要 review；TARGETED 3、FULL 2）
+路由：ESCALATED（需要人工確認 3、交給 AI 審查 2、不需要 review 1）
 shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge base f30b6d9d7ca0
 
-需要 review：
+需要人工確認（ESCALATED）：
   FULL     app/Services/ReportService.php
            - COV-PHP-001:UNRECOGNIZED_PHP_CHANGE（有無法自動解釋的變更，請看整個檔案）
            變更位置：head:L9-14
@@ -289,9 +309,11 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
            - UNSUPPORTED_FILE_TYPE（非 PHP 檔案，未分析）
            變更位置：head:L3
   TARGETED app/Http/Controllers/PostController.php
-           - AUTHORIZATION_GUARD_REMOVED
+           - AUTHORIZATION_GUARD_REMOVED（單向門）
            變更位置：base:L9-10
            · base:L9 移除呼叫 $this->authorize
+
+交給 AI 審查（AI_TRACK）：
   TARGETED app/Services/FreezeService.php
            - COMPARISON_OPERATOR_CHANGED
            變更位置：head:L9
@@ -305,7 +327,7 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
   app/Services/LegacyHelper.php
 ```
 
-`LegacyHelper.php` 只有排版與註解變更，所以不需要 review。超過 8 處時的截斷：
+`LegacyHelper.php` 只有排版與註解變更，所以不需要 review。`FreezeService.php` 的運算子改變沒有命中單向門，所以交給 AI 審查；若專案設定把 `amount` 列為敏感運算元（[專案設定](project-config.md)），它會變成 `SENSITIVE_OPERAND_CHANGED` 而需要人工確認。超過 8 處時的截斷：
 
 ```
   TARGETED Many.php
@@ -342,6 +364,8 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
 | `decision.notSelected` | number | 不需要 review 的檔案數 |
 | `decision.targeted` | number | `TARGETED` 的檔案數 |
 | `decision.full` | number | `FULL` 的檔案數 |
+| `routing.track` | string | PR 層級路由：`AUTO_PASS`、`AI_TRACK` 或 `ESCALATED`（見「路由」） |
+| `routing.autoPass` / `routing.aiTrack` / `routing.escalated` | number | 各路由的檔案數 |
 | `files` | object[] | 每個變更檔案的結果，順序與 `git diff --raw` 相同 |
 
 ### `files[]`
@@ -355,6 +379,8 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
 | `decision` | string | `NOT_SELECTED_FOR_HUMAN_REVIEW` 或 `HUMAN_REVIEW_REQUIRED` |
 | `fallback` | string \| null | `TARGETED`、`FULL`；不需要 review 時為 `null` |
 | `reasons` | string[] | 原因代碼。analyzer 的原因依字母排序，`FILE_RENAMED` / `FILE_MODE_CHANGED` 接在最後。代碼可能帶參數，例如 `UNSUPPORTED_CHANGE_TYPE:type-changed`、`ANALYZER_ERROR:<訊息>`、`FACT_UNHANDLED:<fact id>` |
+| `track` | string | 路由：`AUTO_PASS`、`AI_TRACK` 或 `ESCALATED` |
+| `oneWayDoors` | string[] | `reasons` 中屬於單向門的原因；沒有時為 `[]` |
 | `facts` | object[] | analyzer 找到的所有 fact；未分析的檔案為 `[]` |
 | `facts[].kind` | string | fact 種類，例如 `CALL_REMOVED` |
 | `facts[].side` | string | `base`（merge base 版本）或 `head` |
@@ -454,8 +480,8 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
 
 | exit code | 意義 |
 |---|---|
-| 0 | 完成。沒有 `--fail-on-review` 時，即使有檔案需要 review 也是 0；有 `--fail-on-review` 時表示 PR 層級為 `NOT_SELECTED_FOR_HUMAN_REVIEW`（包括 `NO_CHANGES`） |
-| 1 | 有 `--fail-on-review`，且 PR 層級為 `HUMAN_REVIEW_REQUIRED` |
+| 0 | 完成。沒有 `--fail-on-review` / `--fail-on-escalation` 時，即使有檔案需要 review 也是 0；有 `--fail-on-review` 時表示 PR 層級為 `NOT_SELECTED_FOR_HUMAN_REVIEW`（包括 `NO_CHANGES`）；有 `--fail-on-escalation` 時表示 PR 層級路由不是 `ESCALATED` |
+| 1 | 有 `--fail-on-review` 且 PR 層級為 `HUMAN_REVIEW_REQUIRED`，或有 `--fail-on-escalation` 且 PR 層級路由為 `ESCALATED` |
 | 2 | 錯誤。stderr 印出 `error: <訊息>`，不輸出報表 |
 
 exit code 2 的錯誤：

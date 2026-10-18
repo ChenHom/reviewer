@@ -81,3 +81,20 @@ test('預期 semantic fact 消失時 evaluation gate 必須失敗', () => {
 
   assert.deepEqual(failures, ['EXPECTED_FACT_MISSING:CASE-001:KNOWN_FACT']);
 });
+
+test('mutation metrics 計算 critical case 的人工升級比例，並以 expectedTrack 固定路由', () => {
+  const metrics = calculateMutationMetrics([
+    result({ id: 'escalated', track: 'ESCALATED' }),
+    result({ id: 'ai-track', track: 'AI_TRACK' }),
+    result({ id: 'safe', classification: 'safe', track: 'AUTO_PASS' }),
+  ]);
+  assert.equal(metrics.criticalEscalated, 1);
+  assert.equal(metrics.criticalEscalationRate, 0.5);
+  assert.equal(calculateMutationMetrics([]).criticalEscalationRate, null);
+
+  assert.deepEqual(validateMutationEvaluation([result({ track: 'AI_TRACK', expectedTrack: 'ESCALATED' })]), [
+    'TRACK_REGRESSION:CASE-001',
+  ]);
+  assert.deepEqual(validateMutationEvaluation([result({ track: 'ESCALATED', expectedTrack: 'ESCALATED' })]), []);
+  assert.deepEqual(validateMutationEvaluation([result({ track: 'AI_TRACK' })]), []);
+});

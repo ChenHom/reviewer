@@ -6,6 +6,7 @@
     "path": "app/Services/PaymentService.php",
     "description": "Payment idempotency named argument identity changes across retry.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "CALL_ARGUMENT_CHANGED"
     ],
@@ -20,6 +21,7 @@
     "path": "app/Services/WalletService.php",
     "description": "DB transaction boundary is removed around wallet mutation.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "CALL_REMOVED"
     ],
@@ -34,6 +36,7 @@
     "path": "app/Services/OrderService.php",
     "description": "Authorization guard is removed before protected mutation.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "CALL_REMOVED"
     ],
@@ -48,6 +51,7 @@
     "path": "app/Services/WalletService.php",
     "description": "Wallet balance boundary changes from < to <=.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "AI_TRACK",
     "expectedFactKinds": [
       "BINARY_OPERATOR_CHANGED"
     ],
@@ -62,6 +66,7 @@
     "path": "app/Entities/Observers/FreezeObserver.php",
     "description": "Fully-qualified \\DB::transaction wrapper is removed around a cash-flow debit.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "CALL_REMOVED"
     ],
@@ -76,6 +81,7 @@
     "path": "app/Services/CheckoutService.php",
     "description": "\\DB::beginTransaction and \\DB::commit are removed from a settlement loop.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "CALL_REMOVED"
     ],
@@ -90,6 +96,7 @@
     "path": "app/Services/CheckoutService.php",
     "description": "\\DB::rollBack is removed from the settlement error path.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "CALL_REMOVED"
     ],
@@ -104,6 +111,7 @@
     "path": "app/Entities/Observers/FreezeObserver.php",
     "description": "Chained lockForUpdate() is removed inside a transaction closure.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "CALL_REMOVED"
     ],
@@ -118,6 +126,7 @@
     "path": "app/Adapters/ChannelNotify/IwpNotifyHandler.php",
     "description": "Payment callback signature verification guard is removed.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "CALL_REMOVED"
     ],
@@ -132,6 +141,7 @@
     "path": "routes/web.php",
     "description": "auth:admin middleware is removed from a Route::group.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "ARRAY_ITEM_REMOVED"
     ],
@@ -146,6 +156,7 @@
     "path": "app/Http/Controllers/Auth/LoginController.php",
     "description": "$this->middleware(auth:admin) is removed from a controller constructor.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "CALL_REMOVED"
     ],
@@ -160,6 +171,7 @@
     "path": "app/Entities/Observers/FreezeObserver.php",
     "description": "Cash-flow debit flips to a credit (- to +).",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "AI_TRACK",
     "expectedFactKinds": [
       "BINARY_OPERATOR_CHANGED"
     ],
@@ -174,6 +186,7 @@
     "path": "app/Adapters/ChannelNotify/IwpNotifyHandler.php",
     "description": "Signature check stays but its throw guard is removed, so a failed check no longer stops the callback.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "GUARD_REMOVED"
     ],
@@ -188,6 +201,7 @@
     "path": "admin/src/entries/v1/customer/settings/moneySwitch/patch.php",
     "description": "authorize is removed from a base-controller $beforeActionList property.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "ARRAY_ITEM_REMOVED"
     ],
@@ -202,6 +216,7 @@
     "path": "app/Services/FreezeService.php",
     "description": "Method parameter is renamed consistently; parameter names are public API under PHP 8 named arguments.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "AI_TRACK",
     "expectedFactKinds": []
   },
   {
@@ -211,6 +226,7 @@
     "path": "app/Services/FeeService.php",
     "description": "Two locals are merged into one name, so the fee is no longer subtracted.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "AI_TRACK",
     "expectedFactKinds": []
   },
   {
@@ -220,6 +236,7 @@
     "path": "app/Services/ExampleService.php",
     "description": "Formatting/comment-only change.",
     "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "expectedTrack": "AUTO_PASS",
     "expectedFactKinds": []
   },
   {
@@ -229,6 +246,7 @@
     "path": "app/Services/ExampleService.php",
     "description": "Local variable rename with all references updated (scope-aware alpha-equivalence).",
     "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "expectedTrack": "AUTO_PASS",
     "expectedFactKinds": []
   },
   {
@@ -238,6 +256,7 @@
     "path": "app/Entities/Observers/FreezeObserver.php",
     "description": "Comment and line-wrapping change inside a \\DB::transaction closure.",
     "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "expectedTrack": "AUTO_PASS",
     "expectedFactKinds": []
   },
   {
@@ -247,6 +266,7 @@
     "path": "app/Services/SettlementService.php",
     "description": "array() to [], quote style, redundant parentheses and trailing comma only.",
     "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "expectedTrack": "AUTO_PASS",
     "expectedFactKinds": []
   }
 ]

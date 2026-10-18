@@ -7,6 +7,7 @@ import { parseArgs } from 'node:util';
 
 import { formatReview } from '../src/review/format.js';
 import { HUMAN_REVIEW, reviewRange } from '../src/review/review.js';
+import { TRACK } from '../src/routing.js';
 
 const USAGE = `用法：node bin/review.js --base <ref> [--head HEAD] [--repo .] [options]
 
@@ -19,10 +20,14 @@ Review head 相對於 base 的變更（與 GitHub PR 相同，從兩者的 merge
   --json                輸出 JSON 報表
   --out <file>          另外把 JSON 報表寫到檔案
   --fail-on-review      有任何檔案需要 Human Review 時 exit code 為 1
+  --fail-on-escalation  有任何檔案需要人工確認（路由為 ESCALATED）時 exit code 為 1
   --concurrency <n>     同時執行的 analyzer 數（預設為 CPU 數，最多 8）
   --timeout-ms <n>      單一檔案的 analyzer deadline（預設 30000）
 
-exit code：0 完成（或 --fail-on-review 時不需 review）；1 需要 review（僅 --fail-on-review）；2 錯誤。`;
+路由：AUTO_PASS（不需要 review）、AI_TRACK（交給 AI 審查）、ESCALATED（需要人工確認：
+單向門、無法解釋或沒有分析的變更）。
+
+exit code：0 完成；1 需要 review（--fail-on-review）或需要人工確認（--fail-on-escalation）；2 錯誤。`;
 
 /**
  * 解析正整數參數。
@@ -54,6 +59,7 @@ if (args.includes('--help') || args.includes('-h')) {
         json: { type: 'boolean' },
         out: { type: 'string' },
         'fail-on-review': { type: 'boolean' },
+        'fail-on-escalation': { type: 'boolean' },
         concurrency: { type: 'string' },
         'timeout-ms': { type: 'string' },
       },
@@ -74,6 +80,7 @@ if (args.includes('--help') || args.includes('-h')) {
     }
     process.stdout.write(values.json ? json : `${formatReview(report)}\n`);
     if (values['fail-on-review'] && report.decision.status === HUMAN_REVIEW) process.exitCode = 1;
+    if (values['fail-on-escalation'] && report.routing.track === TRACK.ESCALATED) process.exitCode = 1;
   } catch (error) {
     process.stderr.write(`error: ${error.message}\n`);
     process.exitCode = 2;

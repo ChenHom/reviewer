@@ -213,9 +213,29 @@ test('reviewRange 逐檔決策並彙整成 PR 層級結果', async () => {
   assert.equal(report.decision.files, report.files.length);
   assert.equal(report.decision.notSelected, 1);
 
+  // 路由：單向門與 FULL 需要人工確認；其餘已解釋的變更交給 AI。
+  const tracks = Object.fromEntries(report.files.map((file) => [file.path, file.track]));
+  assert.deepEqual(tracks, {
+    'notes.md': 'ESCALATED',
+    'src/Added.php': 'ESCALATED',
+    'src/Binary.php': 'ESCALATED',
+    'src/Deleted.php': 'ESCALATED',
+    'src/Exec.php': 'AI_TRACK',
+    'src/Format.php': 'AUTO_PASS',
+    'src/Guard.php': 'ESCALATED',
+    'src/Link.php': 'ESCALATED',
+    'src/Op.php': 'AI_TRACK',
+    'src/Renamed.php': 'AI_TRACK',
+    'src/Unknown.php': 'ESCALATED',
+  });
+  assert.deepEqual(guard.oneWayDoors, ['AUTHORIZATION_GUARD_REMOVED']);
+  assert.deepEqual(report.routing, { track: 'ESCALATED', autoPass: 1, aiTrack: 3, escalated: 7 });
+
   const text = formatReview(report);
   assert.match(text, /^Review：HUMAN_REVIEW_REQUIRED/);
-  assert.match(text, /TARGETED src\/Guard\.php\n\s+- AUTHORIZATION_GUARD_REMOVED\n\s+變更位置：base:L7\n\s+· base:L7 移除呼叫 \$this->authorize/);
+  assert.match(text, /^路由：ESCALATED（需要人工確認 7、交給 AI 審查 3、不需要 review 1）$/m);
+  assert.match(text, /需要人工確認（ESCALATED）：\n[^]*TARGETED src\/Guard\.php\n[^]*交給 AI 審查（AI_TRACK）：\n[^]*TARGETED src\/Op\.php/);
+  assert.match(text, /TARGETED src\/Guard\.php\n\s+- AUTHORIZATION_GUARD_REMOVED（單向門）\n\s+變更位置：base:L7\n\s+· base:L7 移除呼叫 \$this->authorize/);
   assert.match(text, /src\/Renamed\.php（原 src\/Moved\.php）/);
 
   const unhandled = formatReview({
@@ -307,7 +327,7 @@ test('bin/review.js：文字、JSON、--out、--fail-on-review 與錯誤處理',
 
   const text = await cli(['--repo', repo, '--base', base, '--head', head]);
   assert.equal(text.code, 0);
-  assert.match(text.stdout, /需要 review：/);
+  assert.match(text.stdout, /需要人工確認（ESCALATED）：/);
 
   const out = join(repo, '..', `review-out-${process.pid}`, 'report.json');
   const json = await cli(['--repo', repo, '--base', base, '--head', head, '--json', '--out', out, '--fail-on-review']);
@@ -317,6 +337,8 @@ test('bin/review.js：文字、JSON、--out、--fail-on-review 與錯誤處理',
   await rm(join(out, '..'), { recursive: true, force: true });
 
   assert.equal((await cli(['--repo', repo, '--base', base, '--head', formatOnly, '--fail-on-review'])).code, 0);
+  assert.equal((await cli(['--repo', repo, '--base', base, '--head', head, '--fail-on-escalation'])).code, 1);
+  assert.equal((await cli(['--repo', repo, '--base', base, '--head', formatOnly, '--fail-on-escalation'])).code, 0);
 
   const help = await cli(['--help']);
   assert.equal(help.code, 0);

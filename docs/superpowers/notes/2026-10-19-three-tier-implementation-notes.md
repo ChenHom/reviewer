@@ -25,3 +25,15 @@
 
 1. **語言層 interpreter 的 id 仍是 `php-` 前綴**（`php-operator-change` 等）。改 id 只會改變 `interpreterSetDigest`，但沒有實質好處，所以沿用原 id，在 `core.js` 註明它們是所有語言共用的。
 2. **語言層並非完全與語言無關**：運算子集合以 PHP 為準（`<>`、`and` / `or` / `xor`），`PARAMETER_RENAMED` 的理由（PHP 8 named argument）在 JS 不成立。設計建議「依 fact 的 `language` 屬性選擇運算子集合」，但 TS 第 1 階段不輸出運算子 fact，所以先不加 `language` 屬性；集合外的運算子仍回傳 `OPERATOR_CHANGED`（仍是 blocker），不會漏判。留到 TS 第 3 階段處理。
+
+## 步驟 3：路由
+
+**做了什麼**：`src/routing.js`（`routeFile`、`summarizeTracks`、`DEFAULT_ONE_WAY_DOORS`）。CLI 報表每個檔案多了 `track` 與 `oneWayDoors`，頂層多了 `routing`；文字報表分成「需要人工確認（ESCALATED）」與「交給 AI 審查（AI_TRACK）」兩段，單向門標示「（單向門）」。新增 `--fail-on-escalation`。mutation evaluation 每個 case 記錄 `track`、以 `expectedTrack` 固定，並輸出 `Critical Escalation Rate`。
+
+**問題與處理**：
+
+1. **路由放在 `decision` 之外，而不是改寫 `decision`。** `decision` 維持第 1 層的語意（`HUMAN_REVIEW_REQUIRED` / `NOT_SELECTED_FOR_HUMAN_REVIEW`），路由另存在 `routing` 與 `files[].track`。這樣既有的 `--fail-on-review`、authority / Summary 流程都不受影響。
+2. **預設設定下有 4 個 critical mutation 只會交給 AI**（Critical Escalation Rate 75%）：MUT-004（wallet `<` → `<=`）、MUT-012（扣款 `-` → `+`）、MUT-015（參數改名 + 合併變數）、MUT-016（合併變數）。前兩個是業務單向門，要靠專案設定的 `sensitiveOperands` 才能升級（步驟 4 以 case 層級的設定驗證）；後兩個是可回頭的變更，依設計交給 AI。這代表**採用路由後，Critical Recall 100% 只保證「需要 review」，不保證「人工會看到」**，人工會看到的比例要看 Critical Escalation Rate。
+3. **`aiTrackPaths` 的適用範圍**：只有原因全部是 `FILE_ADDED`、`FILE_DELETED`、`UNSUPPORTED_FILE_TYPE` 的 `FULL` 檔案才能被交給 AI；analyzer 失敗、`COV-*`、binary、symlink、submodule、type change 不受影響。`FILE_DELETED` 列入是因為刪除測試或文件很常見；刪除 migration 等危險路徑應以 `protectedPaths` 保護（`protectedPaths` 優先）。
+4. **PR 自我宣告的風險（`Merge-Risk`）沒有實作**：CLI 拿不到 PR 描述，屬於步驟 7（GitHub 整合）。
+5. **`FILE_MODE_CHANGED`（例如加上執行權限）是 `AI_TRACK`**：它不在預設單向門清單中。專案可用 `oneWayDoors` 加入。

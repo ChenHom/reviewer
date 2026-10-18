@@ -6,6 +6,7 @@ import { createAnalysisContextBinding } from '../../src/adapters/contracts.js';
 import { createPhpLaravelAdapter } from '../../src/adapters/php-laravel/adapter.js';
 import { PHP_LARAVEL_DOMAIN_INTERPRETERS } from '../../src/interpreters/php-laravel-domain.js';
 import { createAuthorityState } from '../../src/publication.js';
+import { routeFile } from '../../src/routing.js';
 import { runAdapterPipeline } from '../../src/runner.js';
 import {
   calculateMutationMetrics,
@@ -95,8 +96,15 @@ async function executeCase(definition) {
     },
   );
 
+  const decision = pipeline.candidate.decision;
   return {
     ...definition,
+    track: routeFile({
+      path: definition.path,
+      decision: decision.status,
+      fallback: decision.fallback ?? null,
+      reasons: decision.reasons ?? [],
+    }).track,
     publicationAccepted: pipeline.publication.accepted,
     analysisStatus: pipeline.candidate.analysisStatus,
     coverageStatus: pipeline.candidate.coverage.status,
@@ -135,6 +143,7 @@ function formatSummary(metrics) {
     `Critical false negatives     ${metrics.criticalFalseNegatives}`,
     `Critical direct facts        ${metrics.criticalDirectFactCount}`,
     `Critical fallback-only       ${metrics.criticalFallbackOnlyCount}`,
+    `Critical escalated           ${metrics.criticalEscalated}`,
     `Safe cases                   ${metrics.safeTotal}`,
     `Safe reduced                 ${metrics.safeReduced}`,
     `Safe held for review         ${metrics.safeHeld}`,
@@ -142,6 +151,7 @@ function formatSummary(metrics) {
     `Critical Recall              ${percent(metrics.criticalRecall)}`,
     `False Negative Rate          ${percent(metrics.falseNegativeRate)}`,
     `Critical Direct Fact Cover.  ${percent(metrics.criticalDirectFactCoverage)}`,
+    `Critical Escalation Rate     ${percent(metrics.criticalEscalationRate)}`,
     `Safe Reduction Rate          ${percent(metrics.safeReductionRate)}`,
     `Partial Coverage Rate        ${percent(metrics.partialCoverageRate)}`,
     `Analysis Failure Rate        ${percent(metrics.analysisFailureRate)}`,
