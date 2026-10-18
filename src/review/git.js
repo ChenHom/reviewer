@@ -171,3 +171,20 @@ export async function diffHunks(repo, baseSha, headSha, paths) {
 export async function readBlob(repo, sha) {
   return git(repo, ['cat-file', 'blob', sha]);
 }
+
+/**
+ * 讀取某個 commit 中某個路徑的檔案；路徑不存在時回傳 null。
+ *
+ * @param {string} repo - repository 路徑。
+ * @param {string} commit - commit SHA。
+ * @param {string} path - repository 相對路徑。
+ * @returns {Promise<{mode: string, type: string, content: Buffer|null}|null>} 檔案；不是 blob 時 content 為 null。
+ */
+export async function readTreeFile(repo, commit, path) {
+  const output = (await git(repo, ['ls-tree', '-z', commit, '--', path])).toString('utf8');
+  const entry = output.split('\0').find(Boolean);
+  if (!entry) return null;
+  const match = /^(\d{6}) (\w+) ([0-9a-f]+)\t/.exec(entry);
+  if (!match) throw new Error(`GIT_TREE_UNPARSABLE:${entry}`);
+  return { mode: match[1], type: match[2], content: match[2] === 'blob' ? await readBlob(repo, match[3]) : null };
+}

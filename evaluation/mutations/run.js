@@ -4,8 +4,9 @@ import { URL } from 'node:url';
 
 import { createAnalysisContextBinding } from '../../src/adapters/contracts.js';
 import { createPhpLaravelAdapter } from '../../src/adapters/php-laravel/adapter.js';
-import { PHP_LARAVEL_DOMAIN_INTERPRETERS } from '../../src/interpreters/php-laravel-domain.js';
+import { createProjectPolicy, parseProjectConfig } from '../../src/config/project-config.js';
 import { createAuthorityState } from '../../src/publication.js';
+import { languageFor } from '../../src/review/review.js';
 import { routeFile } from '../../src/routing.js';
 import { runAdapterPipeline } from '../../src/runner.js';
 import {
@@ -60,12 +61,28 @@ function identityFor(id) {
 }
 
 /**
+ * case 的專案 policy：case 帶 `config`（`.reviewer.json` 內容）時套用該設定，否則為預設值。
+ *
+ * @param {object} definition - case definition。
+ * @returns {object} project policy。
+ * @throws {Error} 設定無效時。
+ */
+function policyFor(definition) {
+  if (definition.config === undefined) return createProjectPolicy(null);
+  const parsed = parseProjectConfig(JSON.stringify(definition.config));
+  if (!parsed.valid) throw new Error(`CASE_CONFIG_INVALID:${definition.id}:${parsed.errors.join(',')}`);
+  return createProjectPolicy(parsed);
+}
+
+/**
  * 執行單一 mutation case。
  *
  * @param {object} definition - case definition。
  * @returns {Promise<object>} normalized evaluation result。
  */
 async function executeCase(definition) {
+  const policy = policyFor(definition);
+  const interpreters = policy.interpretersFor(languageFor(definition.path));
   const [beforeSource, afterSource] = await Promise.all([
     readFixture(definition.fixture, 'before'),
     readFixture(definition.fixture, 'after'),
@@ -81,10 +98,7 @@ async function executeCase(definition) {
   const adapterResult = await adapter.analyze(request);
   const authorityState = createAuthorityState(
     identity,
-    createAnalysisContextBinding(
-      adapterResult,
-      PHP_LARAVEL_DOMAIN_INTERPRETERS,
-    ),
+    createAnalysisContextBinding(adapterResult, interpreters),
   );
   const pipeline = await runAdapterPipeline(
     adapter,
@@ -92,7 +106,7 @@ async function executeCase(definition) {
     authorityState,
     {
       timeoutMs: 2_000,
-      factInterpreters: PHP_LARAVEL_DOMAIN_INTERPRETERS,
+      factInterpreters: interpreters,
     },
   );
 
@@ -104,7 +118,7 @@ async function executeCase(definition) {
       decision: decision.status,
       fallback: decision.fallback ?? null,
       reasons: decision.reasons ?? [],
-    }).track,
+    }, { oneWayDoors: policy.oneWayDoors, aiTrackPath: policy.isAiTrackPath }).track,
     publicationAccepted: pipeline.publication.accepted,
     analysisStatus: pipeline.candidate.analysisStatus,
     coverageStatus: pipeline.candidate.coverage.status,

@@ -230,6 +230,116 @@
     "expectedFactKinds": []
   },
   {
+    "id": "MUT-017",
+    "classification": "critical",
+    "fixture": "wallet-condition-change",
+    "path": "app/Services/WalletService.php",
+    "description": "Wallet balance boundary changes from < to <=; the project config marks balance/amount operands as sensitive.",
+    "config": {
+      "version": 1,
+      "rules": {
+        "sensitiveOperands": [
+          {
+            "pattern": "/balance|amount/i",
+            "operators": "comparison"
+          }
+        ]
+      }
+    },
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "BINARY_OPERATOR_CHANGED"
+    ],
+    "expectedReasons": [
+      "COMPARISON_OPERATOR_CHANGED",
+      "SENSITIVE_OPERAND_CHANGED"
+    ]
+  },
+  {
+    "id": "MUT-018",
+    "classification": "critical",
+    "fixture": "balance-sign-flip",
+    "path": "app/Entities/Observers/FreezeObserver.php",
+    "description": "Freeze amount is added instead of subtracted; the project config marks amount operands as sensitive.",
+    "config": {
+      "version": 1,
+      "rules": {
+        "sensitiveOperands": [
+          {
+            "pattern": "/balance|amount/i",
+            "operators": "arithmetic"
+          }
+        ]
+      }
+    },
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "BINARY_OPERATOR_CHANGED"
+    ],
+    "expectedReasons": [
+      "ARITHMETIC_OPERATOR_CHANGED",
+      "SENSITIVE_OPERAND_CHANGED"
+    ]
+  },
+  {
+    "id": "MUT-019",
+    "classification": "critical",
+    "fixture": "stock-reservation-removed",
+    "path": "app/Services/ShipmentService.php",
+    "description": "Stock reservation is removed before shipping (logistics project protects reserveStock).",
+    "config": {
+      "version": 1,
+      "presets": [
+        "php-laravel"
+      ],
+      "rules": {
+        "protectedCalls": [
+          {
+            "name": "reserveStock"
+          }
+        ]
+      }
+    },
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_REMOVED"
+    ],
+    "expectedReasons": [
+      "PROTECTED_CALL_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-020",
+    "classification": "critical",
+    "fixture": "notification-added",
+    "path": "app/Services/ShipmentService.php",
+    "description": "A customer e-mail is sent on every shipment (the project config marks Mail as an irreversible side effect).",
+    "config": {
+      "version": 1,
+      "presets": [
+        "php-laravel"
+      ],
+      "rules": {
+        "sideEffectCalls": [
+          {
+            "receiver": "Mail"
+          }
+        ]
+      }
+    },
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_ADDED"
+    ],
+    "expectedReasons": [
+      "SIDE_EFFECT_CALL_ADDED"
+    ]
+  },
+  {
     "id": "SAFE-001",
     "classification": "safe",
     "fixture": "format-only",

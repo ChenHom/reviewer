@@ -37,3 +37,19 @@
 3. **`aiTrackPaths` 的適用範圍**：只有原因全部是 `FILE_ADDED`、`FILE_DELETED`、`UNSUPPORTED_FILE_TYPE` 的 `FULL` 檔案才能被交給 AI；analyzer 失敗、`COV-*`、binary、symlink、submodule、type change 不受影響。`FILE_DELETED` 列入是因為刪除測試或文件很常見；刪除 migration 等危險路徑應以 `protectedPaths` 保護（`protectedPaths` 優先）。
 4. **PR 自我宣告的風險（`Merge-Risk`）沒有實作**：CLI 拿不到 PR 描述，屬於步驟 7（GitHub 整合）。
 5. **`FILE_MODE_CHANGED`（例如加上執行權限）是 `AI_TRACK`**：它不在預設單向門清單中。專案可用 `oneWayDoors` 加入。
+
+## 步驟 4：專案設定 `.reviewer.json`
+
+**做了什麼**：`src/config/project-config.js`（`parseProjectConfig`、`createProjectPolicy`）、`src/config/matchers.js`（`/regex/` 與 glob）、`src/interpreters/config-rules.js`（規則引擎）、`src/review/git.js` 的 `readTreeFile`。`reviewRange` 從 merge base 讀設定，報表多了 `config`。新增原因代碼 `POLICY_CONFIG_INVALID`、`POLICY_FILE_CHANGED`、`PROTECTED_PATH`、`SENSITIVE_OPERAND_CHANGED`、`PROTECTED_CALL_REMOVED`、`PROTECTED_ARGUMENT_CHANGED`、`SIDE_EFFECT_CALL_ADDED`。mutation corpus 新增 MUT-017–020（case 可帶 `config`），全部 `ESCALATED`；Critical Escalation Rate 75% → 80%。說明文件：`docs/project-config.md`。
+
+**問題與處理**：
+
+1. **格式採 JSON**（使用者決定），不加 YAML 依賴。
+2. **正規表示式的寫法**：設計文件的範例用 `(?i)...`，但 JavaScript 不支援這種內嵌旗標。改為 `/regex/flags` 字串；其他字串為完全相等。`sensitiveOperands.pattern` 只接受 `/regex/`。
+3. **`receiver` 的完整路徑用 `.` 連接**：設計文件寫「需要精確比對時寫完整路徑」，但 PHP namespace 用 `\`、JSON 字串中要寫成 `\\`，容易出錯。改為含 `.` 時比對以 `.` 連接的完整路徑（`Illuminate.Support.Facades.Gate`），否則比對最後一段。
+4. **寫了 `presets` 就取代預設值**：這是唯一能「減少」規則的設定（例如物流專案不套用 `payments`）。依設計，preset 是可選的業務層；設定檔本身從 merge base 讀、修改是單向門，所以移除 preset 需要人工確認。
+5. **設定無效時仍以預設值分析**：讓報表照樣列出 fact，但每個檔案強制 `FULL` + `POLICY_CONFIG_INVALID`。
+6. **`PROTECTED_PATH` 會讓 `NOT_SELECTED` 的檔案變成 `HUMAN_REVIEW_REQUIRED` / `TARGETED`**：設計說受保護路徑「任何變更都是單向門」；為了讓 `decision` 與路由一致，直接把決策改嚴格，而不是只改路由。
+7. **鏈式呼叫的副作用規則要比對鏈的開頭**：`Mail::to($u)->send(...)` 中 `->send` 沒有 receiver（fact schema v2 的鏈式 call `receiver` 為 `null`）。文件說明以 `{ "receiver": "Mail" }` 比對 `Mail::to`。
+8. **正規表示式的效能（ReDoS）**：設定來自 merge base（已審查過），沒有加逾時保護。
+9. **`protectedArguments` 新增了 `PROTECTED_ARGUMENT_CHANGED`**：設計文件的單向門清單沒有它；已加入預設單向門，`blocker` 自訂的代碼也自動成為單向門。

@@ -7,23 +7,38 @@
  */
 import { structuredContainer } from '../facts/structured.js';
 
-const comparisonOperators = new Set(['<', '<=', '>', '>=', '==', '!=', '===', '!==', '<>', '<=>']);
-const arithmeticOperators = new Set(['+', '-', '*', '/', '%', '**']);
-const logicalOperators = new Set(['&&', '||', 'and', 'or', 'xor']);
+const operatorCategories = Object.freeze({
+  comparison: new Set(['<', '<=', '>', '>=', '==', '!=', '===', '!==', '<>', '<=>']),
+  arithmetic: new Set(['+', '-', '*', '/', '%', '**']),
+  logical: new Set(['&&', '||', 'and', 'or', 'xor']),
+});
 
 /**
- * 依 operator 類別回傳 blocker。
+ * 運算子類別：`comparison`、`arithmetic`、`logical`；不在集合中時為 null。
+ *
+ * @param {string} operator - 運算子。
+ * @returns {string|null} 類別。
+ */
+export function operatorCategory(operator) {
+  return Object.keys(operatorCategories).find((category) => operatorCategories[category].has(operator)) ?? null;
+}
+
+const categoryBlockers = Object.freeze({
+  comparison: 'COMPARISON_OPERATOR_CHANGED',
+  arithmetic: 'ARITHMETIC_OPERATOR_CHANGED',
+  logical: 'LOGICAL_OPERATOR_CHANGED',
+});
+
+/**
+ * 依 operator 類別回傳 blocker：前後屬於同一類別時用該類別的代碼，否則 `OPERATOR_CHANGED`。
  *
  * @param {string} before - 變更前 operator。
  * @param {string} after - 變更後 operator。
  * @returns {string} blocker code。
  */
 function operatorBlocker(before, after) {
-  const both = (set) => set.has(before) && set.has(after);
-  if (both(comparisonOperators)) return 'COMPARISON_OPERATOR_CHANGED';
-  if (both(arithmeticOperators)) return 'ARITHMETIC_OPERATOR_CHANGED';
-  if (both(logicalOperators)) return 'LOGICAL_OPERATOR_CHANGED';
-  return 'OPERATOR_CHANGED';
+  const category = operatorCategory(before);
+  return category !== null && category === operatorCategory(after) ? categoryBlockers[category] : 'OPERATOR_CHANGED';
 }
 
 export const OPERATOR_CHANGE_INTERPRETER = Object.freeze({

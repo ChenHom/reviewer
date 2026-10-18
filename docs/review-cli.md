@@ -162,7 +162,7 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
 | `AI_TRACK` | `TARGETED`，而且沒有任何原因屬於單向門 |
 | `ESCALATED` | 任一原因屬於單向門；或 `FULL`（有無法解釋的變更、analyzer 失敗或檔案沒有分析）；或 `decision` 不是這兩種已知的值 |
 
-單向門（做了就難以回頭的變更）的預設清單：`TRANSACTION_BOUNDARY_REMOVED`、`TRANSACTION_ROLLBACK_REMOVED`、`ROW_LOCK_REMOVED`、`AUTHORIZATION_GUARD_REMOVED`、`AUTHORIZATION_ABILITY_CHANGED`、`MIDDLEWARE_GUARD_REMOVED`、`SIGNATURE_VERIFICATION_REMOVED`、`GUARD_CLAUSE_REMOVED`、`PROTECTED_CALL_REMOVED`、`PAYMENT_IDEMPOTENCY_IDENTITY_CHANGED`、`SENSITIVE_OPERAND_CHANGED`、`MASS_ASSIGNMENT_CHANGED`、`SERIALIZED_ATTRIBUTES_CHANGED`、`SIDE_EFFECT_CALL_ADDED`、`DATA_DELETION_ADDED`、`PROTECTED_PATH`、`POLICY_FILE_CHANGED`。其中幾個代碼由專案設定的規則產生（見 [專案設定](project-config.md)）。
+單向門（做了就難以回頭的變更）的預設清單：`TRANSACTION_BOUNDARY_REMOVED`、`TRANSACTION_ROLLBACK_REMOVED`、`ROW_LOCK_REMOVED`、`AUTHORIZATION_GUARD_REMOVED`、`AUTHORIZATION_ABILITY_CHANGED`、`MIDDLEWARE_GUARD_REMOVED`、`SIGNATURE_VERIFICATION_REMOVED`、`GUARD_CLAUSE_REMOVED`、`PROTECTED_CALL_REMOVED`、`PAYMENT_IDEMPOTENCY_IDENTITY_CHANGED`、`PROTECTED_ARGUMENT_CHANGED`、`SENSITIVE_OPERAND_CHANGED`、`MASS_ASSIGNMENT_CHANGED`、`SERIALIZED_ATTRIBUTES_CHANGED`、`SIDE_EFFECT_CALL_ADDED`、`DATA_DELETION_ADDED`、`PROTECTED_PATH`、`POLICY_FILE_CHANGED`。其中幾個代碼由專案設定的規則產生（見 [專案設定](project-config.md)）。
 
 PR 層級的 `routing.track` 取所有檔案中最嚴格的一個（`ESCALATED` > `AI_TRACK` > `AUTO_PASS`）；沒有任何檔案變更時為 `AUTO_PASS`。
 
@@ -179,6 +179,15 @@ PR 層級的 `routing.track` 取所有檔案中最嚴格的一個（`ESCALATED` 
 | `SYMLINK_CHANGED` | symlink 新增、刪除或改指向 |
 | `SUBMODULE_CHANGED` | submodule 新增、刪除或改指向的 commit |
 | `UNSUPPORTED_CHANGE_TYPE:<status>` | git 狀態不是新增、刪除、修改或 rename。實際會出現的是 `type-changed`；`copied` 不會出現，因為 `git diff` 只開 rename 偵測（`-M`），不開 copy 偵測 |
+
+### 專案設定（[`.reviewer.json`](project-config.md)）
+
+| 代碼 | 意義 |
+|---|---|
+| `POLICY_CONFIG_INVALID` | merge base 的 `.reviewer.json` 無效。每個檔案都是 `FULL`，錯誤細節見 JSON 報表的 `config.errors` |
+| `POLICY_FILE_CHANGED` | PR 修改了 `.reviewer.json` 或 `codingstandards.md`（單向門） |
+| `PROTECTED_PATH` | 檔案符合 `rules.protectedPaths`（單向門）。原本不需要 review 的檔案變成 `TARGETED` |
+| `SENSITIVE_OPERAND_CHANGED` / `PROTECTED_CALL_REMOVED` / `PROTECTED_ARGUMENT_CHANGED` / `SIDE_EFFECT_CALL_ADDED` | 專案規則命中（單向門），見 [專案設定](project-config.md) |
 
 ### `ANALYZER_ERROR:<訊息>`（`FULL`）
 
@@ -364,6 +373,10 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
 | `decision.notSelected` | number | 不需要 review 的檔案數 |
 | `decision.targeted` | number | `TARGETED` 的檔案數 |
 | `decision.full` | number | `FULL` 的檔案數 |
+| `config.path` / `config.commit` | string | 專案設定的路徑（`.reviewer.json`）與讀取的 commit（merge base） |
+| `config.status` | string | `absent`（沒有設定，使用預設值）、`valid` 或 `invalid`（每個檔案都是 `FULL` + `POLICY_CONFIG_INVALID`） |
+| `config.errors` | string[] | 設定無效的原因，例如 `POLICY_CONFIG_KEY_UNKNOWN:rules.ignoreFacts`；其他狀態為 `[]` |
+| `config.digest` | string \| null | 有效設定內容的 sha256；其他狀態為 `null` |
 | `routing.track` | string | PR 層級路由：`AUTO_PASS`、`AI_TRACK` 或 `ESCALATED`（見「路由」） |
 | `routing.autoPass` / `routing.aiTrack` / `routing.escalated` | number | 各路由的檔案數 |
 | `files` | object[] | 每個變更檔案的結果，順序與 `git diff --raw` 相同 |

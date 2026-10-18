@@ -2,13 +2,13 @@ import { Buffer } from 'node:buffer';
 import { basename } from 'node:path';
 
 import { createAnalysisContextBinding } from '../adapters/contracts.js';
+import { CONFIG_FILE, POLICY_FILES, createProjectPolicy, parseProjectConfig } from '../config/project-config.js';
 import { createPhpLaravelAdapter } from '../adapters/php-laravel/adapter.js';
 import { displayArgument, displayText } from '../facts/structured.js';
-import { resolveInterpreters } from '../interpreters/presets/index.js';
 import { createAuthorityState } from '../publication.js';
 import { routeFile, summarizeTracks } from '../routing.js';
 import { runAdapterPipeline } from '../runner.js';
-import { diffEntries, diffHunks, mergeBase, readBlob, repositoryRoot, resolveCommit } from './git.js';
+import { diffEntries, diffHunks, mergeBase, readBlob, readTreeFile, repositoryRoot, resolveCommit } from './git.js';
 
 export const NOT_SELECTED = 'NOT_SELECTED_FOR_HUMAN_REVIEW';
 export const HUMAN_REVIEW = 'HUMAN_REVIEW_REQUIRED';
@@ -198,8 +198,57 @@ async function analyzeFile({ adapter, interpreters, identity, timeoutMs }, path,
  * @returns {Promise<object>} file result。
  */
 async function reviewEntry(context, entry) {
-  const result = await classifyEntry(context, entry);
+  const result = applyProjectPolicy(await classifyEntry(context, entry), context.project);
   return result.decision === NOT_SELECTED ? result : { ...result, changedLines: await changedLinesFor(context, entry) };
+}
+
+/**
+ * 套用專案設定對檔案的要求（只會讓結果變嚴格）：
+ *
+ * - 修改審查規則本身（`.reviewer.json`、`codingstandards.md`）→ `POLICY_FILE_CHANGED`。
+ * - 符合 `protectedPaths` → `PROTECTED_PATH`。
+ * - 專案設定無效 → `POLICY_CONFIG_INVALID`，一律 `FULL`。
+ *
+ * @param {object} file - file result。
+ * @param {{policy: object, invalid: boolean}} project - 專案 policy 與設定狀態。
+ * @returns {object} file result。
+ */
+export function applyProjectPolicy(file, { policy, invalid }) {
+  const paths = [file.path, file.oldPath].filter(Boolean);
+  const extra = [];
+  if (paths.some((path) => POLICY_FILES.includes(path))) extra.push('POLICY_FILE_CHANGED');
+  if (paths.some((path) => policy.isProtectedPath(path))) extra.push('PROTECTED_PATH');
+  if (invalid) extra.push('POLICY_CONFIG_INVALID');
+  if (extra.length === 0) return file;
+
+  const selected = file.decision === NOT_SELECTED;
+  return {
+    ...file,
+    decision: HUMAN_REVIEW,
+    fallback: invalid ? 'FULL' : (selected ? 'TARGETED' : file.fallback),
+    reasons: selected ? extra : [...file.reasons, ...extra],
+  };
+}
+
+/**
+ * 從 merge base 讀取專案設定。PR 修改設定不影響這次的 review（修改本身是 `POLICY_FILE_CHANGED`）。
+ *
+ * @param {string} repo - repository 根目錄。
+ * @param {string} commit - merge base。
+ * @returns {Promise<object>} `{ path, commit, status, errors, digest, parsed }`；status 為 `absent` / `valid` / `invalid`。
+ */
+export async function loadProjectConfig(repo, commit) {
+  const base = { path: CONFIG_FILE, commit };
+  const file = await readTreeFile(repo, commit, CONFIG_FILE);
+  if (!file) return { ...base, status: 'absent', errors: [], digest: null, parsed: null };
+  if (!['100644', '100755'].includes(file.mode)) {
+    return { ...base, status: 'invalid', errors: ['POLICY_CONFIG_NOT_REGULAR_FILE'], digest: null, parsed: null };
+  }
+
+  const parsed = parseProjectConfig(file.content.toString('utf8'));
+  return parsed.valid
+    ? { ...base, status: 'valid', errors: [], digest: parsed.digest, parsed }
+    : { ...base, status: 'invalid', errors: parsed.errors, digest: null, parsed: null };
 }
 
 /**
@@ -332,13 +381,16 @@ export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs
   ]);
   // 與 GitHub PR 相同，只看 head 相對於 merge base 的變更：base 在分支建立後的新 commit 不算在內。
   const forkPoint = await mergeBase(root, baseSha, headSha);
-  const entries = await diffEntries(root, forkPoint, headSha);
+  const [entries, config] = await Promise.all([diffEntries(root, forkPoint, headSha), loadProjectConfig(root, forkPoint)]);
+  // 設定無效時以預設值分析（仍列出 fact），但每個檔案都是 FULL + POLICY_CONFIG_INVALID。
+  const policy = createProjectPolicy(config.parsed);
   const context = {
     repo: root,
+    project: { policy, invalid: config.status === 'invalid' },
     languages: LANGUAGES.map((language) => ({
       ...language,
       adapter: language.createAdapter(adapterOptions[language.id]),
-      interpreters: resolveInterpreters(language.presets),
+      interpreters: policy.interpretersFor(language),
     })),
     timeoutMs,
     identity: {
@@ -351,13 +403,15 @@ export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs
     },
   };
   const reviewed = await mapWithConcurrency(entries, concurrency, (entry) => reviewEntry(context, entry));
-  const files = reviewed.map((file) => ({ ...file, ...routeFile(file) }));
+  const routingOptions = { oneWayDoors: policy.oneWayDoors, aiTrackPath: policy.isAiTrackPath };
+  const files = reviewed.map((file) => ({ ...file, ...routeFile(file, routingOptions) }));
 
   return {
     repository: basename(root),
     base: { ref: base, sha: baseSha },
     head: { ref: head, sha: headSha },
     mergeBase: forkPoint,
+    config: { path: config.path, commit: config.commit, status: config.status, errors: config.errors, digest: config.digest },
     decision: summarizeFiles(files),
     routing: summarizeTracks(files),
     files,
