@@ -74,3 +74,17 @@
 8. **real-repo evaluation 沒有 TS 版本**：產生器（`evaluation/real-repo/generate.php`）是 PHP 專用，TS 需要另寫，留待之後。
 9. **執行環境**：本機（Node 22）與 CI（Node 24）都會跑 TS analyzer；TS analyzer 用執行 CLI 的同一個 Node（`process.execPath`）。
 10. **測試時觀察到一次不穩定**：`tests/evaluation/real-repo-cli.test.js` 的「收到 SIGTERM 時移除 snapshot」在整個 suite 平行執行時失敗一次，單獨執行與重跑都通過。這個測試依賴時序，與本次變更無關；新增的 TS 測試讓 suite 的負載變高，可能更容易觸發。
+
+## 步驟 6：Finding 指紋與局部 AST hash
+
+**做了什麼**：PHP analyzer 新增 `ScopeHashes`：每個 fact 加上 `properties.scope = { kind, hash }`，為 head 版本中所屬 method / function 的 canonical AST hash（使用 head 的 scope-aware canonical 變數名稱）。`src/findings.js` 計算 finding（`id`、`subject`、`kind`、`blocker`、`anchor`、`ordinal`、`scopeHash`、`location`）。CLI 報表：`files[].contentHash`、`files[].findings`，以及 `facts[].subject` / `blockers` / `anchor` / `scopeHash`。
+
+**問題與處理**：
+
+1. **目前的 pipeline 不記錄「哪個 fact 產生哪個原因」**：`decision.reasons` 是彙總後的結果。處理：CLI 對每個 fact 單獨再跑一次 interpreter（`interpretSemanticFacts([fact], interpreters)`），結果放在 `facts[].blockers`。interpreter 是 deterministic 的，結果與彙總一致。
+2. **`FULL` 的檔案也需要 finding**：設計寫「`ESCALATED` 但沒有 fact 的檔案」產生檔案層級 finding；但 `FULL` 檔案即使有 fact，也還有無法解釋的部分。處理：每個 `FULL` 檔案都有一個 `FULL_REVIEW` finding，綁定整個檔案的內容，檔案任何變動都會讓豁免失效。另外 `PROTECTED_PATH`、`POLICY_FILE_CHANGED` 這類不是來自 fact 的單向門也各有一個檔案層級 finding。
+3. **整檔的 hash 使用 git blob id**（`contentHash`）：不需要另外讀檔計算；任何 byte 改變都會改變它。fact 的 scope 不存在時（method 在 head 中被刪除、不在 method 內）PHP analyzer 改用整個檔案的 canonical AST hash。
+4. **anchor 中的運算式文字含變數名稱**：例如 `BINARY_OPERATOR_CHANGED` 的 anchor 含 `before` 運算式。之後若該處的區域變數改名，anchor 改變 → 舊 finding 變成「已修正」、新 finding 變成「待確認」，要求重新確認（保守）。scope hash 本身不受區域變數改名影響。
+5. **class 層級的 fact 以整個檔案為 scope**：property 預設值（例如 `$fillable`）等 fact 的 `subject` 是檔案路徑（步驟 1 的第 5 點），因此 scope 是整個檔案的 hash，同一檔案的任何邏輯變更都會讓這類豁免失效（保守）。
+6. **TS analyzer 沒有輸出 scope hash**：設計寫「PHP 與 TS analyzer 都輸出 scope hash」，但 TS 第 1 階段沒有 fact，per-fact 的 scope hash 沒有地方可放。處理：TS 檔案只有檔案層級的 `FULL_REVIEW` finding，綁定 `contentHash`；scope hash 與 TS 第 2 階段的 fact 一起實作。
+7. **狀態（OPEN / FIXED / ACKNOWLEDGED / REOPENED）沒有在這一步實作**：依設計 §8，狀態機與 GitHub 留言中的狀態屬於步驟 7。這一步提供它需要的輸入（穩定的 finding id 與 scope hash），並以測試驗證：上方插入程式碼與區域變數改名後 id 與 scope hash 不變、同一 method 的邏輯改變時 id 不變但 scope hash 改變、加回被移除的呼叫後 finding 消失、同一 method 中兩個相同的移除產生兩個 finding。

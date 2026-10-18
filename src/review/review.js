@@ -5,7 +5,9 @@ import { createAnalysisContextBinding } from '../adapters/contracts.js';
 import { CONFIG_FILE, POLICY_FILES, createProjectPolicy, parseProjectConfig } from '../config/project-config.js';
 import { createPhpLaravelAdapter } from '../adapters/php-laravel/adapter.js';
 import { createTypeScriptAdapter } from '../adapters/typescript/adapter.js';
+import { interpretSemanticFacts } from '../facts/interpreter.js';
 import { displayArgument, displayText } from '../facts/structured.js';
+import { factAnchor, findingsFor } from '../findings.js';
 import { createAuthorityState } from '../publication.js';
 import { routeFile, summarizeTracks } from '../routing.js';
 import { runAdapterPipeline } from '../runner.js';
@@ -272,6 +274,8 @@ async function classifyEntry(context, entry) {
     path,
     ...(entry.status === 'R' ? { oldPath: entry.oldPath } : {}),
     status: STATUS_NAMES[entry.status] ?? entry.status,
+    // head 版本內容的識別（git blob id）；檔案層級的人工豁免綁定在這個值上。
+    contentHash: entry.status === 'D' ? `deleted:${entry.oldSha}` : `git:${entry.newSha}`,
   };
 
   if (!['A', 'D', 'M', 'R'].includes(entry.status)) return fullReview(base, `UNSUPPORTED_CHANGE_TYPE:${base.status}`);
@@ -319,10 +323,15 @@ async function classifyEntry(context, entry) {
     const endByte = Math.max(startByte, (fact.provenance?.endByte ?? startByte) - 1);
     return {
       kind: fact.kind,
+      subject: fact.subject,
       side: side === 'before' ? 'base' : 'head',
       startLine: locate[side](startByte),
       endLine: locate[side](endByte),
       description: describeFact(fact),
+      // 這個 fact 自己產生的原因代碼（`reasons` 是整個檔案的彙總）。
+      blockers: interpretSemanticFacts([fact], language.interpreters).blockers,
+      anchor: factAnchor(fact),
+      scopeHash: typeof fact.properties?.scope?.hash === 'string' ? fact.properties.scope.hash : null,
     };
   });
 
@@ -412,7 +421,8 @@ export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs
   };
   const reviewed = await mapWithConcurrency(entries, concurrency, (entry) => reviewEntry(context, entry));
   const routingOptions = { oneWayDoors: policy.oneWayDoors, aiTrackPath: policy.isAiTrackPath };
-  const files = reviewed.map((file) => ({ ...file, ...routeFile(file, routingOptions) }));
+  const routed = reviewed.map((file) => ({ ...file, ...routeFile(file, routingOptions) }));
+  const files = routed.map((file) => ({ ...file, findings: findingsFor(file, { oneWayDoors: policy.oneWayDoors }) }));
 
   return {
     repository: basename(root),

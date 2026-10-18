@@ -245,7 +245,9 @@ flowchart TD
 | Adapter Contract | `src/adapters/contracts.js` | AdapterSet、runtime、facts/interpreter context digests |
 | PHP/Laravel Adapter | `src/adapters/php-laravel/adapter.js` | PHP CLI execution、AdapterResult、analyzer 失敗轉成 fail-closed obligation |
 | PHP Analyzer | `analyzers/php/bin/analyze.php` | 入口：檢查 Composer 依賴、選擇語法（最新 / PHP 7.4）、三輪比對、PHP 7 / 8 交叉檢查、輸出 facts 與 completeness |
-| PHP Analyzer classes | `analyzers/php/src/*` | `CallExtractor`（AST method / static call 抽取）、`CallFacts`（call facts）、`StructuralDiff`（AST 結構比對、completeness 判定與結構性 facts）、`Canonicalizer`（忽略排版、註解等的 canonical AST hash）、`VariableScopes`（scope-aware 區域變數 canonical 名稱） |
+| PHP Analyzer classes | `analyzers/php/src/*` | `CallExtractor`（AST method / static call 抽取）、`CallFacts`（call facts）、`StructuralDiff`（AST 結構比對、completeness 判定與結構性 facts）、`Canonicalizer`（忽略排版、註解等的 canonical AST hash）、`VariableScopes`（scope-aware 區域變數 canonical 名稱）、`ScopeHashes`（head 版本中每個 method / function 的 canonical hash，附加在 fact 的 `properties.scope`） |
+| TS Analyzer | `analyzers/ts/*` | TypeScript compiler API：`canonicalizer`（canonical AST 序列化）、`directives`（有語意的註解）、`scopes`（scope-aware 區域變數改名）、`analyze`（第 1 階段等價判定） |
+| Routing / Findings / Project config | `src/routing.js`、`src/findings.js`、`src/config/` | 三層審查路由、二次 review 的 finding 指紋、`.reviewer.json` 專案設定 |
 | Fact Contract | `src/facts/contracts.js` | Fact validation、JSON-safe canonicalization |
 | Fact Interpreter | `src/facts/interpreter.js` | versioned interpreter boundary、fail-closed handling |
 | PHP/Laravel Rules | `src/interpreters/core.js`、`src/interpreters/presets/` | 15 個 deterministic domain interpreters（語言層 + `php-laravel` / `payments` preset） |

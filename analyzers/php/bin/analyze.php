@@ -10,6 +10,7 @@ use PhpParser\PhpVersion;
 use Reviewer\PhpAnalyzer\CallExtractor;
 use Reviewer\PhpAnalyzer\CallFacts;
 use Reviewer\PhpAnalyzer\Canonicalizer;
+use Reviewer\PhpAnalyzer\ScopeHashes;
 use Reviewer\PhpAnalyzer\StructuralDiff;
 use Reviewer\PhpAnalyzer\VariableScopes;
 
@@ -256,12 +257,12 @@ respond([
     'complete' => $complete,
     'reasonCode' => $reasonCode,
     'diagnostics' => $complete ? [] : [$reasonCode],
-    'facts' => sortedFacts(array_map(
+    'facts' => sortedFacts(ScopeHashes::annotate(array_map(
         static function (array $fact): array {
             unset($fact['calleeKey']);
             return $fact;
         },
         $analysis['facts'],
-    )),
+    ), $afterAst)),
     'phpVersion' => PHP_VERSION,
 ]);

@@ -49,10 +49,22 @@ async function analyze(caseName) {
  * @returns {object} 以文字表示的 properties。
  */
 function textual(properties) {
-  return Object.fromEntries(Object.entries(properties).map(([key, value]) => [
+  return Object.fromEntries(Object.entries(withoutScope(properties)).map(([key, value]) => [
     key,
     (key === 'callee' || key === 'container') && value && typeof value === 'object' ? value.text : value,
   ]));
+}
+
+/**
+ * 去掉 analyzer 附加的 `scope`（所屬 method 的 hash，另有專門的測試）。
+ *
+ * @param {object} properties - fact properties。
+ * @returns {object} 不含 scope 的 properties。
+ */
+function withoutScope(properties) {
+  const { scope, ...rest } = properties;
+  assert.ok(scope && ['function', 'file'].includes(scope.kind) && /^php:[0-9a-f]{32}$/.test(scope.hash), JSON.stringify(scope));
+  return rest;
 }
 
 test('format-only PHP change 會 COMPLETE 且不產生 semantic fact', async () => {
@@ -72,7 +84,7 @@ test('named argument expression 變更會輸出 CALL_ARGUMENT_CHANGED', async ()
   assert.equal(result.facts.length, 1);
   assert.equal(result.facts[0].kind, 'CALL_ARGUMENT_CHANGED');
   assert.equal(result.facts[0].subject, 'PaymentService::retry');
-  assert.deepEqual(result.facts[0].properties, {
+  assert.deepEqual(withoutScope(result.facts[0].properties), {
     callee: { text: '$gateway->charge', name: 'charge', receiver: ['gateway'], kind: 'method', optional: false },
     argument: 'idempotencyKey',
     before: '$requestId',
@@ -491,7 +503,7 @@ test('移除 early-exit guard 輸出 GUARD_REMOVED 並判為完整', async () =>
 
   assert.equal(result.complete, true);
   const guard = result.facts.find(({ kind }) => kind === 'GUARD_REMOVED');
-  assert.deepEqual(guard.properties, {
+  assert.deepEqual(withoutScope(guard.properties), {
     condition: '!$q->valid()',
     exit: 'throw',
     changeSide: 'before',
@@ -516,7 +528,7 @@ test('property 陣列移除元素輸出 ARRAY_ITEM_REMOVED 並帶 container', as
   );
 
   assert.equal(result.complete, true);
-  assert.deepEqual(result.facts.map(({ kind, properties }) => [kind, properties]), [[
+  assert.deepEqual(result.facts.map(({ kind, properties }) => [kind, withoutScope(properties)]), [[
     'ARRAY_ITEM_REMOVED',
     {
       container: { type: 'property', name: 'beforeActionList', keys: [], text: 'property:$beforeActionList' },
@@ -982,4 +994,30 @@ test('參數純移除或純新增時輸出 CALL_ARGUMENT_REMOVED / CALL_ARGUMENT
     assert.equal(result.complete, false, after);
     assert.equal(result.facts.some(({ kind }) => kind.startsWith('CALL_ARGUMENT_')), false, after);
   }
+});
+
+test('fact 帶 head 版本所屬 method 的 scope hash：排版與區域變數改名不變，同一 method 的邏輯改變才會變', async () => {
+  const source = (run, other) => `<?php\n\nclass ScopeService\n{\n    public function run($q)\n    {\n${run}\n    }\n\n    public function other($q)\n    {\n${other}\n    }\n}\n`;
+  const base = source('        $this->audit($q);\n        $total = $q->amount;\n        return $total;', '        return 1;');
+  const scopeOf = async (head) => {
+    const result = await inlineAnalyze(base, head);
+    const removed = result.facts.find(({ kind }) => kind === 'CALL_REMOVED');
+    assert.equal(removed.properties.scope.kind, 'function');
+    return removed.properties.scope.hash;
+  };
+
+  const original = await scopeOf(source('        $total = $q->amount;\n        return $total;', '        return 1;'));
+  // 另一個 method 改變、排版、區域變數改名：hash 不變
+  assert.equal(await scopeOf(source('        $total = $q->amount;\n        return $total;', '        return 2;')), original);
+  assert.equal(await scopeOf(source('        $total    = $q->amount; // note\n\n        return $total;', '        return 1;')), original);
+  assert.equal(await scopeOf(source('        $sum = $q->amount;\n        return $sum;', '        return 1;')), original);
+  // 同一個 method 的邏輯改變：hash 改變
+  assert.notEqual(await scopeOf(source('        $total = $q->amount + 1;\n        return $total;', '        return 1;')), original);
+
+  // 不在 method 內的 fact 使用整個檔案的 hash
+  const property = await inlineAnalyze(
+    '<?php\n\nclass M\n{\n    protected $fillable = [\'a\', \'b\'];\n}\n',
+    '<?php\n\nclass M\n{\n    protected $fillable = [\'a\'];\n}\n',
+  );
+  assert.equal(property.facts[0].properties.scope.kind, 'file');
 });

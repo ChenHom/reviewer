@@ -87,7 +87,7 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
 - 文字輸出的第二行標示比較範圍。merge base 與 base 不同時，加上「比較起點」：
 
   ```
-  shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge base f30b6d9d7ca0
+  shop  main (48016bdb0fe7) → feature (594959a22beb)，比較起點為 merge base ec4021f968a4
   ```
 
   base 是 head 的祖先（例如 PR 分支已經 rebase 到最新的 base）時，merge base 就是 base，不會有後半段。
@@ -328,7 +328,7 @@ Review：<PR 決策>（<需要 review 的檔案數>/<檔案數> 個檔案需要 
 ```
 Review：HUMAN_REVIEW_REQUIRED（5/6 個檔案需要 review；TARGETED 3、FULL 2）
 路由：ESCALATED（需要人工確認 3、交給 AI 審查 2、不需要 review 1）
-shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge base f30b6d9d7ca0
+shop  main (48016bdb0fe7) → feature (594959a22beb)，比較起點為 merge base ec4021f968a4
 
 需要人工確認（ESCALATED）：
   FULL     app/Services/ReportService.php
@@ -408,7 +408,8 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
 | `path` | string | head 的路徑；刪除的檔案為原路徑 |
 | `oldPath` | string | 原路徑，只有 rename 才有這個欄位 |
 | `status` | string | `added`、`deleted`、`modified`、`renamed`、`type-changed`（其他 git 狀態字母原樣輸出） |
-| `analyzed` | boolean | 是否經過 PHP analyzer 的分析流程（「檔案分類」第 9 步）。結果是 `COV-PHP-001:*` 時也是 `true`；第 1–8 步的檔案（含 `ANALYZER_ERROR`）為 `false` |
+| `contentHash` | string | head 版本內容的識別：`git:<blob id>`；刪除的檔案為 `deleted:<base 的 blob id>`。檔案層級的人工豁免綁定在這個值上 |
+| `analyzed` | boolean | 是否經過 analyzer 的分析流程（「檔案分類」第 9 步）。結果是 `COV-PHP-001:*` / `COV-TS-001:*` 時也是 `true`；第 1–8 步的檔案（含 `ANALYZER_ERROR`）為 `false` |
 | `decision` | string | `NOT_SELECTED_FOR_HUMAN_REVIEW` 或 `HUMAN_REVIEW_REQUIRED` |
 | `fallback` | string \| null | `TARGETED`、`FULL`；不需要 review 時為 `null` |
 | `reasons` | string[] | 原因代碼。analyzer 的原因依字母排序，`FILE_RENAMED` / `FILE_MODE_CHANGED` 接在最後。代碼可能帶參數，例如 `UNSUPPORTED_CHANGE_TYPE:type-changed`、`ANALYZER_ERROR:<訊息>`、`FACT_UNHANDLED:<fact id>` |
@@ -416,32 +417,63 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
 | `oneWayDoors` | string[] | `reasons` 中屬於單向門的原因；沒有時為 `[]` |
 | `facts` | object[] | analyzer 找到的所有 fact；未分析的檔案為 `[]` |
 | `facts[].kind` | string | fact 種類，例如 `CALL_REMOVED` |
+| `facts[].subject` | string | 所屬的 `Class::method` 或 function；不在 method / function 內時為檔案路徑 |
 | `facts[].side` | string | `base`（merge base 版本）或 `head` |
 | `facts[].startLine` / `endLine` | number | 該版本中的行號（從 1 起算） |
 | `facts[].description` | string | 中文描述，與文字輸出的 `·` 行相同 |
+| `facts[].blockers` | string[] | 這個 fact 自己產生的原因代碼（`reasons` 是整個檔案的彙總）；沒有 domain 規則時為 `FACT_UNHANDLED:<fact id>` |
+| `facts[].anchor` | object | fact 中不隨位置改變的內容（例如移除的 callee 的名稱與 receiver），用於 finding id |
+| `facts[].scopeHash` | string \| null | head 版本中所屬 method / function 的 canonical AST hash（`php:<hash>`）；排版、註解與一致的區域變數改名不會改變它。不在 method / function 內、或 head 中已沒有該 method 時為整個檔案的 canonical hash；沒有輸出 scope 的 analyzer 為 `null` |
+| `findings` | object[] | 需要人工處理的項目（只有 `track` 為 `ESCALATED` 的檔案才有，其他為 `[]`），見「Findings」 |
 | `changedLines` | object[] | 只有 `decision` 為 `HUMAN_REVIEW_REQUIRED` 的檔案才有這個欄位。`git diff -U0` 的 hunk：`{ side, startLine, endLine }`，有新內容的 hunk 為 `head` 的行號，純刪除的 hunk 為 `base` 的行號。修改與 rename 以外的檔案（新增、刪除、`type-changed`）為 `[]`；沒有文字 hunk 的變更（binary、只改權限、內容不變的 rename）也是 `[]` |
 
-範例（上面 `shop` 的報表，`files` 只節錄 3 筆）：
+### Findings
+
+`files[].findings` 是二次 review 的追蹤單位（`src/findings.js`），之後的 GitHub 整合以它記錄「看過了」或「修好了」：
+
+- 每個帶單向門原因的 fact，每個原因一個 finding（`kind` 為 fact 種類）；
+- 檔案層級的單向門原因（`PROTECTED_PATH`、`POLICY_FILE_CHANGED`）各一個（`kind: "FILE"`）；
+- `FULL` 的檔案一個 `blocker: "FULL_REVIEW"`（`kind: "FILE"`）。
+
+| 欄位 | 型別 | 說明 |
+|---|---|---|
+| `id` | string | `sha256(path, subject, kind, blocker, anchor, ordinal)`。不含行號，在上方插入程式碼或排版不會改變；fact 消失（例如加回被移除的 `authorize`）時這個 id 也不再出現 |
+| `path` / `subject` / `kind` / `blocker` / `anchor` | | 組成 id 的內容；檔案層級的 finding 的 `subject` 為檔案路徑、`anchor` 為原因代碼 |
+| `ordinal` | number | 同一個 subject 中 `kind`、`blocker`、`anchor` 都相同的 finding 依出現順序編號（從 0 起），避免兩件事被合併成一件 |
+| `scopeHash` | string | 人工豁免要綁定的內容：fact 的 `scopeHash`，檔案層級或沒有 scope 時為 `contentHash`。豁免後這個值改變，就代表被看過的程式碼又改了 |
+| `location` | object \| null | fact 的位置 `{ side, startLine, endLine }`；檔案層級為 `null` |
+| `description` | string \| null | fact 的描述；檔案層級為 `null` |
+
+TypeScript / JavaScript 第 1 階段沒有 fact，所以只會有 `FULL_REVIEW` 等檔案層級的 finding。
+
+範例（上面 `shop` 的報表，`files` 只節錄 3 筆：需要人工確認的 `PostController.php` 與 `composer.json`、交給 AI 審查的 `FreezeService.php`）：
 
 ```json
 {
   "repository": "shop",
   "base": {
     "ref": "main",
-    "sha": "685c6d780c9f2b3bdf5d215ceffe39fe56cbbd24"
+    "sha": "48016bdb0fe744a5f488219ea0152aae1bdd311b"
   },
   "head": {
     "ref": "feature",
-    "sha": "ee86b749e972cdbb1d1f022914abf6621516352a"
+    "sha": "594959a22bebcab30f99df672c7c27ba1c6f323e"
   },
-  "mergeBase": "f30b6d9d7ca0a8e1a1505fb95efd8069c265da2e",
+  "mergeBase": "ec4021f968a437c1b9d942109f8723cade7dd0ac",
+  "config": {
+    "path": ".reviewer.json",
+    "commit": "ec4021f968a437c1b9d942109f8723cade7dd0ac",
+    "status": "absent",
+    "errors": [],
+    "digest": null
+  },
   "decision": {
     "status": "HUMAN_REVIEW_REQUIRED",
     "reasons": [
       "AUTHORIZATION_GUARD_REMOVED",
       "COMPARISON_OPERATOR_CHANGED",
       "COV-PHP-001:UNRECOGNIZED_PHP_CHANGE",
-      "FACT_UNHANDLED:php-f6d5b97e82b5f9b5a519",
+      "FACT_UNHANDLED:php-51031e647c86e74cf9f7",
       "UNSUPPORTED_FILE_TYPE"
     ],
     "files": 6,
@@ -449,10 +481,17 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
     "targeted": 3,
     "full": 2
   },
+  "routing": {
+    "track": "ESCALATED",
+    "autoPass": 1,
+    "aiTrack": 2,
+    "escalated": 3
+  },
   "files": [
     {
       "path": "app/Http/Controllers/PostController.php",
       "status": "modified",
+      "contentHash": "git:ded36e7b0ecee781a7072b9bb1b853c19bc84eca",
       "analyzed": true,
       "decision": "HUMAN_REVIEW_REQUIRED",
       "fallback": "TARGETED",
@@ -462,10 +501,24 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
       "facts": [
         {
           "kind": "CALL_REMOVED",
+          "subject": "PostController::update",
           "side": "base",
           "startLine": 9,
           "endLine": 9,
-          "description": "移除呼叫 $this->authorize"
+          "description": "移除呼叫 $this->authorize",
+          "blockers": [
+            "AUTHORIZATION_GUARD_REMOVED"
+          ],
+          "anchor": {
+            "callee": {
+              "name": "authorize",
+              "receiver": [
+                "this"
+              ],
+              "kind": "method"
+            }
+          },
+          "scopeHash": "php:747b177afa33d6ce552e8ca3161f4121"
         }
       ],
       "changedLines": [
@@ -474,22 +527,81 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
           "startLine": 9,
           "endLine": 10
         }
+      ],
+      "track": "ESCALATED",
+      "oneWayDoors": [
+        "AUTHORIZATION_GUARD_REMOVED"
+      ],
+      "findings": [
+        {
+          "id": "d411be1b5801ad75a55b4e36073b03f2a62cb015571825fe3e8c7684bb5d4ba6",
+          "path": "app/Http/Controllers/PostController.php",
+          "subject": "PostController::update",
+          "kind": "CALL_REMOVED",
+          "blocker": "AUTHORIZATION_GUARD_REMOVED",
+          "anchor": {
+            "callee": {
+              "name": "authorize",
+              "receiver": [
+                "this"
+              ],
+              "kind": "method"
+            }
+          },
+          "scopeHash": "php:747b177afa33d6ce552e8ca3161f4121",
+          "location": {
+            "side": "base",
+            "startLine": 9,
+            "endLine": 9
+          },
+          "description": "移除呼叫 $this->authorize",
+          "ordinal": 0
+        }
       ]
     },
     {
-      "path": "app/Services/LegacyHelper.php",
+      "path": "app/Services/FreezeService.php",
       "status": "modified",
+      "contentHash": "git:5e58eb6d48972f8ddf199397b8add007d5c8396c",
       "analyzed": true,
-      "decision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
-      "fallback": null,
+      "decision": "HUMAN_REVIEW_REQUIRED",
+      "fallback": "TARGETED",
       "reasons": [
-        "NO_REDUCTION_BLOCKER"
+        "COMPARISON_OPERATOR_CHANGED"
       ],
-      "facts": []
+      "facts": [
+        {
+          "kind": "BINARY_OPERATOR_CHANGED",
+          "subject": "FreezeService::canFreeze",
+          "side": "head",
+          "startLine": 9,
+          "endLine": 9,
+          "description": "運算子 < → <=：$cash->amount < $amount → $cash->amount <= $amount",
+          "blockers": [
+            "COMPARISON_OPERATOR_CHANGED"
+          ],
+          "anchor": {
+            "operator": "<→<=",
+            "before": "$cash->amount < $amount"
+          },
+          "scopeHash": "php:40bab854fa49c35a6ff61336b3b97707"
+        }
+      ],
+      "changedLines": [
+        {
+          "side": "head",
+          "startLine": 9,
+          "endLine": 9
+        }
+      ],
+      "track": "AI_TRACK",
+      "oneWayDoors": [],
+      "findings": []
     },
     {
       "path": "composer.json",
       "status": "modified",
+      "contentHash": "git:b02624cbee377067feaae08dde39829b1f5cbe91",
       "analyzed": false,
       "decision": "HUMAN_REVIEW_REQUIRED",
       "fallback": "FULL",
@@ -502,6 +614,22 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
           "side": "head",
           "startLine": 3,
           "endLine": 3
+        }
+      ],
+      "track": "ESCALATED",
+      "oneWayDoors": [],
+      "findings": [
+        {
+          "id": "7bf07725d790eb3494eaf0de096b7c34707062dd31f34969965fe2a9c6452400",
+          "path": "composer.json",
+          "subject": "composer.json",
+          "kind": "FILE",
+          "blocker": "FULL_REVIEW",
+          "anchor": "FULL_REVIEW",
+          "scopeHash": "git:b02624cbee377067feaae08dde39829b1f5cbe91",
+          "location": null,
+          "description": null,
+          "ordinal": 0
         }
       ]
     }

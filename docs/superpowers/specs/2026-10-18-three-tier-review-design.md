@@ -1,12 +1,13 @@
 # 三層審查架構（機械 → AI → 人工）設計
 
-狀態：設計草案，尚未實作。本文把「三層審查」藍圖對照目前的程式碼，標出哪些已存在、哪些要新增，以及新增時必須守住的 safety invariant。現有能力以 [README](../../../README.md) 與 [Current State](../../current-state.md) 為準。
+狀態：§8 的步驟 1–6 已實作（實作中遇到的問題與處理方式見 [實作紀錄](../notes/2026-10-19-three-tier-implementation-notes.md)），步驟 7–9 尚未實作。本文把「三層審查」藍圖對照目前的程式碼，標出哪些已存在、哪些要新增，以及新增時必須守住的 safety invariant。現有能力以 [README](../../../README.md) 與 [Current State](../../current-state.md) 為準。
 
 已定案的決策：
 
 - Fact 的 `callee`（與內嵌 callee 的 `container`）改成結構化欄位（§3.4）。
 - 二次 review 的狀態存在 GitHub PR 留言中，不另設資料庫（§4.4）。
 - 第二個支援的語言是 TypeScript / JavaScript（Node.js）（§3.5）。
+- 專案設定使用 `.reviewer.json`（JSON），不使用 YAML（§3.2）。
 
 ## 0. 先校正藍圖與目前程式碼的差異
 
@@ -148,7 +149,7 @@ routing:
 
 - `ANNOTATION_REMOVED` / `ANNOTATION_ADDED` / `ANNOTATION_ARGUMENT_CHANGED`：TS decorator（`@UseGuards`、`@Roles`、`@Transactional`）與 PHP 8 attribute（`#[IsGranted]`）共用。
 - `DIRECTIVE_COMMENT_CHANGED`：有語意的註解，例如 `// @ts-ignore`、`// @ts-expect-error`、`/* eslint-disable */`、`/* @__PURE__ */`。這類註解不能被當成一般註解忽略。
-- `CALL_ARGUMENT_REMOVED` / `CALL_ARGUMENT_ADDED`：位置參數被移除或新增（Express `router.post('/x', auth, handler)` 移除 `auth`）。目前 PHP 以 `#index` 的 `CALL_ARGUMENT_CHANGED` 表示且不視為已解釋，兩種語言統一改用這組 kind。
+- `CALL_ARGUMENT_REMOVED` / `CALL_ARGUMENT_ADDED`：參數被移除或新增（Express `router.post('/x', auth, handler)` 移除 `auth`）。原本 PHP 的參數數量改變一律是未解釋差異；`#index` 的 `CALL_ARGUMENT_CHANGED`（位置參數的值改變且無法被更細的 fact 解釋）是另一件事，維持不變。
 
 ### 3.4 結構化 callee 與 container（fact schema v2）
 
