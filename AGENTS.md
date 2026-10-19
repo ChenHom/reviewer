@@ -27,6 +27,7 @@ Reviewer 是 deterministic、fail-closed 的 Review Decision Engine（Node ESM�
 - `npm run eval:real-repo -- ...` 需要外部 PHP 專案，**不在** `test:all` 與 CI 內（[說明](evaluation/real-repo/README.md)）。
 - `prepare` 由 `npm ci` 觸發，不必手動執行。
 - CI（[workflow](.github/workflows/review-reduction-safety.yml)）在 `test:all` 之外另跑 `composer install`、`npm ci --prefix analyzers/ts` 與 `php -l`（`find analyzers/php/bin analyzers/php/src evaluation -name '*.php' -print0 | xargs -0 -n1 php -l`）；改 PHP 檔時本機要自己跑 `php -l`。
+- `master` 有 branch protection：只能經由 PR 修改，必須通過 CI 的 `safety` check（限 GitHub Actions 回報），不能 force push 或刪除，admin 也一樣；不要求 approve。code owner 見 [`.github/CODEOWNERS`](.github/CODEOWNERS)。
 - 沒有 `php` 時 PHP analyzer 不會執行（檔案會是 `FULL` + `ANALYZER_ERROR`），無法驗證 PHP 相關結果，不要宣稱 gate 已通過。
 
 ## 程式慣例
