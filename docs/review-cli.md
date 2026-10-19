@@ -23,7 +23,7 @@
 ## 前置需求
 
 - `git`，在 PATH 上。
-- Node.js。CLI 用到 `os.availableParallelism`，至少需要 Node 18.14；`package.json` 沒有宣告 `engines`，只有 CI 使用的 Node 24 經過測試。CLI 只用 Node 內建模組與本 repo 的 `src/`，執行時不需要 `npm install`（`npm ci` 是給 lint 與測試用的）；只有 `--ai` 需要 `npm ci` 安裝的 `@anthropic-ai/sdk` 與環境變數 `ANTHROPIC_API_KEY`（見「AI 審查」）。
+- Node.js。CLI 用到 `os.availableParallelism`，至少需要 Node 18.14；`package.json` 沒有宣告 `engines`，只有 CI 使用的 Node 24 經過測試。開發（`npm ci` 後的 lint）需要 Node ≥ 20.19（ESLint 的 `engines` 為 `^20.19.0 || ^22.13.0 || >=24`）；但 `eslint.config.js` 載入的 `eslint-plugin-jsdoc` 宣告 `^22.13.0 || >=24`，所以實際應使用 Node ≥ 22.13。CLI 只用 Node 內建模組與本 repo 的 `src/`，執行時不需要 `npm install`（`npm ci` 是給 lint 與測試用的）；只有 `--ai` 需要 `npm ci` 安裝的 `@anthropic-ai/sdk` 與環境變數 `ANTHROPIC_API_KEY`（見「AI 審查」）。
 - PHP CLI 8.3 以上，以 `php` 的名稱放在 PATH 上（`analyzers/php/composer.json` 要求 `php >= 8.3`；CI 使用 PHP 8.4）。
 - Composer 2，用來安裝 analyzer 依賴（[nikic/php-parser](https://github.com/nikic/PHP-Parser) 5.9.0，版本鎖定在 `analyzers/php/composer.lock`）：
 
@@ -104,7 +104,7 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
 - base 與 head 沒有共同祖先時以 `GIT_NO_MERGE_BASE` 結束（exit code 2）。除了真的不相關的歷史，常見原因是 shallow clone：base 有 fetch，但歷史不夠深，到不了 merge base。
 - shallow clone 也可能根本沒有 base：`actions/checkout` 預設 `fetch-depth: 1`，只抓要 checkout 的那一個 commit，不會有 `origin/<base 分支>`，base 的 commit 也不在 repository 中。這時在解析 ref 時就以 `GIT_FAILED:git rev-parse: fatal: Needed a single revision` 結束，不會走到 merge base。
 - 這兩種情況都請抓取完整歷史（`fetch-depth: 0`），或 fetch base 並加深到包含 merge base。
-- rename 以 `git diff -M` 偵測（git 預設相似度 50%）。相似度不足的改名會變成一個刪除加一個新增（PHP 檔為 `FILE_DELETED` 與 `FILE_ADDED`）。
+- rename 以 `git diff -M` 偵測（git 預設相似度 50%）。相似度不足的改名會變成一個刪除加一個新增（支援的語言，即 PHP、TypeScript / JavaScript 檔，為 `FILE_DELETED` 與 `FILE_ADDED`）。
 
 ## 檔案分類
 
@@ -124,7 +124,7 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
 
 第 1–8 步的檔案在 JSON 中 `analyzed` 為 `false`、`facts` 為空。因為判斷順序：
 
-- 新增或刪除的非 PHP 檔是 `UNSUPPORTED_FILE_TYPE`，不是 `FILE_ADDED` / `FILE_DELETED`。
+- 新增或刪除的不支援語言檔（不是 PHP、TypeScript / JavaScript）是 `UNSUPPORTED_FILE_TYPE`，不是 `FILE_ADDED` / `FILE_DELETED`。
 - 新增、刪除或改指向的 symlink 是 `SYMLINK_CHANGED`；一般檔案改成 symlink 則是 `UNSUPPORTED_CHANGE_TYPE:type-changed`。
 - `Upper.PHP` 這類大寫副檔名與 `*.blade.php` 都會送進 analyzer。Blade 指令與 HTML 對 PHP parser 來說都是 inline HTML，沒有對應的 fact，因此 template 內容的變更是 `FULL`（`COV-PHP-001:UNRECOGNIZED_PHP_CHANGE`）。
 
@@ -251,10 +251,10 @@ diff、檔案內容與 `codingstandards.md` 都來自 PR。它們放在 `<diff>`
 
 | 代碼 | 意義 |
 |---|---|
-| `FILE_ADDED` | 新增的 PHP 檔 |
-| `FILE_DELETED` | 刪除的 PHP 檔 |
-| `UNSUPPORTED_FILE_TYPE` | 非 PHP 檔（任何變更，包括新增、刪除與 rename） |
-| `BINARY_FILE` | PHP 檔的任一側內容含 NUL byte |
+| `FILE_ADDED` | 新增的支援語言檔（PHP、TypeScript / JavaScript） |
+| `FILE_DELETED` | 刪除的支援語言檔（PHP、TypeScript / JavaScript） |
+| `UNSUPPORTED_FILE_TYPE` | 不是支援的語言（PHP、TypeScript / JavaScript）的檔案（任何變更，包括新增、刪除與 rename） |
+| `BINARY_FILE` | 支援語言檔（PHP、TypeScript / JavaScript）的任一側內容含 NUL byte |
 | `SYMLINK_CHANGED` | symlink 新增、刪除或改指向 |
 | `SUBMODULE_CHANGED` | submodule 新增、刪除或改指向的 commit |
 | `UNSUPPORTED_CHANGE_TYPE:<status>` | git 狀態不是新增、刪除、修改或 rename。實際會出現的是 `type-changed`；`copied` 不會出現，因為 `git diff` 只開 rename 偵測（`-M`），不開 copy 偵測 |
@@ -777,9 +777,10 @@ fi
 # analyzer 本身的問題不會讓 exit code 變成 2，而是讓檔案變成 FULL；另外檢查
 if ! jq -e '[.files[].reasons[]
              | select(startswith("ANALYZER_ERROR:")
-                      or . == "COV-PHP-001:PHP_ANALYZER_DEPENDENCY_MISSING")]
+                      or . == "COV-PHP-001:PHP_ANALYZER_DEPENDENCY_MISSING"
+                      or . == "COV-TS-001:TS_ANALYZER_DEPENDENCY_MISSING")]
            | length == 0' review/report.json > /dev/null; then
-  echo "PHP analyzer 無法執行，請確認 php 與 npm run analyzer:install" >&2
+  echo "analyzer 無法執行，請確認 php、node 與 npm run analyzer:install" >&2
   exit 2
 fi
 
