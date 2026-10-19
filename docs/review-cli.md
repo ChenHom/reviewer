@@ -181,7 +181,7 @@ TypeScript / JavaScript：analyzer（`analyzers/ts`，TypeScript compiler API）
 
 AI 審查以 `--ai` 啟用，見「AI 審查」。沒有 `--ai` 時沒有人看過 `AI_TRACK` 檔案，`human.required` 把它們也算成需要人工。
 
-單向門（做了就難以回頭的變更）的預設清單：`TRANSACTION_BOUNDARY_REMOVED`、`TRANSACTION_ROLLBACK_REMOVED`、`ROW_LOCK_REMOVED`、`AUTHORIZATION_GUARD_REMOVED`、`AUTHORIZATION_ABILITY_CHANGED`、`MIDDLEWARE_GUARD_REMOVED`、`SIGNATURE_VERIFICATION_REMOVED`、`GUARD_CLAUSE_REMOVED`、`PROTECTED_CALL_REMOVED`、`PAYMENT_IDEMPOTENCY_IDENTITY_CHANGED`、`PROTECTED_ARGUMENT_CHANGED`、`SENSITIVE_OPERAND_CHANGED`、`MASS_ASSIGNMENT_CHANGED`、`SERIALIZED_ATTRIBUTES_CHANGED`、`SIDE_EFFECT_CALL_ADDED`、`DATA_DELETION_ADDED`、`PROTECTED_PATH`、`POLICY_FILE_CHANGED`、`POLICY_CONFIG_INVALID`。其中幾個代碼由專案設定的規則產生（見 [專案設定](project-config.md)）。
+單向門（做了就難以回頭的變更）的預設清單：`TRANSACTION_BOUNDARY_REMOVED`、`TRANSACTION_ROLLBACK_REMOVED`、`ROW_LOCK_REMOVED`、`AUTHORIZATION_GUARD_REMOVED`、`AUTHORIZATION_ABILITY_CHANGED`、`MIDDLEWARE_GUARD_REMOVED`、`SIGNATURE_VERIFICATION_REMOVED`、`GUARD_CLAUSE_REMOVED`、`PROTECTED_CALL_REMOVED`、`PAYMENT_IDEMPOTENCY_IDENTITY_CHANGED`、`PROTECTED_ARGUMENT_CHANGED`、`SENSITIVE_OPERAND_CHANGED`、`MASS_ASSIGNMENT_CHANGED`、`SERIALIZED_ATTRIBUTES_CHANGED`、`SIDE_EFFECT_CALL_ADDED`、`DATA_DELETION_ADDED`、`PROTECTED_PATH`、`POLICY_FILE_CHANGED`、`POLICY_CONFIG_INVALID`。其中幾個代碼由專案設定的規則產生（見 [專案設定](project-config.md)）；`PROTECTED_PATH` 沒有設定也會產生，因為 CI 本身（`.github/workflows/**`、`.github/actions/**`）是預設受保護路徑（`DEFAULT_PROTECTED_PATHS`，`src/config/project-config.js`）。
 
 PR 層級的 `routing.track` 取所有檔案中最嚴格的一個（`ESCALATED` > `AI_TRACK` > `AUTO_PASS`）；沒有任何檔案變更時為 `AUTO_PASS`。
 
@@ -265,7 +265,7 @@ diff、檔案內容與 `codingstandards.md` 都來自 PR。它們放在 `<diff>`
 |---|---|
 | `POLICY_CONFIG_INVALID` | merge base 的 `.reviewer.json` 無效。每個檔案都是 `FULL`，錯誤細節見 JSON 報表的 `config.errors` |
 | `POLICY_FILE_CHANGED` | PR 修改了 `.reviewer.json` 或 `codingstandards.md`（單向門） |
-| `PROTECTED_PATH` | 檔案符合 `rules.protectedPaths`（單向門）。原本不需要 review 的檔案變成 `TARGETED` |
+| `PROTECTED_PATH` | 檔案符合預設受保護路徑（`.github/workflows/**`、`.github/actions/**`）或 `rules.protectedPaths`（單向門）。原本不需要 review 的檔案變成 `TARGETED` |
 | `SENSITIVE_OPERAND_CHANGED` / `PROTECTED_CALL_REMOVED` / `PROTECTED_ARGUMENT_CHANGED` / `SIDE_EFFECT_CALL_ADDED` | 專案規則命中（單向門），見 [專案設定](project-config.md) |
 
 ### `ANALYZER_ERROR:<訊息>`（`FULL`）

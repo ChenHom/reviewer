@@ -32,6 +32,12 @@ export const CONFIG_FILE = '.reviewer.json';
 /** 審查規則本身：PR 修改這些檔案時一律是單向門（`POLICY_FILE_CHANGED`）。 */
 export const POLICY_FILES = Object.freeze([CONFIG_FILE, 'codingstandards.md']);
 
+/**
+ * 預設受保護路徑（`PROTECTED_PATH`）：CI 本身。workflow 能改掉所有檢查、取得 secrets，本地 action 以
+ * workflow 的權限執行，AI 不能單獨放行。專案的 `protectedPaths` 只能再增加，不能移除。
+ */
+export const DEFAULT_PROTECTED_PATHS = Object.freeze(['.github/workflows/**', '.github/actions/**']);
+
 const OPERATOR_GROUPS = ['any', 'arithmetic', 'comparison', 'logical'];
 const CODE = /^[A-Z][A-Z0-9_]*$/;
 
@@ -204,7 +210,7 @@ export function createProjectPolicy(parsed) {
     rules.sensitiveOperands, rules.protectedCalls, rules.protectedArguments, rules.sideEffectCalls,
   ].some((list) => list.length > 0);
   const rulesInterpreter = hasRules ? createConfigRulesInterpreter(rules, parsed.digest) : null;
-  const protectedPaths = (rules?.protectedPaths ?? []).map(globToRegExp);
+  const protectedPaths = [...DEFAULT_PROTECTED_PATHS, ...(rules?.protectedPaths ?? [])].map(globToRegExp);
 
   return Object.freeze({
     digest: parsed?.digest ?? null,

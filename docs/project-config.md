@@ -12,7 +12,7 @@
 ## 讀取規則
 
 - **從 merge base 讀取，不從 PR 的 head 讀取。** PR 修改 `.reviewer.json` 不會影響這次 review，而且修改本身是單向門（`POLICY_FILE_CHANGED`）。`codingstandards.md`（根目錄）同樣是 `POLICY_FILE_CHANGED`。
-- 檔案不存在：使用預設值（PHP 啟用 `php-laravel` 與 `payments` preset、TypeScript / JavaScript 啟用 `node` preset、預設單向門、沒有專案規則）。
+- 檔案不存在：使用預設值（PHP 啟用 `php-laravel` 與 `payments` preset、TypeScript / JavaScript 啟用 `node` preset、預設單向門、預設受保護路徑、沒有專案規則）。
 - 檔案存在但無效（JSON 錯誤、未知欄位、型別錯誤、無效的正規表示式、未知 preset、不是一般檔案）：**每個變更檔案都是 `FULL` + `POLICY_CONFIG_INVALID`**，而且 `POLICY_CONFIG_INVALID` 是單向門（專案規則沒有套用，必須人工確認）；錯誤細節在 JSON 報表的 `config.errors`。
 - 設定只能新增攔截：沒有「忽略某個 fact」或「移除預設單向門」的語法。要減少誤報，只能讓 analyzer 的等價判定變強。
 - 設定內容的 sha256 列在報表的 `config.digest`，並帶入規則引擎 interpreter 的版本（`config-rules@1.2.0+<digest 前 16 碼>`），所以設定不同時分析結果的 interpreter identity 也不同。
@@ -44,7 +44,7 @@
 | `rules.protectedCalls` | 呼叫被移除（`CALL_REMOVED`）時產生 `PROTECTED_CALL_REMOVED` |
 | `rules.sideEffectCalls` | 新增呼叫（`CALL_ADDED`）時產生 `SIDE_EFFECT_CALL_ADDED`，用於寄信、推播、排入 queue、呼叫外部付款 API 等不可逆的副作用 |
 | `rules.protectedArguments` | 參數的值改變、被移除或被新增時產生 `PROTECTED_ARGUMENT_CHANGED`，或 `blocker` 指定的代碼（大寫英數與底線）。「改變」包括 `CALL_ARGUMENT_CHANGED` / `REMOVED` / `ADDED`、參數內的值變更（`charge(100)` → `charge(1000)` 的 `LITERAL_CHANGED`，以及 `VARIABLE_CHANGED`、`BINARY_OPERATOR_CHANGED`、`ARRAY_ITEM_*` 等 container 為該參數的 fact，含參數中巢狀陣列 / 物件的值），參數中的巢狀呼叫被替換、移除或新增（`charge(orderTotal())` → `charge(orderSubtotal())` 的 `CALL_REMOVED` / `CALL_ADDED`）或其參數改變（`charge(fee(a, b))` → `charge(fee(a))`，以及 `charge(fee(a + 1))` 這種更深一層的值變更），以及位置參數的順序改變（`CALL_ARGUMENTS_REORDERED`）。`argument` 是具名參數名稱（字串或 `/regex/`）或位置（從 0 開始的整數）；可加上 `name` / `receiver` 限定呼叫 |
-| `rules.protectedPaths` | 符合的檔案有任何變更都產生 `PROTECTED_PATH`（包括只有排版變更、原本不需要 review 的檔案）。rename 時比對新舊兩個路徑 |
+| `rules.protectedPaths` | 符合的檔案有任何變更都產生 `PROTECTED_PATH`（包括只有排版變更、原本不需要 review 的檔案）。rename 時比對新舊兩個路徑。CI 本身（`.github/workflows/**`、`.github/actions/**`）不論有沒有設定都受保護、無法移除（`DEFAULT_PROTECTED_PATHS`，`src/config/project-config.js`）；這裡列的路徑是額外加入的 |
 | `rules.oneWayDoors` | 加入單向門清單的原因代碼，例如 `CONSTANT_VALUE_CHANGED` |
 
 ### 呼叫的比對（`protectedCalls`、`sideEffectCalls`、`protectedArguments`）
