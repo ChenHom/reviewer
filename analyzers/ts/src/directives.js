@@ -2,11 +2,14 @@ import ts from 'typescript';
 
 /**
  * 有語意的註解：型別檢查、lint、bundler / minifier、coverage 與 JSX 編譯指示，以及 triple-slash 指示。
- * 這些註解不能被當成一般註解忽略。
+ * 這些註解不能被當成一般註解忽略。ESLint 的 inline 設定（`/* eslint rule: "off" *\/`、`/* global x *\/`、
+ * `/* eslint-env *\/`、`/* exported *\/`）只在 block comment 開頭時才是設定，一般文字提到 eslint 不算。
  */
 const DIRECTIVE = new RegExp([
   String.raw`@ts-(?:ignore|expect-error|nocheck|check)\b`,
   String.raw`eslint-(?:disable|enable)`,
+  String.raw`^/\*\s*(?:eslint(?:-env)?|globals?|exported)(?:\s|\*/)`,
+  String.raw`biome-ignore|oxlint-(?:disable|enable)|deno-lint-ignore`,
   String.raw`[@#]__(?:PURE|NO_SIDE_EFFECTS|KEY)__`,
   String.raw`webpack[A-Z]\w*`,
   String.raw`@vite-ignore`,

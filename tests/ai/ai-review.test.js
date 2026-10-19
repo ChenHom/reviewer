@@ -276,12 +276,14 @@ test('AI 的判斷與修正的邊界：PASS 但有 high、FIX 沒有 edit、未�
     'c.js': 'export const c = (x) => x < 1;\n',
     'd.js': 'export const d = 1;\n',
     'e.js': 'export const e = (x) => x < 1;\n',
+    'f.js': 'export const f = (x) => x < 1;\n',
   }, {
     'a.js': 'export const a = (x) => x <= 1;\n',
     'b.js': 'export const b = (x) => x <= 1;\n',
     'c.js': 'export const c = (x) => x <= 1;\n',
     'd.js': null,
     'e.js': 'export const e = (x) => x <= 1;\n',
+    'f.js': 'export const f = (x) => x <= 1;\n',
   });
   await git('rm', '-q', 'e.js');
   await run('ln', ['-s', 'a.js', join(repo, 'e.js')]);
@@ -294,6 +296,8 @@ test('AI 的判斷與修正的邊界：PASS 但有 high、FIX 沒有 edit、未�
     'c.js': fixOf('x <= 1', 'x < 1', { concerns: [concern()] }),
     'd.js': fixOf('1', '2'),
     'e.js': fixOf('a', 'b'),
+    // PASS 卻附上修正：不能放行，照 FIX 處理。
+    'f.js': output({ fix: { description: '修正', edits: [{ oldText: 'x <= 1', newText: 'x < 1' }] } }),
   };
   const suggest = await reviewRange({ repo, base, head: 'HEAD', ai: { reviewer: fakeReviewer(outputs).reviewer } });
   const status = (report) => Object.fromEntries(report.files.map((file) => [file.path, [file.ai.status, file.ai.fix?.error ?? null]]));
@@ -303,7 +307,9 @@ test('AI 的判斷與修正的邊界：PASS 但有 high、FIX 沒有 edit、未�
     'c.js': ['NEEDS_HUMAN', null],
     'd.js': ['NEEDS_HUMAN', null],
     'e.js': ['NEEDS_HUMAN', null],
+    'f.js': ['NEEDS_HUMAN', null],
   });
+  assert.equal(suggest.files.find((file) => file.path === 'f.js').needsHuman, true);
   assert.match(formatReview(suggest), /修正建議：修正（未套用）/);
 
   const applied = await reviewRange({ repo, base, head: 'HEAD', ai: { reviewer: fakeReviewer(outputs).reviewer, apply: true } });
@@ -313,8 +319,9 @@ test('AI 的判斷與修正的邊界：PASS 但有 high、FIX 沒有 edit、未�
     'c.js': ['NEEDS_HUMAN', 'AI_FIX_HAS_HIGH_CONCERN'],
     'd.js': ['NEEDS_HUMAN', 'AI_FIX_FILE_DELETED'],
     'e.js': ['NEEDS_HUMAN', 'AI_FIX_FILE_UNSUPPORTED'],
+    'f.js': ['FIXED', null],
   });
-  assert.equal(applied.human.pendingFixes, 0);
+  assert.equal(applied.human.pendingFixes, 1);
 });
 
 test('沒有 AI 審查時：AI_TRACK 與 ESCALATED 都需要人工', async () => {

@@ -2,7 +2,6 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { cp, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { pipeline } from 'node:stream/promises';
 
 /**
  * 等待 child process 結束；非 0 exit code 時 reject 並帶出 stderr。
@@ -58,15 +57,18 @@ export async function prepareBaseline({ reviewerRoot, ref, directory }) {
   const archive = spawn('git', ['-C', reviewerRoot, 'archive', '--format=tar', commit], {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  const extract = spawn('tar', ['-x', '-C', directory], { stdio: ['pipe', 'ignore', 'pipe'] });
-  // pipeline 會把 tar 提早結束造成的 EPIPE 轉成 rejection，而不是未處理的 error 事件。
-  // 回報錯誤時優先使用 child process 的訊息（含 stderr），其次才是 pipe 的 EPIPE。
-  const [piped, archived, extracted] = await Promise.allSettled([
-    pipeline(archive.stdout, extract.stdin),
+  // tar 直接讀 git archive 的 stdout（OS 層的 pipe），不經過 Node 的 stream：以 stream.pipeline 轉接時，
+  // tar 讀完 archive 就結束，Node 隨即關閉 tar 的 stdin，若這時 git 那端的 EOF 還沒送到，
+  // pipeline 會把成功的解壓縮誤判為 ERR_STREAM_PREMATURE_CLOSE。
+  const extract = spawn('tar', ['-x', '-C', directory], { stdio: [archive.stdout, 'ignore', 'pipe'] });
+  // 關閉父行程自己的讀取端：tar 提早失敗時 git archive 會收到 EPIPE 而結束，不會卡住。
+  archive.stdout.destroy();
+  // 回報錯誤時優先使用 tar 的訊息（含 stderr），其次才是 git archive。
+  const [archived, extracted] = await Promise.allSettled([
     finished(archive, 'git archive', { captureStdout: false }),
     finished(extract, 'tar'),
   ]);
-  for (const outcome of [extracted, archived, piped]) {
+  for (const outcome of [extracted, archived]) {
     if (outcome.status === 'rejected') throw outcome.reason;
   }
 

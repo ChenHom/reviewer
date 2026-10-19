@@ -165,7 +165,7 @@ async function applyFix({ repo, headSha, checkFix }, file, fix) {
 /**
  * 依 AI 的輸出決定檔案的 AI 狀態。
  *
- * - high 的 concern 一律需要人工；FIX 沒有套用時需要人工（修正變成建議）。
+ * - high 的 concern 一律需要人工；FIX 沒有套用時需要人工（修正變成建議）；PASS 但附上修正時視為 FIX。
  * - `ESCALATED` 的狀態只代表 AI 的意見，檔案仍需要人工。
  *
  * @param {object} context - review context。
@@ -178,8 +178,10 @@ async function decide(context, file, output) {
   const proposed = output.fix.edits.length > 0
     ? { description: output.fix.description, edits: output.fix.edits, applied: false, error: null }
     : null;
-  if (output.verdict === 'PASS') return { status: hasHigh ? AI_STATUS.NEEDS_HUMAN : AI_STATUS.PASS, fix: proposed };
-  if (output.verdict === 'NEEDS_HUMAN') return { status: AI_STATUS.NEEDS_HUMAN, fix: proposed };
+  // PASS 卻附上修正是矛盾的回答：AI 認為有東西要改，所以照 FIX 處理（套用或交給人工），不放行。
+  const verdict = output.verdict === 'PASS' && proposed ? 'FIX' : output.verdict;
+  if (verdict === 'PASS') return { status: hasHigh ? AI_STATUS.NEEDS_HUMAN : AI_STATUS.PASS, fix: null };
+  if (verdict === 'NEEDS_HUMAN') return { status: AI_STATUS.NEEDS_HUMAN, fix: proposed };
 
   // FIX
   if (!proposed) return { status: AI_STATUS.NEEDS_HUMAN, fix: { description: output.fix.description, edits: [], applied: false, error: 'AI_FIX_EMPTY' } };

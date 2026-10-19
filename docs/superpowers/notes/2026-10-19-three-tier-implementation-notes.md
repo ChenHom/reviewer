@@ -158,6 +158,9 @@
    - 新增 MUT-TS-016（帶 `protectedArguments` 的位置參數字面值改變 → `ESCALATED`）。
    - 限制：container 是最近的一層呼叫，`charge(f(a + 1))` 中的運算子改變對應到 `f#0`，不會對應到 `charge#0`。
 2. **指示註解移到文字相同的 token 前面時沒有 fact**（P1，確認為真）：`// @ts-ignore` 從第一個 `foo(1)` 移到 `foo(2)` 前面，key 都是 `// @ts-ignore@foo`，AST 相同，結果是 `COMPLETE` 沒有 fact → `AUTO_PASS`（fail-open）。修正：key 加上「同樣文字的 token 中第幾個」；前面新增或刪除同樣文字的 token 也會讓編號改變，這時多產生 fact（保守）。
+3. **AI 回答 PASS 卻附上修正時被放行**（P1，確認為真）：schema 允許這種組合，原本記為 `PASS`、修正被丟掉，文字報表的「通過」段落也不顯示修正，`--fail-on-human` 會通過。修正：PASS + 非空的 `fix.edits` 照 FIX 處理（有 `--ai-apply` 且通過檢查時套用，否則交給人工並附上修正建議）。
+4. **ESLint 的其他 inline 設定沒有追蹤**（P2，確認為真）：只新增 `/* eslint no-eval: "off" */` 或 `/* global foo */` 時 AST 相同，檔案為 `AUTO_PASS`，但 CI 的 lint 結果會改變。修正：block comment 開頭為 `eslint`、`eslint-env`、`global(s)`、`exported` 時視為指示註解（一般文字提到 eslint 不算）；順便加入同類的 `biome-ignore`、`oxlint-disable` / `enable`、`deno-lint-ignore`。
+5. **CI 偶發失敗的根本原因**（`tests/evaluation/real-repo-cli.test.js` 的「prepareBaseline 從 git ref 建立可執行的 snapshot」，`ERR_STREAM_PREMATURE_CLOSE`）：`prepareBaseline()` 以 `stream.pipeline(gitArchive.stdout, tar.stdin)` 轉接。tar 讀完 archive 就成功結束，Node 隨即 destroy tar 的 stdin；若這時 git 那端的 EOF 還沒送到 Node，pipeline 會把成功的解壓縮誤判為 premature close。本機以 8 個並行重現 200 次中 4 次（git 與 tar 都 exit 0）。這段程式碼在 master 上就有，這個 PR 讓 test suite 的負載變高而更容易觸發。修正：tar 直接以 `git archive` 的 stdout 作為 stdin（OS 層的 pipe，不經過 Node 的 stream），父行程關閉自己的讀取端（tar 提早失敗時 git 會收到 EPIPE，不會卡住）；同樣的壓力測試 400 次 0 失敗。步驟 5 第 10 點記錄的不穩定（同一個檔案）也可能是同一類時序問題，之後若再出現請另外追查。
 
 ## 跨步驟的注意事項
 

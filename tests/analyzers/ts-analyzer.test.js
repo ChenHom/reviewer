@@ -55,6 +55,11 @@ const cases = [
   ['class semicolon', 'a.ts', 'export class A { a = 1; }\n', 'export class A { a = 1;; }\n', null],
   // 指示移到另一個文字相同的 token 前面：抑制的是另一行，必須產生 fact。
   ['directive moved to identical token', 'a.ts', fn('// @ts-ignore\nfoo(1);\nfoo(2);'), fn('foo(1);\n// @ts-ignore\nfoo(2);'), ['DIRECTIVE_COMMENT_CHANGED', 'DIRECTIVE_COMMENT_CHANGED']],
+  // ESLint 的 inline 設定只在 block comment 開頭時才是設定。
+  ['eslint inline config added', 'a.js', fn('return eval(x);'), `/* eslint no-eval: "off" */\n${fn('return eval(x);')}`, ['DIRECTIVE_COMMENT_CHANGED']],
+  ['eslint global added', 'a.js', fn('return foo;'), `/* global foo: readonly */\n${fn('return foo;')}`, ['DIRECTIVE_COMMENT_CHANGED']],
+  ['biome ignore added', 'a.ts', fn('return x;'), `// biome-ignore lint/style: reason\n${fn('return x;')}`, ['DIRECTIVE_COMMENT_CHANGED']],
+  ['comment mentioning eslint', 'a.js', fn('return x;'), `// eslint is configured in eslint.config.js\n/* see eslint docs */\n${fn('return x;')}`, null],
   ['directive unchanged with repeated tokens', 'a.ts', fn('foo(1);\n// @ts-ignore\nfoo(2);'), fn('foo(1);\n  // @ts-ignore\n  foo(2);'), null],
   ['only decorator removed', 'a.ts', 'export class A {\n  @Transactional()\n  m() {}\n}\n', 'export class A {\n  m() {}\n}\n', ['ANNOTATION_REMOVED']],
   ['only decorator added', 'a.ts', 'export class A {\n  m() {}\n}\n', 'export class A {\n  @Public()\n  m() {}\n}\n', ['ANNOTATION_ADDED']],

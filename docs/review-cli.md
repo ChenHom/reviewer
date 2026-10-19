@@ -143,7 +143,7 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
 TypeScript / JavaScript：analyzer（`analyzers/ts`，TypeScript compiler API）與 PHP 相同，比較兩個版本的 AST 並以 fact 解釋差異：
 
 - 等價（排版、一般註解、引號、分號、trailing comma、多餘括號、property key 是否加引號、數字寫法、JSX 依渲染空白規則的換行，以及 function 內一致的區域變數改名）：`NOT_SELECTED_FOR_HUMAN_REVIEW`。
-- 每個差異都有 fact 解釋：`TARGETED`。fact 與 PHP 相同（`CALL_REMOVED`、`CALL_ARGUMENT_REMOVED`、`BINARY_OPERATOR_CHANGED`、`GUARD_REMOVED`、`LITERAL_CHANGED` 等），另有 decorator 的 `ANNOTATION_REMOVED` / `ANNOTATION_ADDED` 與指示註解的 `DIRECTIVE_COMMENT_CHANGED`（`@ts-ignore` / `@ts-expect-error` / `@ts-nocheck`、`eslint-disable`、`#__PURE__`、webpack / vite 指示、coverage ignore、JSX pragma、triple-slash 指示、shebang 的增減或移動）。`node` preset 與 `.reviewer.json` 的規則比對這些 fact（見下方「Domain 原因代碼」）。
+- 每個差異都有 fact 解釋：`TARGETED`。fact 與 PHP 相同（`CALL_REMOVED`、`CALL_ARGUMENT_REMOVED`、`BINARY_OPERATOR_CHANGED`、`GUARD_REMOVED`、`LITERAL_CHANGED` 等），另有 decorator 的 `ANNOTATION_REMOVED` / `ANNOTATION_ADDED` 與指示註解的 `DIRECTIVE_COMMENT_CHANGED`（`@ts-ignore` / `@ts-expect-error` / `@ts-nocheck`、`eslint-disable` / `eslint-enable`、ESLint 的 inline 設定（`/* eslint rule: "off" */`、`/* global x */`、`/* eslint-env */`、`/* exported */`）、`biome-ignore` / `oxlint-disable` / `deno-lint-ignore`、`#__PURE__`、webpack / vite 指示、coverage ignore、JSX pragma、triple-slash 指示、shebang 的增減或移動，包括移到另一個文字相同的 token 前面）。`node` preset 與 `.reviewer.json` 的規則比對這些 fact（見下方「Domain 原因代碼」）。
 - 有差異無法解釋：`FULL`，原因含 `COV-TS-001:<原因>`；已找到的 fact 的原因也一起列出。
 - 不視為等價、也不以 fact 解釋的情況（寧可要求 review）：型別註記、`as` 轉型、`interface` / `type` 的變更；參數與頂層變數改名；物件簡寫 `{ x }` 或解構 `const { x } = o` 中的變數改名（會改變 key）；會被賦予匿名 function / class / arrow 的變數改名（`fn.name` 會改變）；`function` 與箭頭函式互換；import 順序；`'a'` 與 `` `a` `` 互換；optional chain 外的括號（`(a?.b).c`）。檔案中有 direct `eval(...)` 或 `with` 時不做區域變數改名正規化。
 
@@ -216,6 +216,7 @@ AI 對每個檔案回答 `PASS`（沒有問題）、`NEEDS_HUMAN`（需要人工
 |---|---|---|---|
 | `AI_TRACK` | `PASS`，沒有 `high` 疑慮 | `PASS` | 否 |
 | `AI_TRACK` | `PASS` 但有 `high` 疑慮、`NEEDS_HUMAN` | `NEEDS_HUMAN` | 是 |
+| `AI_TRACK` | `PASS` 但附上修正（矛盾的回答） | 照 `FIX` 處理（下兩列） | 同 `FIX` |
 | `AI_TRACK` | `FIX`，有 `--ai-apply` 且修正通過檢查 | `FIXED` | 否（但有尚未 commit 的修正，見下） |
 | `AI_TRACK` | `FIX`，沒有 `--ai-apply` 或修正沒有通過檢查 | `NEEDS_HUMAN`（修正變成建議） | 是 |
 | `ESCALATED` | 任何回答 | AI 的意見（`FIX` 一律不套用，視為 `NEEDS_HUMAN`） | **是**：AI 不能放行單向門 |
