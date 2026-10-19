@@ -2,14 +2,52 @@ import { Buffer } from 'node:buffer';
 import { basename } from 'node:path';
 
 import { createAnalysisContextBinding } from '../adapters/contracts.js';
+import { CONFIG_FILE, POLICY_FILES, createProjectPolicy, parseProjectConfig } from '../config/project-config.js';
 import { createPhpLaravelAdapter } from '../adapters/php-laravel/adapter.js';
-import { PHP_LARAVEL_DOMAIN_INTERPRETERS } from '../interpreters/php-laravel-domain.js';
+import { createTypeScriptAdapter } from '../adapters/typescript/adapter.js';
+import { interpretSemanticFacts } from '../facts/interpreter.js';
+import { displayArgument, displayText } from '../facts/structured.js';
+import { needsHuman, runAiReview, summarizeHuman } from '../ai/review.js';
+import { factAnchor, findingsFor } from '../findings.js';
 import { createAuthorityState } from '../publication.js';
+import { TRACK, routeFile, summarizeTracks } from '../routing.js';
 import { runAdapterPipeline } from '../runner.js';
-import { diffEntries, diffHunks, mergeBase, readBlob, repositoryRoot, resolveCommit } from './git.js';
+import { diffEntries, diffHunks, mergeBase, readBlob, readTreeFile, repositoryRoot, resolveCommit, worktreeState } from './git.js';
+import { reasonWithHint } from './reasons.js';
 
 export const NOT_SELECTED = 'NOT_SELECTED_FOR_HUMAN_REVIEW';
 export const HUMAN_REVIEW = 'HUMAN_REVIEW_REQUIRED';
+
+/**
+ * 依副檔名選擇 adapter 與 interpreter presets。未列出的副檔名不送 analyzer（`UNSUPPORTED_FILE_TYPE`）。
+ * `presets` 是沒有專案設定時的預設值。
+ */
+export const LANGUAGES = Object.freeze([
+  Object.freeze({
+    id: 'php',
+    match: /\.php$/i,
+    createAdapter: createPhpLaravelAdapter,
+    presets: Object.freeze(['php-laravel', 'payments']),
+  }),
+  Object.freeze({
+    id: 'ts',
+    // 型別宣告檔（`.d.ts`）不送 analyzer。
+    match: /^(?!.*\.d\.[mc]?ts$).*\.(?:[mc]?ts|tsx|[mc]?js|jsx)$/i,
+    createAdapter: createTypeScriptAdapter,
+    presets: Object.freeze(['node']),
+  }),
+]);
+
+/**
+ * 找出路徑對應的語言設定。
+ *
+ * @param {string} path - repository 相對路徑。
+ * @param {object[]} [languages=LANGUAGES] - 語言設定。
+ * @returns {object|null} 語言設定；不支援時為 null。
+ */
+export function languageFor(path, languages = LANGUAGES) {
+  return languages.find((language) => language.match.test(path)) ?? null;
+}
 
 const STATUS_NAMES = Object.freeze({
   A: 'added', D: 'deleted', M: 'modified', R: 'renamed', C: 'copied', T: 'type-changed',
@@ -61,10 +99,12 @@ function snippet(value) {
  */
 export function describeFact(fact) {
   const raw = fact.properties ?? {};
-  const p = Object.fromEntries(Object.entries(raw).map(([key, value]) => [
-    key,
-    ['before', 'after', 'value', 'condition'].includes(key) && value !== null ? snippet(value) : value,
-  ]));
+  const p = Object.fromEntries(Object.entries(raw).map(([key, value]) => {
+    if (['before', 'after', 'value', 'condition'].includes(key) && value !== null) return [key, snippet(value)];
+    if (key === 'callee' || key === 'container') return [key, displayText(value)];
+    if (key === 'argument') return [key, displayArgument(value)];
+    return [key, value];
+  }));
   switch (fact.kind) {
     case 'CALL_REMOVED':
       return `移除呼叫 ${p.callee}`;
@@ -72,6 +112,10 @@ export function describeFact(fact) {
       return `新增呼叫 ${p.callee}`;
     case 'CALL_ARGUMENT_CHANGED':
       return `${p.callee} 的參數 ${p.argument}：${p.before} → ${p.after}`;
+    case 'CALL_ARGUMENT_REMOVED':
+      return `${p.callee} 移除參數 ${p.argument}：${p.value}`;
+    case 'CALL_ARGUMENT_ADDED':
+      return `${p.callee} 新增參數 ${p.argument}：${p.value}`;
     case 'BINARY_OPERATOR_CHANGED':
       return `運算子 ${p.operatorBefore} → ${p.operatorAfter}：${p.before} → ${p.after}`;
     case 'GUARD_REMOVED':
@@ -90,8 +134,14 @@ export function describeFact(fact) {
       return `回傳值 ${p.before || '（無）'} → ${p.after || '（無）'}`;
     case 'CALL_ARGUMENTS_REORDERED':
       return `${p.callee} 的參數順序：(${p.before}) → (${p.after})`;
+    case 'ANNOTATION_REMOVED':
+      return `移除 ${p.value}`;
+    case 'ANNOTATION_ADDED':
+      return `新增 ${p.value}`;
+    case 'DIRECTIVE_COMMENT_CHANGED':
+      return `${p.changeSide === 'before' ? '移除' : '新增'}指示註解 ${snippet(p.comment)}`;
     case 'VARIABLE_CHANGED':
-      return `${p.container === 'param' ? '參數' : '變數'} ${p.before} → ${p.after}`;
+      return `${raw.container?.type === 'param' ? '參數' : '變數'} ${p.before} → ${p.after}`;
     default:
       return fact.kind;
   }
@@ -157,8 +207,8 @@ async function analyzeFile({ adapter, interpreters, identity, timeoutMs }, path,
 /**
  * 決定單一 diff entry 的 review 結果。
  *
- * - 只有 `.php` 的修改（含 rename）會送進 analyzer；新增、刪除、非 PHP、binary、
- *   symlink、submodule 一律要求完整 review。
+ * - 只有 `LANGUAGES` 支援的檔案的修改（含 rename）會送進 analyzer；新增、刪除、不支援的檔案、
+ *   binary、symlink、submodule 一律要求完整 review。
  * - rename 或權限變更即使內容等價也要求 review（autoload 路徑、執行權限可能改變行為）。
  *
  * @param {object} context - analysis context。
@@ -166,8 +216,57 @@ async function analyzeFile({ adapter, interpreters, identity, timeoutMs }, path,
  * @returns {Promise<object>} file result。
  */
 async function reviewEntry(context, entry) {
-  const result = await classifyEntry(context, entry);
+  const result = applyProjectPolicy(await classifyEntry(context, entry), context.project);
   return result.decision === NOT_SELECTED ? result : { ...result, changedLines: await changedLinesFor(context, entry) };
+}
+
+/**
+ * 套用專案設定對檔案的要求（只會讓結果變嚴格）：
+ *
+ * - 修改審查規則本身（`.reviewer.json`、`codingstandards.md`）→ `POLICY_FILE_CHANGED`。
+ * - 符合 `protectedPaths` → `PROTECTED_PATH`。
+ * - 專案設定無效 → `POLICY_CONFIG_INVALID`，一律 `FULL`。
+ *
+ * @param {object} file - file result。
+ * @param {{policy: object, invalid: boolean}} project - 專案 policy 與設定狀態。
+ * @returns {object} file result。
+ */
+export function applyProjectPolicy(file, { policy, invalid }) {
+  const paths = [file.path, file.oldPath].filter(Boolean);
+  const extra = [];
+  if (paths.some((path) => POLICY_FILES.includes(path))) extra.push('POLICY_FILE_CHANGED');
+  if (paths.some((path) => policy.isProtectedPath(path))) extra.push('PROTECTED_PATH');
+  if (invalid) extra.push('POLICY_CONFIG_INVALID');
+  if (extra.length === 0) return file;
+
+  const selected = file.decision === NOT_SELECTED;
+  return {
+    ...file,
+    decision: HUMAN_REVIEW,
+    fallback: invalid ? 'FULL' : (selected ? 'TARGETED' : file.fallback),
+    reasons: selected ? extra : [...file.reasons, ...extra],
+  };
+}
+
+/**
+ * 從 merge base 讀取專案設定。PR 修改設定不影響這次的 review（修改本身是 `POLICY_FILE_CHANGED`）。
+ *
+ * @param {string} repo - repository 根目錄。
+ * @param {string} commit - merge base。
+ * @returns {Promise<object>} `{ path, commit, status, errors, digest, parsed }`；status 為 `absent` / `valid` / `invalid`。
+ */
+export async function loadProjectConfig(repo, commit) {
+  const base = { path: CONFIG_FILE, commit };
+  const file = await readTreeFile(repo, commit, CONFIG_FILE);
+  if (!file) return { ...base, status: 'absent', errors: [], digest: null, parsed: null };
+  if (!['100644', '100755'].includes(file.mode)) {
+    return { ...base, status: 'invalid', errors: ['POLICY_CONFIG_NOT_REGULAR_FILE'], digest: null, parsed: null };
+  }
+
+  const parsed = parseProjectConfig(file.content.toString('utf8'));
+  return parsed.valid
+    ? { ...base, status: 'valid', errors: [], digest: parsed.digest, parsed }
+    : { ...base, status: 'invalid', errors: parsed.errors, digest: null, parsed: null };
 }
 
 /**
@@ -183,12 +282,15 @@ async function classifyEntry(context, entry) {
     path,
     ...(entry.status === 'R' ? { oldPath: entry.oldPath } : {}),
     status: STATUS_NAMES[entry.status] ?? entry.status,
+    // head 版本內容的識別（git blob id）；檔案層級的人工豁免綁定在這個值上。
+    contentHash: entry.status === 'D' ? `deleted:${entry.oldSha}` : `git:${entry.newSha}`,
   };
 
   if (!['A', 'D', 'M', 'R'].includes(entry.status)) return fullReview(base, `UNSUPPORTED_CHANGE_TYPE:${base.status}`);
   if ([entry.oldMode, entry.newMode].includes('160000')) return fullReview(base, 'SUBMODULE_CHANGED');
   if ([entry.oldMode, entry.newMode].includes('120000')) return fullReview(base, 'SYMLINK_CHANGED');
-  if (!path.toLowerCase().endsWith('.php')) return fullReview(base, 'UNSUPPORTED_FILE_TYPE');
+  const language = languageFor(path, context.languages);
+  if (!language) return fullReview(base, 'UNSUPPORTED_FILE_TYPE');
   if (entry.status === 'A') return fullReview(base, 'FILE_ADDED');
   if (entry.status === 'D') return fullReview(base, 'FILE_DELETED');
 
@@ -202,7 +304,7 @@ async function classifyEntry(context, entry) {
   const afterSource = after.toString('utf8');
   let analysis;
   try {
-    analysis = await analyzeFile(context, path, beforeSource, afterSource);
+    analysis = await analyzeFile({ ...context, ...language }, path, beforeSource, afterSource);
   } catch (error) {
     return fullReview(base, `ANALYZER_ERROR:${String(error?.message ?? error).slice(0, 200)}`);
   }
@@ -229,10 +331,15 @@ async function classifyEntry(context, entry) {
     const endByte = Math.max(startByte, (fact.provenance?.endByte ?? startByte) - 1);
     return {
       kind: fact.kind,
+      subject: fact.subject,
       side: side === 'before' ? 'base' : 'head',
       startLine: locate[side](startByte),
       endLine: locate[side](endByte),
       description: describeFact(fact),
+      // 這個 fact 自己產生的原因代碼（`reasons` 是整個檔案的彙總）。
+      blockers: interpretSemanticFacts([fact], language.interpreters).blockers,
+      anchor: factAnchor(fact),
+      scopeHash: typeof fact.properties?.scope?.hash === 'string' ? fact.properties.scope.hash : null,
     };
   });
 
@@ -288,10 +395,11 @@ export function summarizeFiles(files) {
  * @param {string} options.head - head ref。
  * @param {number} [options.concurrency=4] - 同時執行的 analyzer 數。
  * @param {number} [options.timeoutMs=30000] - 單一檔案的 analyzer deadline。
- * @param {object} [options.adapterOptions={}] - createPhpLaravelAdapter 選項。
+ * @param {object} [options.adapterOptions={}] - 各語言 adapter 的選項，以語言 id 為 key（例如 `{ php: { phpBinary } }`）。
+ * @param {object|null} [options.ai=null] - 第 2 層（AI）審查：`{ reviewer, apply, concurrency, maxInputChars, maxFiles }`（見 `runAiReview()`）；null 時不執行。
  * @returns {Promise<object>} review report。
  */
-export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs = 30_000, adapterOptions = {} }) {
+export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs = 30_000, adapterOptions = {}, ai = null }) {
   const [root, baseSha, headSha] = await Promise.all([
     repositoryRoot(repo),
     resolveCommit(repo, base),
@@ -299,29 +407,115 @@ export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs
   ]);
   // 與 GitHub PR 相同，只看 head 相對於 merge base 的變更：base 在分支建立後的新 commit 不算在內。
   const forkPoint = await mergeBase(root, baseSha, headSha);
-  const entries = await diffEntries(root, forkPoint, headSha);
+  const [entries, config] = await Promise.all([diffEntries(root, forkPoint, headSha), loadProjectConfig(root, forkPoint)]);
+  // 設定無效時以預設值分析（仍列出 fact），但每個檔案都是 FULL + POLICY_CONFIG_INVALID。
+  const policy = createProjectPolicy(config.parsed);
   const context = {
+    ...analysisContext({
+      policy,
+      invalid: config.status === 'invalid',
+      adapterOptions,
+      timeoutMs,
+      identity: {
+        repository: basename(root),
+        baseSha: forkPoint,
+        headSha,
+        policyId: 'pr-review',
+        policyVersion: '1',
+        runnerVersion: '1',
+      },
+    }),
     repo: root,
-    adapter: createPhpLaravelAdapter(adapterOptions),
-    interpreters: PHP_LARAVEL_DOMAIN_INTERPRETERS,
-    timeoutMs,
-    identity: {
-      repository: basename(root),
-      baseSha: forkPoint,
-      headSha,
-      policyId: 'pr-review',
-      policyVersion: '1',
-      runnerVersion: '1',
-    },
   };
-  const files = await mapWithConcurrency(entries, concurrency, (entry) => reviewEntry(context, entry));
+  // --ai-apply 會改寫 worktree：worktree 必須正好是 head 且沒有未 commit 的變更。
+  if (ai?.apply) {
+    const state = await worktreeState(root);
+    if (state.head !== headSha || !state.clean) throw new Error(`AI_APPLY_WORKTREE_MISMATCH:worktree 必須是乾淨的 ${headSha.slice(0, 12)}`);
+  }
+  const reviewed = await mapWithConcurrency(entries, concurrency, (entry) => reviewEntry(context, entry));
+  const routingOptions = { oneWayDoors: policy.oneWayDoors };
+  const routed = reviewed.map((file) => ({ ...file, ...routeFile(file, routingOptions) }));
+  let files = routed.map((file) => ({ ...file, findings: findingsFor(file, { oneWayDoors: policy.oneWayDoors }) }));
+
+  let aiSummary = null;
+  if (ai) {
+    const result = await runAiReview(files, {
+      ...ai,
+      repo: root,
+      mergeBase: forkPoint,
+      headSha,
+      describeReason: reasonWithHint,
+      checkFix: (path, beforeSource, afterSource) => reviewSources(context, path, beforeSource, afterSource),
+    });
+    files = result.files;
+    aiSummary = result.summary;
+  } else {
+    files = files.map((file) => ({ ...file, needsHuman: needsHuman(file) }));
+  }
 
   return {
     repository: basename(root),
     base: { ref: base, sha: baseSha },
     head: { ref: head, sha: headSha },
     mergeBase: forkPoint,
+    config: { path: config.path, commit: config.commit, status: config.status, errors: config.errors, digest: config.digest },
     decision: summarizeFiles(files),
+    routing: summarizeTracks(files),
+    ai: aiSummary,
+    human: summarizeHuman(files),
     files,
+  };
+}
+
+/**
+ * 機械審查的共用設定：每個語言的 adapter 與 interpreters、專案設定與 identity。
+ *
+ * @param {object} options - 選項。
+ * @param {object} options.policy - createProjectPolicy() 的結果。
+ * @param {boolean} [options.invalid=false] - 專案設定是否無效。
+ * @param {object} [options.adapterOptions={}] - 各語言 adapter 的選項。
+ * @param {number} [options.timeoutMs=30000] - 單一檔案的 analyzer deadline。
+ * @param {object} options.identity - AnalysisIdentity。
+ * @returns {object} analysis context。
+ */
+export function analysisContext({ policy, invalid = false, adapterOptions = {}, timeoutMs = 30_000, identity }) {
+  return {
+    project: { policy, invalid },
+    languages: LANGUAGES.map((language) => ({
+      ...language,
+      adapter: language.createAdapter(adapterOptions[language.id]),
+      interpreters: policy.interpretersFor(language),
+    })),
+    timeoutMs,
+    identity,
+  };
+}
+
+/**
+ * 以機械審查判斷一組 before / after 原始碼（用於 AI 修正的檢查與 retro 的 mutation case 草案），
+ * 回傳決策與路由。不支援的檔案類型無法分析，視為 `AI_TRACK`。
+ *
+ * @param {object} context - analysisContext() 的結果。
+ * @param {string} path - 檔案路徑（決定語言）。
+ * @param {string} beforeSource - before。
+ * @param {string} afterSource - after。
+ * @returns {Promise<{decision: string, fallback: string|null, reasons: string[], track: string, oneWayDoors: string[]}>} 結果。
+ */
+export async function reviewSources(context, path, beforeSource, afterSource) {
+  const language = languageFor(path, context.languages);
+  if (!language) return { decision: HUMAN_REVIEW, fallback: 'FULL', reasons: ['UNSUPPORTED_FILE_TYPE'], track: TRACK.AI_TRACK, oneWayDoors: [] };
+  const analysis = await analyzeFile({ ...context, ...language }, path, beforeSource, afterSource);
+  const selected = analysis.decision.status === NOT_SELECTED;
+  const file = applyProjectPolicy({
+    path,
+    decision: selected ? NOT_SELECTED : HUMAN_REVIEW,
+    fallback: selected ? null : (analysis.decision.fallback ?? 'FULL'),
+    reasons: analysis.decision.reasons ?? [],
+  }, context.project);
+  return {
+    decision: file.decision,
+    fallback: file.fallback,
+    reasons: file.reasons,
+    ...routeFile(file, { oneWayDoors: context.project.policy.oneWayDoors }),
   };
 }

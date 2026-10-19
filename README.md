@@ -47,7 +47,7 @@ NOT_SELECTED_FOR_HUMAN_REVIEW
 Authoritative Candidate / Summary / Check
 ```
 
-目前第一個 executable Adapter 是 PHP/Laravel。
+目前的 executable Adapter：PHP/Laravel 與 TypeScript / JavaScript（兩者都是 AST 比對與 semantic facts）。
 
 ## Review 一個 PR
 
@@ -63,11 +63,12 @@ node bin/review.js --repo /path/to/project --base origin/master --head HEAD
 
 ```
 Review：HUMAN_REVIEW_REQUIRED（3/4 個檔案需要 review；TARGETED 2、FULL 1）
+路由：AI_TRACK（交給 AI 審查 3，其中 0 個 AI 審查後必須人工確認；不需要 review 1）
 project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 merge base 895b1d0a2b2b
 
-需要 review：
+交給 AI 審查，由 AI 判斷是否需要人工（AI_TRACK）：
   FULL     composer.json
-           - UNSUPPORTED_FILE_TYPE（非 PHP 檔案，未分析）
+           - UNSUPPORTED_FILE_TYPE（不支援的檔案類型，未分析）
            變更位置：head:L5
   TARGETED app/Services/FreezeService.php
            - COMPARISON_OPERATOR_CHANGED
@@ -83,16 +84,18 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
   app/Entities/Observers/FreezeObserver.php
 ```
 
-第二行是 repository 與 base / head 的 ref 和 commit；merge base 不是 base 的 commit 時（base 分支之後又有新 commit），會另外標出實際的比較起點。
+第二行是三層審查的路由（見下方）；第三行是 repository 與 base / head 的 ref 和 commit；merge base 不是 base 的 commit 時（base 分支之後又有新 commit），會另外標出實際的比較起點。
 
 - `FULL`：有無法以 fact 解釋的變更（例如 `COV-PHP-001:UNRECOGNIZED_PHP_CHANGE`）、analyzer 失敗，或檔案沒有送進 analyzer。需完整 review 該檔案。
 - `TARGETED`：每一處程式碼變更都已被 fact 解釋（或檔案只是 rename / 權限變更）；解釋變更的 fact 不一定有對應的 domain 規則，見下方 `FACT_UNHANDLED`。列出的原因與位置是 review 的起點，**整個檔案仍需 review**（reduction 是 file-level，見「目前能力邊界」）。
 - `FACT_UNHANDLED ×N`：有 N 個 fact 沒有對應的 domain 規則，例如上例 `->first()` → `->firstOrFail()` 產生的 `CALL_REMOVED` / `CALL_ADDED`。這些變更仍已被 fact 解釋，所以檔案沒有其他無法解釋的變更時是 `TARGETED`。
 - 每個 fact 都會讓檔案需要 review。PHP 檔只有在沒有任何 fact、AST 等價（排版、註解、一致的區域變數改名等，見「已實作」），而且不是 rename 或權限變更時，才會列在「不需要 review」，例如上例只加了註解、改了區域變數名稱的 `FreezeObserver.php`。
-- 只有 `.php` 的修改與 rename 會送進 analyzer；新增、刪除、非 PHP、binary、symlink、submodule 檔案一律 `FULL`。rename 與檔案權限變更即使內容等價也要求 review（`FILE_RENAMED`、`FILE_MODE_CHANGED`）。
+- 只有支援的語言（PHP，以及 TypeScript / JavaScript）的修改與 rename 會送進 analyzer；新增、刪除、不支援的檔案、binary、symlink、submodule 一律 `FULL`。TypeScript / JavaScript 與 PHP 相同：AST 等價時不需要 review，可被 fact 解釋的變更為 `TARGETED`，其餘為 `FULL`（`COV-TS-001:*`），預設啟用 `node` preset，見 [PR Review CLI「檔案分類」](docs/review-cli.md#檔案分類)。rename 與檔案權限變更即使內容等價也要求 review（`FILE_RENAMED`、`FILE_MODE_CHANGED`）。
 - PR 層級的決策只有在**所有**檔案都不需 review 時才是 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
+- 路由（三層審查）：核心流程是**機械審查 → AI 審查剩下的 → AI 審查後需要人處理、確認的才交給人工**。上面的報表是機械審查的結果：不需要 review 的檔案到此結束；其餘交給 AI 審查。命中單向門的檔案（例如 `TRANSACTION_BOUNDARY_REMOVED`、`AUTHORIZATION_GUARD_REMOVED`）列在「AI 審查後必須人工確認」（`ESCALATED`），AI 不能放行；其他檔案（包括 `FULL`）由 AI 判斷是否需要人工（`AI_TRACK`）。路由不改變上面的決策。專案可以用 `.reviewer.json` 加入業務相關的單向門，例如把 `amount` 列為敏感運算元後，上例的 `FreezeService.php` 會變成必須人工確認（見 [專案設定](docs/project-config.md)）。
+- AI 審查（第 2 層）：加上 `--ai`（需要 `npm ci` 與 `ANTHROPIC_API_KEY`）時，`AI_TRACK` 與 `ESCALATED` 檔案逐一交給 Claude（預設 `claude-opus-5-5`，依 merge base 的 `codingstandards.md` 審查，預設啟用 server-side fallback）。報表改為「需要人工確認」「AI 已修正」「AI 審查通過」三段；`AI_TRACK` 檔案由 AI 放行或交給人工，單向門 AI 不能放行，AI 失敗一律交給人工。`--fail-on-human` 在仍需要人工時讓 CI 失敗；`--ai-apply` 把 AI 的小修正寫入 worktree（不 commit，修正若命中單向門則不套用）。見 [PR Review CLI「AI 審查」](docs/review-cli.md#ai-審查第-2-層--ai)。
 
-選項（例如 `--json` 報表、讓 CI 在需要 review 時失敗的 `--fail-on-review`）、exit code、所有原因代碼、JSON 報表格式與限制見 [PR Review CLI](docs/review-cli.md)。
+選項（例如 `--json` 報表、讓 CI 在需要 review 時失敗的 `--fail-on-review`、只在命中單向門時失敗的 `--fail-on-escalation`、AI 審查後仍需要人工時失敗的 `--fail-on-human`）、exit code、所有原因代碼、JSON 報表格式與限制見 [PR Review CLI](docs/review-cli.md)。
 
 ## 已實作
 
@@ -106,9 +109,11 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
 - `__LINE__` 的行號與 `__COMPILER_HALT_OFFSET__` 納入 AST 比較：排版變更讓它們的值改變時不視為等價
 - 判為等價前同時檢查 PHP 8 與 PHP 7 的解讀（7.4 語法，`#[` 視為註解）：兩邊的可解析性必須一致、且兩種語法下都等價，否則回報 `PHP_GRAMMAR_DIVERGENCE`（例如 `.` 與 `+` 的優先順序在 PHP 8 改變）。舊版 PHP 不支援的新語法（例如參數 trailing comma）不在檢查範圍，請以目標版本的 `php -l` 檢查
 - Generic facts：
-  - `CALL_ARGUMENT_CHANGED`（named argument；位置參數只在無法被更細 fact 解釋時以 `#index` 輸出，且不視為已解釋）
-  - `CALL_REMOVED` / `CALL_ADDED`（含 closure 內的巢狀 call 與鏈式 call，如 `->lockForUpdate`；receiver 保留完整名稱，如 `$this->adminDB->transaction`）；同一位置換成另一個 method（`->first()` → `->firstOrFail()`）由這兩個 fact 一起解釋
-  - `BINARY_OPERATOR_CHANGED`（左右運算元不變，只有運算子改變）
+  - `CALL_ARGUMENT_CHANGED`（named argument；位置參數只在無法被更細 fact 解釋時以位置數字輸出、顯示為 `#index`，且不視為已解釋）
+  - `CALL_ARGUMENT_REMOVED` / `CALL_ARGUMENT_ADDED`（參數純移除或純新增：一邊的參數是另一邊的子序列，且增減的參數不含 closure；`argument` 為位置數字或具名參數名稱。同時改了其他參數時維持未解釋）
+  - `CALL_REMOVED` / `CALL_ADDED`（含 closure 內的巢狀 call 與鏈式 call，如 `->lockForUpdate`；receiver 保留完整名稱，如 `$this->adminDB->transaction`）；closure 內的呼叫依 closure 各自配對（錨點為傳給哪個呼叫的第幾個參數與該呼叫的常數參數，例如 `Route::get('/admin', …)`），呼叫移到另一個 closure 或移出 closure 時產生這兩個 fact；同一位置換成另一個 method（`->first()` → `->firstOrFail()`）由這兩個 fact 一起解釋
+  - fact schema v2：`callee` 與 `container` 是語言中立的結構化欄位，interpreter 只比對結構，不解析 PHP 語法字串。`callee` 為 `{ text, name, receiver, kind, optional }`，例如 `$this->adminDB->transaction` → `name: 'transaction'`、`receiver: ['this', 'adminDB']`、`kind: 'method'`；`\Illuminate\Support\Facades\Gate::authorize` → `receiver: ['Illuminate', 'Support', 'Facades', 'Gate']`、`kind: 'static'`；鏈式 call 的 `receiver` 為 `null`。`container` 為 `{ type, keys, text, … }`，例如 `Route::group#0[middleware]` → `type: 'argument'`、`callee`（`Route::group`）、`argument: 0`、`keys: ['middleware']`。`text` 是原本的文字格式，只供顯示（定義見 `src/facts/structured.js`）
+  - `BINARY_OPERATOR_CHANGED`（左右運算元不變，只有運算子改變；帶 container，如 `$g->charge#0`）
   - `GUARD_REMOVED` / `GUARD_ADDED`（body 只有 throw / return / exit 的 if）
   - `ARRAY_ITEM_REMOVED` / `ARRAY_ITEM_ADDED`（帶 container，如 `property:$beforeActionList`、`Route::group#0[middleware]`）
   - `LITERAL_CHANGED`（數字、字串、true / false / null 換成另一個字面值；帶 container，如 `const:RATE`、`$q->take#0`、`return[title]`）
@@ -116,7 +121,7 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
   - `RETURN_VALUE_CHANGED`（回傳值換成常數或從常數換掉，如 `return null;`、`return [];`、`return;`；兩邊都不是常數時維持未解釋）
   - `CALL_ARGUMENTS_REORDERED`（參數內容相同、只有順序改變；method / function call 與 `new`）
   - `VARIABLE_CHANGED`（改用另一個變數，如部分改名、合併變數、參數改名；只在 scope 內一致改名也無法解釋差異時才輸出，container `param` 表示參數）
-- Deterministic PHP/Laravel interpreters（callee 會先正規化 fully-qualified 前導 `\`；括號內的大寫代碼為輸出的 blocker；沒有任何 interpreter 處理的 fact 輸出 `FACT_UNHANDLED:<factId>`）：
+- Deterministic PHP/Laravel interpreters（比對結構化 callee 的 `name` / `receiver`，fully-qualified 前導 `\` 不在 `receiver` 中；括號內的大寫代碼為輸出的 blocker；沒有任何 interpreter 處理的 fact 輸出 `FACT_UNHANDLED:<factId>`）：
   - Payment idempotency identity change（named argument `idempotencyKey` 改變 → `PAYMENT_IDEMPOTENCY_IDENTITY_CHANGED`）
   - Transaction boundary removal（DB receiver 上的 `transaction` / `commit` 被移除，如 `DB::`、`\DB::`、`$db`、`$this->adminDB`、`$connection`；`beginTransaction` 不論 receiver → `TRANSACTION_BOUNDARY_REMOVED`）、rollback removal（DB receiver 上的 `rollBack` / `rollback` → `TRANSACTION_ROLLBACK_REMOVED`）
   - Authorization guard removal（`$this->authorize`、`$this->authorizeForUser`、`Gate::authorize`、`Illuminate\Support\Facades\Gate::authorize` → `AUTHORIZATION_GUARD_REMOVED`）；第一個參數的 ability 字串改值（如 `'update'` 改成 `'view'` → `AUTHORIZATION_ABILITY_CHANGED`）
@@ -128,11 +133,28 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
   - Condition negation（`CONDITION_NEGATED`；條件以外的反轉為 `BOOLEAN_VALUE_NEGATED`）、回傳值改變（`RETURN_VALUE_CHANGED`）、參數順序（`ARGUMENTS_REORDERED`）、參數改名（`PARAMETER_RENAMED`，named argument API）、改用另一個變數（`VARIABLE_REFERENCE_CHANGED`）、`const` 宣告（class 常數與頂層 / namespace 常數）改值（`CONSTANT_VALUE_CHANGED`）
   - Laravel validation rules（`rules()` 回傳值、`$this` / `$request` 的 `validate` / `validateWithBag`、`Validator::make` 的規則增減或改值 → `VALIDATION_RULE_CHANGED`）
   - Laravel model attributes（`$fillable` / `$guarded` → `MASS_ASSIGNMENT_CHANGED`、`$hidden` / `$visible` → `SERIALIZED_ATTRIBUTES_CHANGED`、`$casts` / `casts()` → `ATTRIBUTE_CAST_CHANGED`）
+  - Laravel 資料刪除（新增 `forceDelete`、`truncate`、`dropColumn`、`Schema::drop` / `dropIfExists`、`Storage::delete` / `File::delete`、`DB::delete`、`unlink` → `DATA_DELETION_ADDED`；一般的 `->delete()` 可能是 soft delete，不列入）
+  - decorator / attribute 增減（`ANNOTATION_REMOVED` / `ANNOTATION_ADDED`）、指示註解改變（`DIRECTIVE_COMMENT_CHANGED`）
+- TypeScript / JavaScript analyzer（`analyzers/ts`，TypeScript compiler API，`typescript` 鎖定 5.9.3，以執行 CLI 的同一個 Node 執行）：
+  - AST 等價判定：排版、一般註解、引號、分號、trailing comma、多餘括號、property key 是否加引號、數字寫法、JSX 依渲染空白規則的換行，以及 function 內一致的區域變數改名視為等價（參數、物件簡寫、解構、會被賦予匿名 function 的變數、有 `eval` / `with` 的檔案不做改名正規化）
+  - 結構比對輸出與 PHP 相同的 generic facts（`CALL_REMOVED` / `CALL_ADDED`、`CALL_ARGUMENT_*`、`BINARY_OPERATOR_CHANGED`、`GUARD_*`、`ARRAY_ITEM_*`（物件 / 陣列成員）、`LITERAL_CHANGED`、`EXPRESSION_NEGATED`、`RETURN_VALUE_CHANGED`、`CALL_ARGUMENTS_REORDERED`、`VARIABLE_CHANGED`），以及 decorator 的 `ANNOTATION_REMOVED` / `ANNOTATION_ADDED` 與 `@ts-ignore`、`eslint-disable`、`#__PURE__`、shebang 等的 `DIRECTIVE_COMMENT_CHANGED`。callee 的 `receiver` 為 `this.db` → `['this', 'db']`；每個 fact 帶 scope hash（`ts:` 前綴）與 UTF-8 byte 位置
+  - 匿名 callback 內的呼叫依 callback 各自配對（錨點為傳給哪個呼叫的第幾個參數與該呼叫的常數參數，例如路由路徑），呼叫從一個 handler 移到另一個時產生 `CALL_REMOVED` / `CALL_ADDED`；JS 檔中帶型別的 JSDoc（`@type`、`@param` 等，checkJs 會讀取）改變時產生 `DIRECTIVE_COMMENT_CHANGED`
+  - 判斷不了就不解釋（`COV-TS-001:UNRECOGNIZED_TS_CHANGE`）：property key 改變、型別註記、`as` 轉型、`function` 與箭頭函式互換、import 順序、modifier 增減等
+- Deterministic Node.js interpreters（preset `node`，TS / JS 預設啟用）：
+  - Transaction（移除 `prisma.$transaction`、`startTransaction` / `commitTransaction` / `withTransaction`、DB receiver 的 `transaction` / `commit`、knex `.transacting()`、`@Transactional()`，或移除 Sequelize `{ transaction: t }` / Mongoose `{ session }` 選項 → `TRANSACTION_BOUNDARY_REMOVED`；`rollbackTransaction` / `abortTransaction` / transaction 物件的 `rollback` → `TRANSACTION_ROLLBACK_REMOVED`；Sentry 等 tracing 的 transaction 不算）
+  - Row lock（knex `.forUpdate()` / `.forShare()`、TypeORM `.setLock()`、`{ lock }` / `{ lockMode }` 選項被移除 → `ROW_LOCK_REMOVED`）
+  - 授權（NestJS `@UseGuards` / `@Roles` 等被移除、`@UseGuards` 少了 guard 或換掉、`@Public()` 等被加上、CASL `throwUnlessCan` 等被移除、`app.useGlobalGuards` 被移除 → `AUTHORIZATION_GUARD_REMOVED`；`@Roles` / `@Permissions` 的參數改變或增減 → `AUTHORIZATION_ABILITY_CHANGED`）
+  - Middleware（Express / Koa / Fastify 的 app / router 路由註冊少了 middleware 參數、換掉或改變順序、middleware 陣列少了元素、`app.use` / `addHook` / Nest `consumer.apply` / `passport.authenticate` 被移除、Fastify 的 `onRequest` / `preHandler` 等 hook 選項被移除 → `MIDDLEWARE_GUARD_REMOVED`；`axios.post` 等不是路由註冊）
+  - Token / 簽章驗證（`jwt.verify`、`jwtService.verifyAsync`、jose `jwtVerify`、`crypto.timingSafeEqual`、Stripe `webhooks.constructEvent` 與名稱像簽章驗證的 method 被移除 → `SIGNATURE_VERIFICATION_REMOVED`）
+  - Validation（zod / joi / yup schema、class-validator decorator、`ValidationPipe`、`useGlobalPipes` / `@UsePipes`、`safeParse` 等、Fastify 路由的 `schema` → `VALIDATION_RULE_CHANGED`）
+  - 資料刪除（新增 `deleteMany`、`dropTable`、`findByIdAndDelete`、S3 `deleteObject`、knex `.del()`、DB / repository / model 上的 `delete` / `remove` / `destroy` / `clear`、Sequelize `User.destroy`、`fs.rm` / `unlink` / `rimraf` → `DATA_DELETION_ADDED`；`map.delete`、`socket.destroy` 等不算）
 - persisted authority / stale analysis protection
 - Summary / candidate digest binding
 - Mutation Evaluation Harness
 - Historical PR Evaluation Harness
 - PR review CLI（`bin/review.js`，見 [PR Review CLI](docs/review-cli.md)）
+- 第 2 層 AI 審查（`--ai`，`src/ai/`）：Anthropic Messages API（`@anthropic-ai/sdk`，只在啟用時載入）、structured outputs、server-side fallback、prompt cache；AI 判斷需要人工的項目成為 `kind: AI` 的 finding
+- Retro（`bin/retro.js`，見 [Retro](docs/retro.md)）：彙整一段期間的 review 報表（路由比例、單向門、FULL 原因、沒有規則的 fact、AI 結果、規範引用），`--ai` 時提出 `codingstandards.md` 增刪、`.reviewer.json` 規則（以設定驗證器檢查）與 mutation case 草案（以機械審查確認）
 - provider-neutral GitHub sink boundary
 
 ## 目前驗證基準
@@ -140,13 +162,15 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
 Mutation corpus：
 
 ```
+Total cases                       49（critical 41、safe 8；TS 23 個）
 Critical Recall               100.0%
 False Negative Rate             0.0%
-Critical Direct Fact Coverage 100.0%
+Critical Direct Fact Coverage  97.6%
+Critical Escalation Rate       80.5%
 Safe Reduction Rate           100.0%
-Partial Coverage Rate          15.0%
+Partial Coverage Rate          14.3%
 Analysis Failure Rate           0.0%
-Full Review Fallback Rate      15.0%
+Full Review Fallback Rate      14.3%
 ```
 
 Real-repo evaluation（[說明](evaluation/real-repo/README.md)；兩個真實 PHP 金流專案與一個 Laravel 11 專案、3,093 個檔案，seed 42、rate 0.3，共 12,283 筆：3,093 unchanged、3,648 safe、5,542 risky）。`npm run eval:real-repo -- evaluate --repo <label>=<path> ...` 的摘要輸出：

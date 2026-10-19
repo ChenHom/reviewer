@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "analyzer:install": "composer install --working-dir=analyzers/php --no-interaction",
-    "lint": "eslint bin src tests evaluation",
+    "analyzer:install": "composer install --working-dir=analyzers/php --no-interaction && npm ci --prefix analyzers/ts --no-audit --no-fund",
+    "lint": "eslint bin src tests evaluation analyzers/ts/bin analyzers/ts/src",
     "prepare": "simple-git-hooks",
     "test": "node --test",
     "test:safety": "node --test",
@@ -24,5 +24,8 @@
     "eslint": "^10.8.1",
     "eslint-plugin-jsdoc": "^63.3.3",
     "simple-git-hooks": "^2.13.1"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.131.0"
   }
 }

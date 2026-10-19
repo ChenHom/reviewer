@@ -10,25 +10,28 @@
 - `src/review/git.js`：解析 ref、merge base、`git diff`、讀取 blob。
 - `src/review/review.js`：逐檔決策（`classifyEntry` / `reviewEntry`）、PR 層級彙整（`summarizeFiles`）、`reviewRange()`。
 - `src/review/format.js`：文字輸出。
+- `src/ai/`：第 2 層 AI 審查（`client.js` 呼叫 Anthropic API、`prompt.js`、`schema.js`、`review.js` 的 `runAiReview()`），見「AI 審查」。
 - 測試：`tests/review/review.test.js`。
 
 ## 做什麼、不做什麼
 
 - 決策單位是**檔案**（file-level review scope reduction）。每個檔案只會是 `NOT_SELECTED_FOR_HUMAN_REVIEW`，或是 `HUMAN_REVIEW_REQUIRED` 加上 `TARGETED` / `FULL` 其中之一。
-- 只有 `.php` 檔的修改與 rename 會送進 PHP analyzer（binary 除外）；其他變更一律 `FULL`。
+- 只有 PHP 與 TypeScript / JavaScript 檔的修改與 rename 會送進 analyzer（binary 除外）；其他變更一律 `FULL`。
 - 輸出中的行號（「變更位置」與 fact 位置）是 review 的**起點**，不是 review 範圍。blocker 尚未建立 `blocker → factId → provenance` 的 region-level contract（見 [README「目前能力邊界」](../README.md#目前能力邊界)），所以不能解讀成「只有標示的行需要看」：需要 review 的檔案都要看整個檔案。
-- CLI 只讀取 git 物件，結果輸出到 stdout（與 `--out` 指定的檔案），不會發布到 GitHub（不留言、不建立 check）。
+- CLI 只讀取 git 物件，結果輸出到 stdout（與 `--out` 指定的檔案），不會發布到 GitHub（不留言、不建立 check）。`--ai` 會把需要 review 的檔案的 diff 與內容送到 Anthropic API；`--ai-apply` 會改寫 worktree 中的檔案（不 commit）。
 
 ## 前置需求
 
 - `git`，在 PATH 上。
-- Node.js。CLI 用到 `os.availableParallelism`，至少需要 Node 18.14；`package.json` 沒有宣告 `engines`，只有 CI 使用的 Node 24 經過測試。CLI 只用 Node 內建模組與本 repo 的 `src/`，執行時不需要 `npm install`（`npm ci` 是給 lint 與測試用的）。
+- Node.js。CLI 用到 `os.availableParallelism`，至少需要 Node 18.14；`package.json` 沒有宣告 `engines`，只有 CI 使用的 Node 24 經過測試。CLI 只用 Node 內建模組與本 repo 的 `src/`，執行時不需要 `npm install`（`npm ci` 是給 lint 與測試用的）；只有 `--ai` 需要 `npm ci` 安裝的 `@anthropic-ai/sdk` 與環境變數 `ANTHROPIC_API_KEY`（見「AI 審查」）。
 - PHP CLI 8.3 以上，以 `php` 的名稱放在 PATH 上（`analyzers/php/composer.json` 要求 `php >= 8.3`；CI 使用 PHP 8.4）。
 - Composer 2，用來安裝 analyzer 依賴（[nikic/php-parser](https://github.com/nikic/PHP-Parser) 5.9.0，版本鎖定在 `analyzers/php/composer.lock`）：
 
   ```bash
-  npm run analyzer:install   # composer install --working-dir=analyzers/php --no-interaction
+  npm run analyzer:install   # composer install --working-dir=analyzers/php，再 npm ci --prefix analyzers/ts
   ```
+
+- TypeScript / JavaScript 檔案的 analyzer（`analyzers/ts`）以執行 CLI 的同一個 Node.js 執行，依賴 `typescript` 5.9.3（版本鎖定在 `analyzers/ts/package-lock.json`），同樣由 `npm run analyzer:install` 安裝。沒有安裝時每個送進 TS analyzer 的檔案為 `FULL`（`COV-TS-001:TS_ANALYZER_DEPENDENCY_MISSING`）。
 
 - 要 review 的 repository 必須同時有 base 與 head 的歷史，才找得到 merge base（見「比較範圍」）。
 
@@ -62,13 +65,21 @@ node bin/review.js --repo /path/to/project --base origin/master --head HEAD
 | `--json` | 關 | stdout 改為輸出 JSON 報表（取代文字輸出） |
 | `--out <file>` | 無 | 另外把 JSON 報表寫到檔案。不論有沒有 `--json` 都是同一份 JSON；上層目錄不存在時會自動建立 |
 | `--fail-on-review` | 關 | PR 層級決策為 `HUMAN_REVIEW_REQUIRED` 時 exit code 為 1 |
+| `--fail-on-escalation` | 關 | PR 層級路由為 `ESCALATED`（有檔案命中單向門，AI 審查後必須人工確認，見「路由」）時 exit code 為 1 |
+| `--fail-on-human` | 關 | 有任何檔案需要人工（`human.required`），或有尚未 commit 的 AI 修正（`human.pendingFixes > 0`）時 exit code 為 1。沒有 `--ai` 時 `AI_TRACK` 檔案也算需要人工（沒有人看過） |
+| `--ai` | 關 | 把 `AI_TRACK` 與 `ESCALATED` 檔案交給 AI 審查，見「AI 審查」 |
+| `--ai-model <id>` | `claude-opus-5-5` | AI 審查的模型 |
+| `--ai-effort <level>` | `high` | `low`、`medium`、`high`、`xhigh` 或 `max`；其他值以 `AI_EFFORT_INVALID` 結束 |
+| `--ai-apply` | 關 | 把 AI 對 `AI_TRACK` 檔案的修正寫入 worktree（不 commit），見「AI 審查」 |
+| `--ai-concurrency <n>` | `4` | 同時進行的 AI 請求數；整數 1–32 |
+| `--ai-max-files <n>` | `50` | 最多交給 AI 的檔案數；整數 1–10000。超過的檔案為 AI 失敗（需要人工） |
 | `--concurrency <n>` | CPU 數與 8 取小者 | 同時執行的 analyzer process 數；整數 1–64。不影響結果與輸出順序 |
 | `--timeout-ms <n>` | `30000` | 單一檔案的 analyzer deadline（毫秒）；整數 1–2147483647。逾時的 analyzer 會被終止，該檔案為 `FULL`，原因 `ANALYZER_ERROR:PHP_ANALYZER_ABORTED` |
 | `--help`、`-h` | | 印出用法並以 0 結束（忽略其他參數） |
 
 - ref 以 `git rev-parse --verify <ref>^{commit}` 解析：branch、remote branch、tag、commit SHA、`HEAD~1` 都可以。
 - 以 `-` 開頭的 ref 一律被拒絕（`GIT_REF_INVALID`）。選項值本身以 `-` 開頭時必須寫成 `--base=-x`，`--base -x` 會先被參數解析拒絕。
-- `--concurrency` / `--timeout-ms` 不是範圍內的整數時以 `OPTION_INVALID` 結束。
+- `--concurrency` / `--timeout-ms` / `--ai-concurrency` / `--ai-max-files` 不是範圍內的整數時以 `OPTION_INVALID` 結束。`--ai-*` 沒有搭配 `--ai` 時以 `OPTION_REQUIRES_AI` 結束。
 
 ## 比較範圍：merge base
 
@@ -84,7 +95,7 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
 - 文字輸出的第二行標示比較範圍。merge base 與 base 不同時，加上「比較起點」：
 
   ```
-  shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge base f30b6d9d7ca0
+  shop  main (48016bdb0fe7) → feature (594959a22beb)，比較起點為 merge base ec4021f968a4
   ```
 
   base 是 head 的祖先（例如 PR 分支已經 rebase 到最新的 base）時，merge base 就是 base，不會有後半段。
@@ -104,12 +115,12 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
 | 1 | git 狀態不是新增、刪除、修改或 rename。實際會遇到的是 `type-changed`（一般檔案、symlink、submodule 之間互換） | `FULL` | `UNSUPPORTED_CHANGE_TYPE:<status>` |
 | 2 | 任一側是 submodule（mode `160000`） | `FULL` | `SUBMODULE_CHANGED` |
 | 3 | 任一側是 symlink（mode `120000`） | `FULL` | `SYMLINK_CHANGED` |
-| 4 | 路徑不以 `.php` 結尾（不分大小寫；rename 看新路徑） | `FULL` | `UNSUPPORTED_FILE_TYPE` |
-| 5 | 新增的 PHP 檔 | `FULL` | `FILE_ADDED` |
-| 6 | 刪除的 PHP 檔 | `FULL` | `FILE_DELETED` |
+| 4 | 路徑不是支援的語言（不分大小寫；rename 看新路徑）：PHP 為 `.php`；TypeScript / JavaScript 為 `.ts`、`.tsx`、`.mts`、`.cts`、`.js`、`.jsx`、`.mjs`、`.cjs`，但型別宣告檔（`.d.ts`、`.d.mts`、`.d.cts`）除外 | `FULL` | `UNSUPPORTED_FILE_TYPE` |
+| 5 | 新增的檔案 | `FULL` | `FILE_ADDED` |
+| 6 | 刪除的檔案 | `FULL` | `FILE_DELETED` |
 | 7 | 任一側內容含 NUL byte | `FULL` | `BINARY_FILE` |
 | 8 | analyzer 執行失敗（找不到 `php`、逾時、非 0 結束、輸出不是 JSON） | `FULL` | `ANALYZER_ERROR:<訊息>` |
-| 9 | 其餘：修改或 rename 的 PHP 檔，由 analyzer 比較 merge base 與 head 兩個版本 | 見下 | 見「原因代碼」 |
+| 9 | 其餘：修改或 rename 的檔案，由該語言的 analyzer 比較 merge base 與 head 兩個版本 | 見下 | 見「原因代碼」 |
 
 第 1–8 步的檔案在 JSON 中 `analyzed` 為 `false`、`facts` 為空。因為判斷順序：
 
@@ -117,10 +128,10 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
 - 新增、刪除或改指向的 symlink 是 `SYMLINK_CHANGED`；一般檔案改成 symlink 則是 `UNSUPPORTED_CHANGE_TYPE:type-changed`。
 - `Upper.PHP` 這類大寫副檔名與 `*.blade.php` 都會送進 analyzer。Blade 指令與 HTML 對 PHP parser 來說都是 inline HTML，沒有對應的 fact，因此 template 內容的變更是 `FULL`（`COV-PHP-001:UNRECOGNIZED_PHP_CHANGE`）。
 
-第 9 步：
+第 9 步（TypeScript / JavaScript 見本節最後）：
 
-- analyzer 以 AST 比較兩個版本：兩側都能以最新 PHP 語法解析時使用最新語法，否則兩側一起改用 PHP 7.4 語法。每個被解釋的差異都對應一個 fact（`CALL_REMOVED`、`BINARY_OPERATOR_CHANGED` 等，完整清單見 [README「已實作」](../README.md#已實作)）。
-- 每個 fact 交給 `src/interpreters/php-laravel-domain.js` 的 15 個 deterministic domain interpreter：有對應規則的 fact 產生具體的原因代碼，沒有的產生 `FACT_UNHANDLED:<fact id>`。
+- PHP analyzer 以 AST 比較兩個版本：兩側都能以最新 PHP 語法解析時使用最新語法，否則兩側一起改用 PHP 7.4 語法。每個被解釋的差異都對應一個 fact（`CALL_REMOVED`、`BINARY_OPERATOR_CHANGED` 等，完整清單見 [README「已實作」](../README.md#已實作)）。
+- 每個 fact 交給 deterministic domain interpreters（`src/interpreters/`：語言層 `core.js`、框架 preset `presets/php-laravel.js` / `presets/node.js`、業務 preset `presets/payments.js`；PHP 預設啟用 `php-laravel` 與 `payments`，TypeScript / JavaScript 預設啟用 `node`）：有對應規則的 fact 產生具體的原因代碼，沒有的產生 `FACT_UNHANDLED:<fact id>`。
 - 結果：
   - 沒有任何 fact、兩個版本在 AST 比較下等價（排版、註解、區域變數一致改名等），而且 PHP 8 與 PHP 7 的解讀一致（不檢查 PHP 5 的語意，見「限制」）：`NOT_SELECTED_FOR_HUMAN_REVIEW`，原因 `NO_REDUCTION_BLOCKER`。
   - 每個差異都有 fact 解釋：`TARGETED`，原因是 fact 產生的代碼。
@@ -128,6 +139,13 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
 - rename 或檔案權限改變（例如 `100644` → `100755`）會再加上 `FILE_RENAMED` / `FILE_MODE_CHANGED`，因為 autoload 路徑或執行權限可能改變行為：
   - 內容等價（原本會是 `NOT_SELECTED_FOR_HUMAN_REVIEW`）時改為 `TARGETED`，原因只有 `FILE_RENAMED` / `FILE_MODE_CHANGED`。
   - 內容也有變更時，接在 analyzer 的原因之後，`TARGETED` / `FULL` 不變。
+
+TypeScript / JavaScript：analyzer（`analyzers/ts`，TypeScript compiler API）與 PHP 相同，比較兩個版本的 AST 並以 fact 解釋差異：
+
+- 等價（排版、一般註解、引號、分號、trailing comma、多餘括號、property key 是否加引號、數字寫法、JSX 依渲染空白規則的換行，以及 function 內一致的區域變數改名）：`NOT_SELECTED_FOR_HUMAN_REVIEW`。
+- 每個差異都有 fact 解釋：`TARGETED`。fact 與 PHP 相同（`CALL_REMOVED`、`CALL_ARGUMENT_REMOVED`、`BINARY_OPERATOR_CHANGED`、`GUARD_REMOVED`、`LITERAL_CHANGED` 等），另有 decorator 的 `ANNOTATION_REMOVED` / `ANNOTATION_ADDED` 與指示註解的 `DIRECTIVE_COMMENT_CHANGED`（`@ts-ignore` / `@ts-expect-error` / `@ts-nocheck`、`eslint-disable` / `eslint-enable`、ESLint 的 inline 設定（`/* eslint rule: "off" */`、`/* global x */`、`/* eslint-env */`、`/* exported */`）、`biome-ignore` / `oxlint-disable` / `deno-lint-ignore`、`#__PURE__`、webpack / vite 指示、coverage ignore、JSX pragma、triple-slash 指示、shebang 的增減或移動，包括移到另一個文字相同的 token 前面；JS 檔中帶型別的 JSDoc 標籤（`@type`、`@param`、`@returns`、`@typedef` 等，以及沒有型別運算式但會影響檢查的 `@override`、`@constructor`、`@abstract`、`@deprecated` 等，checkJs 會讀取）的增減或型別改變，只改說明文字不算；TS 檔中只有 `@internal`（`stripInternal`）列入）。匿名 callback 內的呼叫依 callback 各自配對，呼叫從一個 handler 移到另一個時產生 `CALL_REMOVED` / `CALL_ADDED`（PHP analyzer 的 closure 也相同）。移除或新增 inline callback 參數（例如路由的 inline middleware）時產生 `CALL_ARGUMENT_REMOVED` / `ADDED`，但 callback 的內容沒有比對，檔案仍是 `FULL`。`node` preset 與 `.reviewer.json` 的規則比對這些 fact（見下方「Domain 原因代碼」）。
+- 有差異無法解釋：`FULL`，原因含 `COV-TS-001:<原因>`；已找到的 fact 的原因也一起列出。
+- 不視為等價、也不以 fact 解釋的情況（寧可要求 review）：型別註記、`as` 轉型、`interface` / `type` 的變更；參數與頂層變數改名；物件簡寫 `{ x }` 或解構 `const { x } = o` 中的變數改名（會改變 key）；會被賦予匿名 function / class / arrow 的變數改名（`fn.name` 會改變）；`function` 與箭頭函式互換；import 順序；`'a'` 與 `` `a` `` 互換；optional chain 外的括號（`(a?.b).c`）。檔案中有 direct `eval(...)` 或 `with` 時不做區域變數改名正規化。
 
 ## 決策語意
 
@@ -151,6 +169,82 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
 - `reasons`：需要 review 的檔案的原因，去重後依字母排序（`FACT_UNHANDLED:<id>` 逐一列出）。有檔案變更但都不需要 review 時為 `[]`；沒有任何檔案變更時為 `["NO_CHANGES"]`。
 - `files` / `notSelected` / `targeted` / `full`：檔案數。`targeted + full` 是需要 review 的檔案數。
 
+### 路由（三層審查）
+
+核心流程是串接的：**機械審查（本 CLI）→ AI 審查剩下的 → AI 審查後需要人處理、確認的才交給人工**。`decision` 之外，每個檔案另有路由 `track`（`src/routing.js`），標示機械審查之後的去向。路由不改變 `decision`，也不會讓需要 review 的檔案變成不需要。
+
+| `track` | 條件 | 去向 |
+|---|---|---|
+| `AUTO_PASS` | `decision` 為 `NOT_SELECTED_FOR_HUMAN_REVIEW` | 不需要 review |
+| `AI_TRACK` | 需要 review，但沒有任何原因屬於單向門。包括 `FULL`（無法解釋的變更、analyzer 失敗、沒有分析的檔案） | 交給 AI 審查，由 AI 判斷是否需要人工 |
+| `ESCALATED` | 任一原因屬於單向門；或 `decision` 不是這兩種已知的值 | 一樣先交給 AI 審查，但 AI 不能放行，之後一律交給人工確認 |
+
+AI 審查以 `--ai` 啟用，見「AI 審查」。沒有 `--ai` 時沒有人看過 `AI_TRACK` 檔案，`human.required` 把它們也算成需要人工。
+
+單向門（做了就難以回頭的變更）的預設清單：`TRANSACTION_BOUNDARY_REMOVED`、`TRANSACTION_ROLLBACK_REMOVED`、`ROW_LOCK_REMOVED`、`AUTHORIZATION_GUARD_REMOVED`、`AUTHORIZATION_ABILITY_CHANGED`、`MIDDLEWARE_GUARD_REMOVED`、`SIGNATURE_VERIFICATION_REMOVED`、`GUARD_CLAUSE_REMOVED`、`PROTECTED_CALL_REMOVED`、`PAYMENT_IDEMPOTENCY_IDENTITY_CHANGED`、`PROTECTED_ARGUMENT_CHANGED`、`SENSITIVE_OPERAND_CHANGED`、`MASS_ASSIGNMENT_CHANGED`、`SERIALIZED_ATTRIBUTES_CHANGED`、`SIDE_EFFECT_CALL_ADDED`、`DATA_DELETION_ADDED`、`PROTECTED_PATH`、`POLICY_FILE_CHANGED`、`POLICY_CONFIG_INVALID`。其中幾個代碼由專案設定的規則產生（見 [專案設定](project-config.md)）。
+
+PR 層級的 `routing.track` 取所有檔案中最嚴格的一個（`ESCALATED` > `AI_TRACK` > `AUTO_PASS`）；沒有任何檔案變更時為 `AUTO_PASS`。
+
+## AI 審查（第 2 層，`--ai`）
+
+機械審查之後，`--ai` 把 `AI_TRACK` 與 `ESCALATED` 的檔案逐一交給 Claude 審查（`src/ai/`）。`AUTO_PASS` 檔案不送。需要：
+
+- 在 Reviewer 目錄執行過 `npm ci`（安裝 `@anthropic-ai/sdk`，只在 `--ai` 時才載入；沒有安裝時以 `AI_SDK_MISSING` 結束）。
+- 環境變數 `ANTHROPIC_API_KEY`（沒有時在分析之前以 `AI_NOT_CONFIGURED` 結束）。
+
+### 送給 AI 的內容
+
+每個檔案一個請求：
+
+- system：固定的審查規則，以及 merge base 的 `codingstandards.md`（PR 修改它不影響這次審查；修改本身是 `POLICY_FILE_CHANGED` 單向門）。這部分每個檔案都相同，標記 prompt cache，第二個檔案起以 cache 讀取。
+- user：機械審查的結果（路由、`fallback`、原因與說明、命中的單向門、每個 fact 的位置、描述與原因代碼）、`git diff -U5`，以及 `FULL` 檔案的 head 完整內容（帶行號）。
+- 單一檔案的輸入上限是 200,000 字元：diff 超過時**不截斷**，該檔案的 AI 結果為失敗（`AI_INPUT_TOO_LARGE`）；diff 放得下、完整內容放不下時只送 diff，並明確告訴 AI 沒有完整內容。binary 不送（`AI_INPUT_BINARY`）。
+- 檔案數超過 `--ai-max-files`（預設 50）時，其餘檔案不送（`AI_FILE_LIMIT_EXCEEDED`）。
+
+### 模型與 API
+
+- 模型預設 `claude-opus-5-5`，`--ai-effort` 預設 `high`（模型的 thinking 一律開啟，以 effort 控制深度）。
+- 以 structured outputs（`output_config.format` 的 JSON schema，`src/ai/schema.js`）取得固定格式的結果，收到後再逐欄驗證。
+- **預設啟用 server-side fallback**（`fallbacks: "default"`，beta header `server-side-fallback-2026-07-01`）：主要模型拒絕回答時，API 在同一個請求中改由 Anthropic 建議的備援模型回答。由備援模型回答的檔案在報表中標示 `ai.fallback: true` 與實際的 `ai.model`，文字輸出加註「由備援模型 … 回答」。整條鏈仍拒絕時為 `AI_REFUSED`。這個參數在 Amazon Bedrock、Vertex AI、Microsoft Foundry 不可用；目前只支援 Claude API。
+- 以 streaming 取得完整回應（避免大檔案逾時）；SDK 的預設重試（2 次）之後仍失敗的請求為該檔案的 AI 失敗。
+
+### AI 的結論
+
+AI 對每個檔案回答 `PASS`（沒有問題）、`NEEDS_HUMAN`（需要人工）或 `FIX`（提出小修正），附摘要、疑慮（`high` / `medium` / `low`、位置、引用的規範）與（單向門檔案的）流程圖。
+
+| 路由 | AI 回答 | `ai.status` | 需要人工（`needsHuman`） |
+|---|---|---|---|
+| `AI_TRACK` | `PASS`，沒有 `high` 疑慮 | `PASS` | 否 |
+| `AI_TRACK` | `PASS` 但有 `high` 疑慮、`NEEDS_HUMAN` | `NEEDS_HUMAN` | 是 |
+| `AI_TRACK` | `PASS` 但附上修正（矛盾的回答） | 照 `FIX` 處理（下兩列） | 同 `FIX` |
+| `AI_TRACK` | `FIX`，有 `--ai-apply` 且修正通過檢查 | `FIXED` | 否（但有尚未 commit 的修正，見下） |
+| `AI_TRACK` | `FIX`，沒有 `--ai-apply` 或修正沒有通過檢查 | `NEEDS_HUMAN`（修正變成建議） | 是 |
+| `ESCALATED` | 任何回答 | AI 的意見（`FIX` 一律不套用，視為 `NEEDS_HUMAN`） | **是**：AI 不能放行單向門 |
+| 任何 | AI 失敗 | `FAILED` | 是 |
+
+AI 失敗的原因（`ai.error`）：`AI_INPUT_BINARY`、`AI_INPUT_TOO_LARGE`、`AI_FILE_LIMIT_EXCEEDED`、`AI_REFUSED[:<category>]`、`AI_OUTPUT_TRUNCATED`（輸出超過 32,000 token）、`AI_OUTPUT_EMPTY`、`AI_OUTPUT_NOT_JSON`、`AI_OUTPUT_INVALID:<欄位>`、`AI_AUTHENTICATION_FAILED`、`AI_PERMISSION_DENIED`、`AI_RATE_LIMITED`、`AI_BAD_REQUEST`、`AI_CONNECTION_FAILED`、`AI_API_ERROR:<HTTP status>`、`AI_REQUEST_FAILED`。
+
+AI 判斷需要人工的項目成為 `kind: "AI"` 的 finding（見「Findings」）。
+
+### `--ai-apply`
+
+把 AI 對 `AI_TRACK` 檔案提出的修正寫入 worktree，**不 commit**。commit 之後再執行一次 review，新的 head 會從機械審查開始重新審查；所以 AI 不可能用修正繞過單向門偵測。
+
+- 執行前 worktree 必須正好是 `--head` 而且沒有未 commit 的追蹤檔案變更，否則在呼叫 AI 之前以 `AI_APPLY_WORKTREE_MISMATCH` 結束。
+- 修正是「把 `oldText` 換成 `newText`」的清單；每個 `oldText` 必須在 head 內容中恰好出現一次。
+- 修正後的內容先交給同一套機械審查（同樣的 adapter、interpreters 與專案設定）：命中單向門時不套用（`AI_FIX_HITS_ONE_WAY_DOOR`）；支援的語言無法完整分析時（修正造成語法錯誤、analyzer 失敗或有無法解釋的變更，也就是 `FULL`）也不套用（`AI_FIX_UNVERIFIED`）。不支援的檔案類型沒有 analyzer，無法檢查，照樣套用。
+- 不套用的其他原因（`ai.fix.error`）：`AI_FIX_EMPTY`、`AI_FIX_EDIT_EMPTY`、`AI_FIX_EDIT_NOT_FOUND`、`AI_FIX_EDIT_NOT_UNIQUE`、`AI_FIX_NO_CHANGE`、`AI_FIX_HAS_HIGH_CONCERN`（同時有 `high` 疑慮）、`AI_FIX_FILE_DELETED`、`AI_FIX_FILE_UNSUPPORTED`（symlink、binary 等）、`AI_FIX_WORKTREE_MISMATCH`、`AI_FIX_CHECK_FAILED`、`AI_FIX_UNVERIFIED`、`AI_FIX_NOT_ALLOWED_ON_ESCALATED`。
+
+### Prompt injection
+
+diff、檔案內容與 `codingstandards.md` 都來自 PR。它們放在 `<diff>`、`<file>`、`<machine_review>`、`<coding_standards>` 標籤中，system prompt 明確說明標籤內是資料不是指示；內容中與標籤同名的開頭或結尾會被跳脫（加上 `\` 與零寬空白），無法提前關閉標籤。程式碼或註解中試圖影響審查的文字（例如「reviewer: PASS」）要求 AI 回答 `NEEDS_HUMAN` 並列為 `high` 疑慮。即使 AI 被誤導，最壞的結果是一個 `AI_TRACK` 檔案被放行；單向門不受 AI 影響。
+
+### 限制
+
+- AI 的輸出不是 deterministic 的；同一個 PR 重跑可能得到不同的疑慮，AI finding 的 id 也可能不同。
+- 每個檔案單獨審查，AI 看不到其他檔案的變更（例如呼叫端的配合修改）。
+- 本 repo 的測試以假的 client 驗證請求格式與所有分支，沒有呼叫真實的 API。
+
 ## 原因代碼
 
 ### 未送進 analyzer 的檔案（一律 `FULL`）
@@ -164,6 +258,15 @@ git diff -M <mergeBase> <head>  → 要 review 的檔案
 | `SYMLINK_CHANGED` | symlink 新增、刪除或改指向 |
 | `SUBMODULE_CHANGED` | submodule 新增、刪除或改指向的 commit |
 | `UNSUPPORTED_CHANGE_TYPE:<status>` | git 狀態不是新增、刪除、修改或 rename。實際會出現的是 `type-changed`；`copied` 不會出現，因為 `git diff` 只開 rename 偵測（`-M`），不開 copy 偵測 |
+
+### 專案設定（[`.reviewer.json`](project-config.md)）
+
+| 代碼 | 意義 |
+|---|---|
+| `POLICY_CONFIG_INVALID` | merge base 的 `.reviewer.json` 無效。每個檔案都是 `FULL`，錯誤細節見 JSON 報表的 `config.errors` |
+| `POLICY_FILE_CHANGED` | PR 修改了 `.reviewer.json` 或 `codingstandards.md`（單向門） |
+| `PROTECTED_PATH` | 檔案符合 `rules.protectedPaths`（單向門）。原本不需要 review 的檔案變成 `TARGETED` |
+| `SENSITIVE_OPERAND_CHANGED` / `PROTECTED_CALL_REMOVED` / `PROTECTED_ARGUMENT_CHANGED` / `SIDE_EFFECT_CALL_ADDED` | 專案規則命中（單向門），見 [專案設定](project-config.md) |
 
 ### `ANALYZER_ERROR:<訊息>`（`FULL`）
 
@@ -188,28 +291,40 @@ analyzer process 沒有正常產生結果。訊息最多 200 字元：
 | `PHP_FILE_DELETION_UNSUPPORTED` | head 版本是空檔（檔案被清空但沒有刪除） |
 | `PHP_ANALYZER_DEPENDENCY_MISSING` | `analyzers/php/vendor` 不存在；先執行 `npm run analyzer:install`（需要 PHP 8.3 以上，否則安裝會因 platform requirement 失敗） |
 
+### `COV-TS-001:<原因>`（`FULL`）
+
+`COV-TS-001` 是 TypeScript / JavaScript analyzer 的 coverage obligation：
+
+| 原因 | 意義 |
+|---|---|
+| `UNRECOGNIZED_TS_CHANGE` | 有差異無法以 fact 解釋（例如型別註記、`as` 轉型、property key 改變、運算子優先順序、`function` 與箭頭函式互換、modifier 增減） |
+| `TS_PARSE_ERROR` | 任一側有語法錯誤（包含 TypeScript parser 回報的文法錯誤） |
+| `TS_FILE_DELETION_UNSUPPORTED` | head 版本是空檔 |
+| `TS_ANALYZER_DEPENDENCY_MISSING` | `analyzers/ts/node_modules` 沒有 `typescript`；先執行 `npm run analyzer:install` |
+
 ### `FILE_RENAMED` / `FILE_MODE_CHANGED`
 
 | 代碼 | 意義 |
 |---|---|
-| `FILE_RENAMED` | PHP 檔改名或搬移（autoload 路徑可能改變） |
-| `FILE_MODE_CHANGED` | PHP 檔的權限改變（例如加上執行權限） |
+| `FILE_RENAMED` | 檔案改名或搬移（autoload / import 路徑可能改變） |
+| `FILE_MODE_CHANGED` | 檔案的權限改變（例如加上執行權限） |
 
-內容等價時檔案為 `TARGETED`，否則接在 analyzer 的原因之後（見「檔案分類」）。非 PHP 檔的 rename 或權限變更只會是 `UNSUPPORTED_FILE_TYPE`。
+內容等價時檔案為 `TARGETED`，否則接在 analyzer 的原因之後（見「檔案分類」）。不支援的檔案的 rename 或權限變更只會是 `UNSUPPORTED_FILE_TYPE`。
 
 ### `FACT_UNHANDLED:<fact id>`
 
-fact 沒有任何 domain interpreter 對應。fact id 的格式是 `php-` 加 20 個十六進位字元。與 domain 原因代碼相同，檔案沒有 `COV-PHP-001:*` 時為 `TARGETED`（變更已被 fact 解釋，只是沒有對應的 domain 規則）；有 `COV-PHP-001:*` 時為 `FULL`，已找到的 fact 照樣列出。
+fact 沒有任何 domain interpreter 對應。fact id 的格式是 `php-` 或 `ts-` 加 20 個十六進位字元。與 domain 原因代碼相同，檔案沒有 `COV-PHP-001:*` / `COV-TS-001:*` 時為 `TARGETED`（變更已被 fact 解釋，只是沒有對應的 domain 規則）；有的話為 `FULL`，已找到的 fact 照樣列出。
 
 例外：位置參數的變更無法被更細的 fact 解釋時，analyzer 仍輸出 `CALL_ARGUMENT_CHANGED` 標示位置（描述為「`<callee>` 的參數 #<index>：<原值> → <新值>」），但這個 fact 不視為已解釋，所以同一檔案也會有 `COV-PHP-001:UNRECOGNIZED_PHP_CHANGE`，為 `FULL`。例如 `$q->take(10)` 改成 `$q->take($n)`：原因是 `COV-PHP-001:UNRECOGNIZED_PHP_CHANGE` 與這個 fact 的 `FACT_UNHANDLED:<id>`。
 
-- 例如 `CALL_ADDED`（新增呼叫）目前沒有任何 interpreter 處理，一律是 `FACT_UNHANDLED`；其他 fact 只有符合下一節的模式時才有具體代碼。
+- 參數純移除或純新增（`CALL_ARGUMENT_REMOVED` / `CALL_ARGUMENT_ADDED`，描述為「`<callee>` 移除參數 <位置或名稱>：<值>」）是已解釋的變更：沒有對應的 domain 規則時是 `TARGETED` 的 `FACT_UNHANDLED`。
+- 例如 `CALL_ADDED`（新增呼叫）只有資料刪除（`DATA_DELETION_ADDED`）與專案設定的 `sideEffectCalls` 會處理，其餘是 `FACT_UNHANDLED`；其他 fact 只有符合下一節的模式時才有具體代碼。
 - 文字輸出把它們合併成一行 `FACT_UNHANDLED ×N`；JSON 逐一列出。
 - JSON 的 `facts` 不含 fact id，無法以 id 對應到個別 fact；請以 fact 的 `kind` 與位置判斷。
 
 ### Domain 原因代碼
 
-由 `src/interpreters/php-laravel-domain.js` 產生。檔案沒有 `COV-PHP-001:*` 時為 `TARGETED`。同一個 fact 可能產生多個代碼，例如 `rules()` 的回傳值改變同時產生 `RETURN_VALUE_CHANGED` 與 `VALIDATION_RULE_CHANGED`。
+由 `src/interpreters/`（語言層 `core.js`、框架 preset `presets/php-laravel.js` / `presets/node.js`、業務 preset `presets/payments.js`） 產生。檔案沒有 `COV-PHP-001:*` / `COV-TS-001:*` 時為 `TARGETED`。下表的「意義」欄是 PHP / Laravel 的規則；TypeScript / JavaScript 的 `node` preset 產生相同的代碼，範圍見表後。同一個 fact 可能產生多個代碼，例如 `rules()` 的回傳值改變同時產生 `RETURN_VALUE_CHANGED` 與 `VALIDATION_RULE_CHANGED`。
 
 | 代碼 | 來源 fact | 意義 |
 |---|---|---|
@@ -218,7 +333,7 @@ fact 沒有任何 domain interpreter 對應。fact id 的格式是 `php-` 加 20
 | `TRANSACTION_ROLLBACK_REMOVED` | `CALL_REMOVED` | 移除 DB 連線 receiver 的 `rollBack` / `rollback` |
 | `AUTHORIZATION_GUARD_REMOVED` | `CALL_REMOVED` | 移除 `$this->authorize`、`$this->authorizeForUser` 或 `Gate::authorize` |
 | `AUTHORIZATION_ABILITY_CHANGED` | `LITERAL_CHANGED` | `$this->authorize` 或 `Gate::authorize` 的第一個參數（ability）從字面值換成另一個字面值，例如 `'update'` → `'view'`。`$this->authorizeForUser` 的 ability 是第二個參數，換成另一個字面值時為 `FACT_UNHANDLED`。任一呼叫的 ability 改成變數等非字面值（例如 `'update'` → `$ability`）時無法解釋，檔案為 `FULL`（`COV-PHP-001:UNRECOGNIZED_PHP_CHANGE`） |
-| `MIDDLEWARE_GUARD_REMOVED` | `CALL_REMOVED`、`CALL_ARGUMENT_CHANGED`、`ARRAY_ITEM_REMOVED`、`LITERAL_CHANGED` | 原本的 middleware 不再套用：`->middleware(...)` 呼叫被移除，或 `->middleware(...)`、`Route::group` 的 `'middleware'`、`$middleware` / `$middlewares` / `$beforeActionList` property 少了某個 middleware、名稱被換掉 |
+| `MIDDLEWARE_GUARD_REMOVED` | `CALL_REMOVED`、`CALL_ARGUMENT_CHANGED`、`CALL_ARGUMENT_REMOVED`、`ARRAY_ITEM_REMOVED`、`LITERAL_CHANGED` | 原本的 middleware 不再套用：`->middleware(...)` 呼叫或其中一個參數被移除、`Route::group` 含 `'middleware'` 的設定參數被移除，或 `->middleware(...)`、`Route::group` 的 `'middleware'`、`$middleware` / `$middlewares` / `$beforeActionList` property 少了某個 middleware、名稱被換掉 |
 | `ROW_LOCK_REMOVED` | `CALL_REMOVED` | 移除 `lockForUpdate` / `sharedLock` |
 | `SIGNATURE_VERIFICATION_REMOVED` | `CALL_REMOVED` | 移除名稱像簽章驗證的 method，例如 `verifySign`、`verificationSign`、`checkSign`、`validateSignature` |
 | `COMPARISON_OPERATOR_CHANGED` | `BINARY_OPERATOR_CHANGED` | 比較運算子互換（`<`、`<=`、`>`、`>=`、`==`、`!=`、`===`、`!==`、`<>`、`<=>`） |
@@ -238,6 +353,25 @@ fact 沒有任何 domain interpreter 對應。fact id 的格式是 `php-` 加 20
 | `MASS_ASSIGNMENT_CHANGED` | 同上 | model 的 `$fillable` / `$guarded` 改變 |
 | `SERIALIZED_ATTRIBUTES_CHANGED` | 同上 | model 的 `$hidden` / `$visible` 改變 |
 | `ATTRIBUTE_CAST_CHANGED` | 同上 | model 的 `$casts` 或 `casts()` 的回傳值改變 |
+| `DATA_DELETION_ADDED` | `CALL_ADDED` | 新增刪除資料或 schema 的呼叫：`forceDelete`、`truncate`、`dropColumn`、`Schema::drop` / `dropIfExists`、`Storage::delete` / `File::delete`、`DB::delete`、`unlink`。一般的 `->delete()` 可能是 soft delete，不列入 |
+| `ANNOTATION_REMOVED` / `ANNOTATION_ADDED` | 同名 fact | decorator 被移除 / 新增（目前只有 TS analyzer 輸出） |
+| `DIRECTIVE_COMMENT_CHANGED` | 同名 fact | 有語意的註解被新增、移除或移動（目前只有 TS analyzer 輸出） |
+
+TypeScript / JavaScript 的 `node` preset（`src/interpreters/presets/node.js`）：
+
+| 代碼 | 範圍 |
+|---|---|
+| `TRANSACTION_BOUNDARY_REMOVED` | 移除 `prisma.$transaction`、`startTransaction` / `beginTransaction` / `commitTransaction` / `withTransaction`、DB 或 ORM receiver（`prisma`、`db`、`knex`、`sequelize`、`dataSource`、`manager`、`queryRunner`…）的 `transaction`、transaction 物件（`t`、`tx`、`trx`…）的 `commit`、knex `.transacting()`、`@Transactional()`；移除 Sequelize `{ transaction: t }` 或 Mongoose `{ session }` 選項。Sentry 等 tracing 的 transaction 不算 |
+| `TRANSACTION_ROLLBACK_REMOVED` | 移除 `rollbackTransaction` / `abortTransaction`，或 DB / transaction 物件的 `rollback` |
+| `ROW_LOCK_REMOVED` | 移除 knex `.forUpdate()` / `.forShare()` / `.forNoKeyUpdate()` / `.forKeyShare()`、TypeORM `.setLock()`，或選項物件中的 `lock` / `lockMode`（`where: { lock: 1 }` 這種巢狀 key 不算） |
+| `AUTHORIZATION_GUARD_REMOVED` | 移除 `@UseGuards` / `@Roles` / `@Permissions` / `@Auth` 等授權 decorator、`@UseGuards` 少了 guard 或換掉、加上 `@Public()` / `@AllowAnonymous()` / `@SkipAuth()` 等、移除 `authorize` / `throwUnlessCan` 等授權呼叫或 `app.useGlobalGuards` |
+| `AUTHORIZATION_ABILITY_CHANGED` | `@Roles` / `@Permissions` / `@Scopes` 等的參數改變、增加或減少 |
+| `MIDDLEWARE_GUARD_REMOVED` | app / router（`app`、`server`、`router`、`fastify`、`*Router`、`*App`）的路由註冊（`get`、`post`、`use`…）少了路徑以外的參數、參數換成另一個 middleware、參數順序改變（handler 先回應時，換到後面的 middleware 不會執行）、middleware 陣列少了元素；`app.use` / `addHook`、Nest `consumer.apply`、`passport.authenticate` 被移除；Fastify 路由選項的 `onRequest` / `preParsing` / `preValidation` / `preHandler` 被移除或少了元素。`axios.post`、`api.post` 等不是路由註冊 |
+| `SIGNATURE_VERIFICATION_REMOVED` | 移除 `jwtVerify`、`timingSafeEqual`、`constructEvent`、`verifyIdToken`，jwt / jose / crypto / token / verifier 等 receiver 的 `verify` / `verifyAsync`，或名稱像簽章驗證的 method |
+| `VALIDATION_RULE_CHANGED` | zod / joi / yup 的 schema（`z.object(...)` 的參數、`.min()` / `.optional()` 等規則 method 的增減與參數）、class-validator decorator（`@IsInt`、`@Min`…）、`new ValidationPipe(...)`、移除 `@UsePipes` / `useGlobalPipes` / `safeParse` / `validateOrReject` / schema 的 `parse`、Fastify 路由的 `schema` 選項 |
+| `DATA_DELETION_ADDED` | 新增 `deleteMany`、`dropTable` / `dropColumn`、`findByIdAndDelete`、S3 `deleteObject`、knex `.del()` / `.truncate()`、DB / repository / model receiver 上的 `delete` / `deleteOne` / `remove` / `destroy` / `clear`、Sequelize `User.destroy`、`fs.rm` / `unlink` / `rmdir` / `rimraf`。`map.delete`、`socket.destroy`、`cacheManager.del` 不算 |
+
+名稱判斷是啟發式的：receiver 名稱不在上述範圍（例如把 router 命名為 `r`）時不會命中，fact 仍會以 `FACT_UNHANDLED` 交給 AI 審查。請以 `.reviewer.json` 的 `protectedCalls` 等規則補上專案自己的命名。
 
 ### 其他
 
@@ -254,9 +388,10 @@ fact 沒有任何 domain interpreter 對應。fact id 的格式是 `php-` 加 20
 
 ```
 Review：<PR 決策>（<需要 review 的檔案數>/<檔案數> 個檔案需要 review；TARGETED <n>、FULL <n>）
+路由：<PR 路由>（交給 AI 審查 <n>，其中 <n> 個 AI 審查後必須人工確認；不需要 review <n>）
 <repository>  <base ref> (<base SHA 前 12 碼>) → <head ref> (<head SHA 前 12 碼>)[，比較起點為 merge base <SHA 前 12 碼>]
 
-需要 review：
+AI 審查後必須人工確認（ESCALATED，單向門）：
   <FULL|TARGETED> <path>[（原 <oldPath>）]
            - <原因代碼>[（說明）]
            - FACT_UNHANDLED ×<N>（有變更但沒有對應的 domain 規則，請看標示位置）
@@ -264,33 +399,39 @@ Review：<PR 決策>（<需要 review 的檔案數>/<檔案數> 個檔案需要 
            · <side>:L<start>[-<end>] <fact 描述>
            · …另有 <N> 項（見 --json）
 
+交給 AI 審查，由 AI 判斷是否需要人工（AI_TRACK）：
+  （格式同上）
+
 不需要 review（<N>）：
   <path>
 ```
 
-- 需要 review 的檔案先列 `FULL` 再列 `TARGETED`，同一組依路徑排序；不需要 review 的檔案依 `git diff` 的順序。
-- `-` 行：每個原因一行。部分代碼附中文說明（`format.js` 的 `REASON_HINTS`），其餘只顯示代碼。`FACT_UNHANDLED:<id>` 不逐一列出，合併成 `FACT_UNHANDLED ×N` 一行。不需要 review 的檔案不顯示原因。
+- 需要 review 的檔案依路由分成「AI 審查後必須人工確認」與「交給 AI 審查，由 AI 判斷是否需要人工」兩段（沒有檔案的段落不印）。每一段先列 `FULL` 再列 `TARGETED`，同一組依路徑排序；不需要 review 的檔案依 `git diff` 的順序。
+- `-` 行：每個原因一行。單向門標示「（單向門）」；部分代碼附中文說明（`format.js` 的 `REASON_HINTS`），其餘只顯示代碼。`FACT_UNHANDLED:<id>` 不逐一列出，合併成 `FACT_UNHANDLED ×N` 一行。不需要 review 的檔案不顯示原因。
 - 「變更位置」：`git diff -U0` 的 hunk。有新內容的 hunk 標 head 版本的行號；純刪除的 hunk 標 merge base 版本被刪除的行（`base:`）。只有修改與 rename 的檔案有這一行；最多列 8 處，超過時加上「等 N 處」。
 - `·` 行：analyzer 找到的 fact。`base:` 表示位置在 merge base 版本（通常是被移除的程式碼），`head:` 表示在 head 版本。最多列 8 項，其餘見 `--json`。`FULL` 的檔案也可能有 fact 行（已解釋的部分）。
-- 沒有任何檔案變更時，只印前兩行與「沒有任何檔案變更。」。
+- 沒有任何檔案變更時，只印前三行與「沒有任何檔案變更。」。
 
 範例（`feature` 分支從 `main` 分出後，`main` 又多了一個修改 `README.md` 的 commit；這個變更不屬於 PR，所以不在清單中）：
 
 ```
 Review：HUMAN_REVIEW_REQUIRED（5/6 個檔案需要 review；TARGETED 3、FULL 2）
-shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge base f30b6d9d7ca0
+路由：ESCALATED（交給 AI 審查 5，其中 1 個 AI 審查後必須人工確認；不需要 review 1）
+shop  main (48016bdb0fe7) → feature (594959a22beb)，比較起點為 merge base ec4021f968a4
 
-需要 review：
+AI 審查後必須人工確認（ESCALATED，單向門）：
+  TARGETED app/Http/Controllers/PostController.php
+           - AUTHORIZATION_GUARD_REMOVED（單向門）
+           變更位置：base:L9-10
+           · base:L9 移除呼叫 $this->authorize
+
+交給 AI 審查，由 AI 判斷是否需要人工（AI_TRACK）：
   FULL     app/Services/ReportService.php
            - COV-PHP-001:UNRECOGNIZED_PHP_CHANGE（有無法自動解釋的變更，請看整個檔案）
            變更位置：head:L9-14
   FULL     composer.json
-           - UNSUPPORTED_FILE_TYPE（非 PHP 檔案，未分析）
+           - UNSUPPORTED_FILE_TYPE（不支援的檔案類型，未分析）
            變更位置：head:L3
-  TARGETED app/Http/Controllers/PostController.php
-           - AUTHORIZATION_GUARD_REMOVED
-           變更位置：base:L9-10
-           · base:L9 移除呼叫 $this->authorize
   TARGETED app/Services/FreezeService.php
            - COMPARISON_OPERATOR_CHANGED
            變更位置：head:L9
@@ -304,7 +445,7 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
   app/Services/LegacyHelper.php
 ```
 
-`LegacyHelper.php` 只有排版與註解變更，所以不需要 review。超過 8 處時的截斷：
+`LegacyHelper.php` 只有排版與註解變更，所以不需要 review。`PostController.php` 移除了 `authorize`（單向門），AI 審查後必須人工確認。其餘需要 review 的檔案（包括機械審查無法解釋的 `ReportService.php` 與沒有分析的 `composer.json`）交給 AI 審查，由 AI 判斷是否需要人工。`FreezeService.php` 的運算子改變沒有命中單向門；若專案設定把 `amount` 列為敏感運算元（[專案設定](project-config.md)），它會變成 `SENSITIVE_OPERAND_CHANGED` 而需要人工確認。超過 8 處時的截斷：
 
 ```
   TARGETED Many.php
@@ -341,6 +482,16 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
 | `decision.notSelected` | number | 不需要 review 的檔案數 |
 | `decision.targeted` | number | `TARGETED` 的檔案數 |
 | `decision.full` | number | `FULL` 的檔案數 |
+| `config.path` / `config.commit` | string | 專案設定的路徑（`.reviewer.json`）與讀取的 commit（merge base） |
+| `config.status` | string | `absent`（沒有設定，使用預設值）、`valid` 或 `invalid`（每個檔案都是 `FULL` + `POLICY_CONFIG_INVALID`） |
+| `config.errors` | string[] | 設定無效的原因，例如 `POLICY_CONFIG_KEY_UNKNOWN:rules.ignoreFacts`；其他狀態為 `[]` |
+| `config.digest` | string \| null | 有效設定內容的 sha256；其他狀態為 `null` |
+| `routing.track` | string | PR 層級路由：`AUTO_PASS`、`AI_TRACK` 或 `ESCALATED`（見「路由」） |
+| `routing.autoPass` / `routing.aiTrack` / `routing.escalated` | number | 各路由的檔案數 |
+| `ai` | object \| null | AI 審查的彙總；沒有 `--ai` 時為 `null`。`model`、`effort`、`apply`、`standards`（`path`、`commit`、`present`、`digest`：merge base 的 `codingstandards.md`）、`reviewed`（交給 AI 的檔案數）、`pass` / `needsHuman` / `fixed` / `failed`（各狀態的檔案數）、`fallbackUsed`（由備援模型回答的檔案數）、`usage`（`inputTokens`、`outputTokens`、`cacheReadInputTokens`、`cacheCreationInputTokens` 的合計） |
+| `human.required` | boolean | 是否有任何檔案需要人工 |
+| `human.files` / `human.findings` | number | 需要人工的檔案數，與這些檔案的 finding 數 |
+| `human.pendingFixes` | number | `--ai-apply` 寫入 worktree、尚未 commit 的 AI 修正數 |
 | `files` | object[] | 每個變更檔案的結果，順序與 `git diff --raw` 相同 |
 
 ### `files[]`
@@ -350,38 +501,81 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
 | `path` | string | head 的路徑；刪除的檔案為原路徑 |
 | `oldPath` | string | 原路徑，只有 rename 才有這個欄位 |
 | `status` | string | `added`、`deleted`、`modified`、`renamed`、`type-changed`（其他 git 狀態字母原樣輸出） |
-| `analyzed` | boolean | 是否經過 PHP analyzer 的分析流程（「檔案分類」第 9 步）。結果是 `COV-PHP-001:*` 時也是 `true`；第 1–8 步的檔案（含 `ANALYZER_ERROR`）為 `false` |
+| `contentHash` | string | head 版本內容的識別：`git:<blob id>`；刪除的檔案為 `deleted:<base 的 blob id>`。檔案層級的人工豁免綁定在這個值上 |
+| `analyzed` | boolean | 是否經過 analyzer 的分析流程（「檔案分類」第 9 步）。結果是 `COV-PHP-001:*` / `COV-TS-001:*` 時也是 `true`；第 1–8 步的檔案（含 `ANALYZER_ERROR`）為 `false` |
 | `decision` | string | `NOT_SELECTED_FOR_HUMAN_REVIEW` 或 `HUMAN_REVIEW_REQUIRED` |
 | `fallback` | string \| null | `TARGETED`、`FULL`；不需要 review 時為 `null` |
 | `reasons` | string[] | 原因代碼。analyzer 的原因依字母排序，`FILE_RENAMED` / `FILE_MODE_CHANGED` 接在最後。代碼可能帶參數，例如 `UNSUPPORTED_CHANGE_TYPE:type-changed`、`ANALYZER_ERROR:<訊息>`、`FACT_UNHANDLED:<fact id>` |
+| `track` | string | 路由：`AUTO_PASS`、`AI_TRACK` 或 `ESCALATED` |
+| `oneWayDoors` | string[] | `reasons` 中屬於單向門的原因；沒有時為 `[]` |
 | `facts` | object[] | analyzer 找到的所有 fact；未分析的檔案為 `[]` |
 | `facts[].kind` | string | fact 種類，例如 `CALL_REMOVED` |
+| `facts[].subject` | string | 所屬的 `Class::method` 或 function；不在 method / function 內時為檔案路徑 |
 | `facts[].side` | string | `base`（merge base 版本）或 `head` |
 | `facts[].startLine` / `endLine` | number | 該版本中的行號（從 1 起算） |
 | `facts[].description` | string | 中文描述，與文字輸出的 `·` 行相同 |
+| `facts[].blockers` | string[] | 這個 fact 自己產生的原因代碼（`reasons` 是整個檔案的彙總）；沒有 domain 規則時為 `FACT_UNHANDLED:<fact id>` |
+| `facts[].anchor` | object | fact 中不隨位置改變的內容（例如移除的 callee 的名稱與 receiver），用於 finding id |
+| `facts[].scopeHash` | string \| null | head 版本中所屬 method / function 的 canonical AST hash（`php:<hash>`）；排版、註解與一致的區域變數改名不會改變它。不在 method / function 內、或 head 中已沒有該 method 時為整個檔案的 canonical hash；沒有輸出 scope 的 analyzer 為 `null` |
+| `findings` | object[] | 需要人工處理的項目：`ESCALATED` 檔案的單向門，以及 AI 判斷需要人工的項目，見「Findings」 |
+| `needsHuman` | boolean | 這個檔案是否需要人工：`ESCALATED` 一律是；`AI_TRACK` 在 AI 判斷需要人工、AI 失敗或沒有 `--ai` 時是 |
+| `ai` | object | 只有交給 AI 的檔案才有：`status`（`PASS`、`NEEDS_HUMAN`、`FIXED`、`FAILED`）、`error`（失敗原因，否則為 `null`）、`summary`、`concerns[]`（`title`、`detail`、`severity`、`side`、`startLine`、`endLine`（0 為檔案層級）、`standard`）、`fix`（`description`、`edits[]`、`applied`、`error`；沒有提出修正時為 `null`）、`flowchart`（Mermaid，沒有時為空字串）、`model`、`fallback` |
 | `changedLines` | object[] | 只有 `decision` 為 `HUMAN_REVIEW_REQUIRED` 的檔案才有這個欄位。`git diff -U0` 的 hunk：`{ side, startLine, endLine }`，有新內容的 hunk 為 `head` 的行號，純刪除的 hunk 為 `base` 的行號。修改與 rename 以外的檔案（新增、刪除、`type-changed`）為 `[]`；沒有文字 hunk 的變更（binary、只改權限、內容不變的 rename）也是 `[]` |
 
-範例（上面 `shop` 的報表，`files` 只節錄 3 筆）：
+### Findings
+
+`files[].findings` 是必須人工確認的項目，也是二次 review 的追蹤單位（`src/findings.js`），之後的 GitHub 整合以它記錄「看過了」或「修好了」。機械審查的單向門：
+
+- 每個帶單向門原因的 fact，每個原因一個 finding（`kind` 為 fact 種類）；
+- 檔案層級的單向門原因（`PROTECTED_PATH`、`POLICY_FILE_CHANGED`、`POLICY_CONFIG_INVALID`）各一個（`kind: "FILE"`）。
+
+`FULL` 本身不是人工項目：無法解釋的部分交給 AI 審查。AI 審查（`--ai`）另外加入 `kind: "AI"` 的 finding：
+
+- `AI_TRACK` 檔案 AI 判斷需要人工：每個 `high` / `medium` 疑慮一個（`blocker: "AI_CONCERN"`，`anchor` 為疑慮標題，`location` 為疑慮的位置）；沒有這類疑慮時一個 `AI_NEEDS_HUMAN`。
+- `ESCALATED` 檔案上 AI 提出的 `high` / `medium` 疑慮也各一個 `AI_CONCERN`，與單向門一起交給人工。
+- AI 審查失敗的 `AI_TRACK` 檔案：一個 `AI_REVIEW_FAILED`（`anchor` 為失敗原因）。
+
+AI finding 的 `scopeHash` 一律是整個檔案的 `contentHash`；AI 的輸出不是 deterministic 的，id 不保證在重跑時相同。
+
+| 欄位 | 型別 | 說明 |
+|---|---|---|
+| `id` | string | `sha256(path, subject, kind, blocker, anchor, ordinal)`。不含行號，在上方插入程式碼或排版不會改變；fact 消失（例如加回被移除的 `authorize`）時這個 id 也不再出現 |
+| `path` / `subject` / `kind` / `blocker` / `anchor` | | 組成 id 的內容；檔案層級的 finding 的 `subject` 為檔案路徑、`anchor` 為原因代碼 |
+| `ordinal` | number | 同一個 subject 中 `kind`、`blocker`、`anchor` 都相同的 finding 依出現順序編號（從 0 起），避免兩件事被合併成一件 |
+| `scopeHash` | string | 人工豁免要綁定的內容：fact 的 `scopeHash`，檔案層級或沒有 scope 時為 `contentHash`。豁免後這個值改變，就代表被看過的程式碼又改了 |
+| `location` | object \| null | fact 的位置 `{ side, startLine, endLine }`；檔案層級為 `null` |
+| `description` | string \| null | fact 的描述；檔案層級為 `null` |
+
+TypeScript / JavaScript 的 finding 與 PHP 相同，由 fact 產生（`scopeHash` 為 `ts:` 開頭的所屬 function hash，或整個檔案的 hash）。
+
+範例（上面 `shop` 的報表，`files` 只節錄 3 筆：AI 審查後必須人工確認的 `PostController.php`，以及交給 AI 審查的 `FreezeService.php` 與 `composer.json`）：
 
 ```json
 {
   "repository": "shop",
   "base": {
     "ref": "main",
-    "sha": "685c6d780c9f2b3bdf5d215ceffe39fe56cbbd24"
+    "sha": "48016bdb0fe744a5f488219ea0152aae1bdd311b"
   },
   "head": {
     "ref": "feature",
-    "sha": "ee86b749e972cdbb1d1f022914abf6621516352a"
+    "sha": "594959a22bebcab30f99df672c7c27ba1c6f323e"
   },
-  "mergeBase": "f30b6d9d7ca0a8e1a1505fb95efd8069c265da2e",
+  "mergeBase": "ec4021f968a437c1b9d942109f8723cade7dd0ac",
+  "config": {
+    "path": ".reviewer.json",
+    "commit": "ec4021f968a437c1b9d942109f8723cade7dd0ac",
+    "status": "absent",
+    "errors": [],
+    "digest": null
+  },
   "decision": {
     "status": "HUMAN_REVIEW_REQUIRED",
     "reasons": [
       "AUTHORIZATION_GUARD_REMOVED",
       "COMPARISON_OPERATOR_CHANGED",
       "COV-PHP-001:UNRECOGNIZED_PHP_CHANGE",
-      "FACT_UNHANDLED:php-f6d5b97e82b5f9b5a519",
+      "FACT_UNHANDLED:php-51031e647c86e74cf9f7",
       "UNSUPPORTED_FILE_TYPE"
     ],
     "files": 6,
@@ -389,10 +583,17 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
     "targeted": 3,
     "full": 2
   },
+  "routing": {
+    "track": "ESCALATED",
+    "autoPass": 1,
+    "aiTrack": 4,
+    "escalated": 1
+  },
   "files": [
     {
       "path": "app/Http/Controllers/PostController.php",
       "status": "modified",
+      "contentHash": "git:ded36e7b0ecee781a7072b9bb1b853c19bc84eca",
       "analyzed": true,
       "decision": "HUMAN_REVIEW_REQUIRED",
       "fallback": "TARGETED",
@@ -402,10 +603,24 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
       "facts": [
         {
           "kind": "CALL_REMOVED",
+          "subject": "PostController::update",
           "side": "base",
           "startLine": 9,
           "endLine": 9,
-          "description": "移除呼叫 $this->authorize"
+          "description": "移除呼叫 $this->authorize",
+          "blockers": [
+            "AUTHORIZATION_GUARD_REMOVED"
+          ],
+          "anchor": {
+            "callee": {
+              "name": "authorize",
+              "receiver": [
+                "this"
+              ],
+              "kind": "method"
+            }
+          },
+          "scopeHash": "php:747b177afa33d6ce552e8ca3161f4121"
         }
       ],
       "changedLines": [
@@ -414,22 +629,81 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
           "startLine": 9,
           "endLine": 10
         }
+      ],
+      "track": "ESCALATED",
+      "oneWayDoors": [
+        "AUTHORIZATION_GUARD_REMOVED"
+      ],
+      "findings": [
+        {
+          "id": "d411be1b5801ad75a55b4e36073b03f2a62cb015571825fe3e8c7684bb5d4ba6",
+          "path": "app/Http/Controllers/PostController.php",
+          "subject": "PostController::update",
+          "kind": "CALL_REMOVED",
+          "blocker": "AUTHORIZATION_GUARD_REMOVED",
+          "anchor": {
+            "callee": {
+              "name": "authorize",
+              "receiver": [
+                "this"
+              ],
+              "kind": "method"
+            }
+          },
+          "scopeHash": "php:747b177afa33d6ce552e8ca3161f4121",
+          "location": {
+            "side": "base",
+            "startLine": 9,
+            "endLine": 9
+          },
+          "description": "移除呼叫 $this->authorize",
+          "ordinal": 0
+        }
       ]
     },
     {
-      "path": "app/Services/LegacyHelper.php",
+      "path": "app/Services/FreezeService.php",
       "status": "modified",
+      "contentHash": "git:5e58eb6d48972f8ddf199397b8add007d5c8396c",
       "analyzed": true,
-      "decision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
-      "fallback": null,
+      "decision": "HUMAN_REVIEW_REQUIRED",
+      "fallback": "TARGETED",
       "reasons": [
-        "NO_REDUCTION_BLOCKER"
+        "COMPARISON_OPERATOR_CHANGED"
       ],
-      "facts": []
+      "facts": [
+        {
+          "kind": "BINARY_OPERATOR_CHANGED",
+          "subject": "FreezeService::canFreeze",
+          "side": "head",
+          "startLine": 9,
+          "endLine": 9,
+          "description": "運算子 < → <=：$cash->amount < $amount → $cash->amount <= $amount",
+          "blockers": [
+            "COMPARISON_OPERATOR_CHANGED"
+          ],
+          "anchor": {
+            "operator": "<→<=",
+            "before": "$cash->amount < $amount"
+          },
+          "scopeHash": "php:40bab854fa49c35a6ff61336b3b97707"
+        }
+      ],
+      "changedLines": [
+        {
+          "side": "head",
+          "startLine": 9,
+          "endLine": 9
+        }
+      ],
+      "track": "AI_TRACK",
+      "oneWayDoors": [],
+      "findings": []
     },
     {
       "path": "composer.json",
       "status": "modified",
+      "contentHash": "git:b02624cbee377067feaae08dde39829b1f5cbe91",
       "analyzed": false,
       "decision": "HUMAN_REVIEW_REQUIRED",
       "fallback": "FULL",
@@ -443,7 +717,10 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
           "startLine": 3,
           "endLine": 3
         }
-      ]
+      ],
+      "track": "AI_TRACK",
+      "oneWayDoors": [],
+      "findings": []
     }
   ]
 }
@@ -453,8 +730,8 @@ shop  main (685c6d780c9f) → feature (ee86b749e972)，比較起點為 merge bas
 
 | exit code | 意義 |
 |---|---|
-| 0 | 完成。沒有 `--fail-on-review` 時，即使有檔案需要 review 也是 0；有 `--fail-on-review` 時表示 PR 層級為 `NOT_SELECTED_FOR_HUMAN_REVIEW`（包括 `NO_CHANGES`） |
-| 1 | 有 `--fail-on-review`，且 PR 層級為 `HUMAN_REVIEW_REQUIRED` |
+| 0 | 完成。沒有 `--fail-on-*` 時，即使有檔案需要 review 也是 0；有 `--fail-on-review` 時表示 PR 層級為 `NOT_SELECTED_FOR_HUMAN_REVIEW`（包括 `NO_CHANGES`）；有 `--fail-on-escalation` 時表示 PR 層級路由不是 `ESCALATED`；有 `--fail-on-human` 時表示沒有檔案需要人工、也沒有尚未 commit 的 AI 修正 |
+| 1 | 有 `--fail-on-review` 且 PR 層級為 `HUMAN_REVIEW_REQUIRED`、有 `--fail-on-escalation` 且 PR 層級路由為 `ESCALATED`，或有 `--fail-on-human` 且需要人工 / 有尚未 commit 的 AI 修正 |
 | 2 | 錯誤。stderr 印出 `error: <訊息>`，不輸出報表 |
 
 exit code 2 的錯誤：
@@ -462,7 +739,12 @@ exit code 2 的錯誤：
 | 訊息 | 原因 |
 |---|---|
 | `OPTION_MISSING:--base` | 沒有 `--base`，或值為空字串 |
-| `OPTION_INVALID:--<選項> <值>` | `--concurrency` 不是 1–64 的整數，或 `--timeout-ms` 不是 1–2147483647 的整數 |
+| `OPTION_INVALID:--<選項> <值>` | `--concurrency` 不是 1–64 的整數、`--timeout-ms` 不是 1–2147483647 的整數、`--ai-concurrency` 不是 1–32 的整數，或 `--ai-max-files` 不是 1–10000 的整數 |
+| `OPTION_REQUIRES_AI:--<選項>` | `--ai-model`、`--ai-effort`、`--ai-apply`、`--ai-concurrency`、`--ai-max-files` 沒有搭配 `--ai` |
+| `AI_EFFORT_INVALID:<值>` | `--ai-effort` 不是 `low`、`medium`、`high`、`xhigh`、`max` |
+| `AI_NOT_CONFIGURED:…` | 有 `--ai` 但沒有設定 `ANTHROPIC_API_KEY` |
+| `AI_SDK_MISSING:…` | 有 `--ai` 但沒有安裝 `@anthropic-ai/sdk`（在 Reviewer 目錄執行 `npm ci`） |
+| `AI_APPLY_WORKTREE_MISMATCH:…` | 有 `--ai-apply`，但 worktree 不是 `--head` 或有未 commit 的追蹤檔案變更 |
 | `GIT_REF_INVALID:<ref>` | ref 為空（例如 `--head ''`）或以 `-` 開頭（例如 `--base=-x`）。不存在的 ref 是 `GIT_FAILED` |
 | `GIT_FAILED:git <子指令>: <git 的訊息>` | git 指令失敗，例如 ref 不存在（`fatal: Needed a single revision`，包括 shallow clone 沒有 fetch base）、`--repo` 不存在或不是 git repository、PATH 上沒有 `git`（`spawn git ENOENT`） |
 | `GIT_NO_MERGE_BASE:<base SHA>..<head SHA>` | base 與 head 沒有共同祖先：不相關的歷史，或 shallow clone 沒有抓到 merge base |
@@ -471,7 +753,7 @@ exit code 2 的錯誤：
 
 `GIT_DIFF_UNPARSABLE:<header>`（`git diff --raw` 的輸出無法解析）是防禦性檢查，正常執行不會出現；出現時也是 exit code 2。
 
-analyzer 的問題（找不到 `php`、沒有安裝依賴、逾時）**不是** exit code 2，而是讓檔案變成 `FULL`（見「前置需求」與「原因代碼」）。
+analyzer 的問題（找不到 `php`、沒有安裝依賴、逾時）**不是** exit code 2，而是讓檔案變成 `FULL`（見「前置需求」與「原因代碼」）。同樣地，個別檔案的 AI 失敗（API 錯誤、拒絕、輸出格式錯誤）不是 exit code 2，而是讓該檔案需要人工。
 
 ## 在 CI 中使用
 
@@ -505,6 +787,8 @@ exit "$status"   # 0：不需要 Human Review；1：需要（清單見 review/re
 ```
 
 - `--fail-on-review` 的 exit code 1 表示「需要 Human Review」，不是 CLI 失敗；CLI 失敗是 2。
+- 加上 AI 審查：把 `--fail-on-review` 換成 `--ai --fail-on-human`，並以 CI secret 提供 `ANTHROPIC_API_KEY`。exit code 1 表示 AI 審查之後仍需要人工（`ESCALATED`、AI 判斷需要人工或 AI 失敗），清單是 `review/report.json` 中 `needsHuman` 為 `true` 的檔案與它們的 `findings`。AI 失敗只會讓檔案需要人工，CI 不需要另外檢查。
+- 只有 `--fail-on-escalation`、沒有 `--ai` 時，`AI_TRACK` 檔案沒有任何人或 AI 審查；這種組合只適合在另有人工 review 流程時使用。
 - GitHub Actions 的 `run:` 預設以 `bash -e` 執行（指定 `shell: bash` 時是 `bash -eo pipefail`），CLI 一以非 0 結束，step 就會中止。如果在 node 指令之後才另起一行寫 `status=$?`，那一行、exit code 2 的判斷與 analyzer 檢查都不會執行，「analyzer 無法執行」會被當成一般的 exit code 1（需要 review）。
 - `--out` 讓 stdout 保留給人看的文字報表，同時留下 JSON 供後續步驟使用。
 - `ANALYZER_ERROR:PHP_ANALYZER_ABORTED`（逾時）也會被上面的檢查擋下；大型檔案多時可以調高 `--timeout-ms`。
@@ -514,7 +798,7 @@ exit "$status"   # 0：不需要 Human Review；1：需要（清單見 review/re
 ## 限制
 
 - 決策是 file-level：`TARGETED` 的位置只是起點，仍需 review 整個檔案。
-- 只分析 PHP（`.php`）。新增、刪除、非 PHP、binary、symlink、submodule、type change 一律 `FULL`，不會分析內容。
+- 只分析 PHP 與 TypeScript / JavaScript。新增、刪除、其他語言、binary、symlink、submodule、type change 一律 `FULL`，不會分析內容（有 `--ai` 時交給 AI 審查）。
 - 只比較 commit，不看 working tree。
 - 需要 base 與 head 的共同歷史；shallow clone 可能缺少 base（`GIT_FAILED`）或找不到 merge base（`GIT_NO_MERGE_BASE`）。
 - 不檢查目標 PHP 版本是否支援新語法（例如在 PHP 7 專案中使用參數 trailing comma），請以目標版本的 `php -l` 檢查。

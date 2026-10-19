@@ -6,6 +6,7 @@
     "path": "app/Services/PaymentService.php",
     "description": "Payment idempotency named argument identity changes across retry.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "CALL_ARGUMENT_CHANGED"
     ],
@@ -20,6 +21,7 @@
     "path": "app/Services/WalletService.php",
     "description": "DB transaction boundary is removed around wallet mutation.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "CALL_REMOVED"
     ],
@@ -34,6 +36,7 @@
     "path": "app/Services/OrderService.php",
     "description": "Authorization guard is removed before protected mutation.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "CALL_REMOVED"
     ],
@@ -48,6 +51,7 @@
     "path": "app/Services/WalletService.php",
     "description": "Wallet balance boundary changes from < to <=.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "AI_TRACK",
     "expectedFactKinds": [
       "BINARY_OPERATOR_CHANGED"
     ],
@@ -62,6 +66,7 @@
     "path": "app/Entities/Observers/FreezeObserver.php",
     "description": "Fully-qualified \\DB::transaction wrapper is removed around a cash-flow debit.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "CALL_REMOVED"
     ],
@@ -76,6 +81,7 @@
     "path": "app/Services/CheckoutService.php",
     "description": "\\DB::beginTransaction and \\DB::commit are removed from a settlement loop.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "CALL_REMOVED"
     ],
@@ -90,6 +96,7 @@
     "path": "app/Services/CheckoutService.php",
     "description": "\\DB::rollBack is removed from the settlement error path.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "CALL_REMOVED"
     ],
@@ -104,6 +111,7 @@
     "path": "app/Entities/Observers/FreezeObserver.php",
     "description": "Chained lockForUpdate() is removed inside a transaction closure.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "CALL_REMOVED"
     ],
@@ -118,6 +126,7 @@
     "path": "app/Adapters/ChannelNotify/IwpNotifyHandler.php",
     "description": "Payment callback signature verification guard is removed.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "CALL_REMOVED"
     ],
@@ -132,6 +141,7 @@
     "path": "routes/web.php",
     "description": "auth:admin middleware is removed from a Route::group.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "ARRAY_ITEM_REMOVED"
     ],
@@ -146,6 +156,7 @@
     "path": "app/Http/Controllers/Auth/LoginController.php",
     "description": "$this->middleware(auth:admin) is removed from a controller constructor.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "CALL_REMOVED"
     ],
@@ -160,6 +171,7 @@
     "path": "app/Entities/Observers/FreezeObserver.php",
     "description": "Cash-flow debit flips to a credit (- to +).",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "AI_TRACK",
     "expectedFactKinds": [
       "BINARY_OPERATOR_CHANGED"
     ],
@@ -174,6 +186,7 @@
     "path": "app/Adapters/ChannelNotify/IwpNotifyHandler.php",
     "description": "Signature check stays but its throw guard is removed, so a failed check no longer stops the callback.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "GUARD_REMOVED"
     ],
@@ -188,6 +201,7 @@
     "path": "admin/src/entries/v1/customer/settings/moneySwitch/patch.php",
     "description": "authorize is removed from a base-controller $beforeActionList property.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
     "expectedFactKinds": [
       "ARRAY_ITEM_REMOVED"
     ],
@@ -202,6 +216,7 @@
     "path": "app/Services/FreezeService.php",
     "description": "Method parameter is renamed consistently; parameter names are public API under PHP 8 named arguments.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "AI_TRACK",
     "expectedFactKinds": []
   },
   {
@@ -211,7 +226,492 @@
     "path": "app/Services/FeeService.php",
     "description": "Two locals are merged into one name, so the fee is no longer subtracted.",
     "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "AI_TRACK",
     "expectedFactKinds": []
+  },
+  {
+    "id": "MUT-017",
+    "classification": "critical",
+    "fixture": "wallet-condition-change",
+    "path": "app/Services/WalletService.php",
+    "description": "Wallet balance boundary changes from < to <=; the project config marks balance/amount operands as sensitive.",
+    "config": {
+      "version": 1,
+      "rules": {
+        "sensitiveOperands": [
+          {
+            "pattern": "/balance|amount/i",
+            "operators": "comparison"
+          }
+        ]
+      }
+    },
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "BINARY_OPERATOR_CHANGED"
+    ],
+    "expectedReasons": [
+      "COMPARISON_OPERATOR_CHANGED",
+      "SENSITIVE_OPERAND_CHANGED"
+    ]
+  },
+  {
+    "id": "MUT-018",
+    "classification": "critical",
+    "fixture": "balance-sign-flip",
+    "path": "app/Entities/Observers/FreezeObserver.php",
+    "description": "Freeze amount is added instead of subtracted; the project config marks amount operands as sensitive.",
+    "config": {
+      "version": 1,
+      "rules": {
+        "sensitiveOperands": [
+          {
+            "pattern": "/balance|amount/i",
+            "operators": "arithmetic"
+          }
+        ]
+      }
+    },
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "BINARY_OPERATOR_CHANGED"
+    ],
+    "expectedReasons": [
+      "ARITHMETIC_OPERATOR_CHANGED",
+      "SENSITIVE_OPERAND_CHANGED"
+    ]
+  },
+  {
+    "id": "MUT-019",
+    "classification": "critical",
+    "fixture": "stock-reservation-removed",
+    "path": "app/Services/ShipmentService.php",
+    "description": "Stock reservation is removed before shipping (logistics project protects reserveStock).",
+    "config": {
+      "version": 1,
+      "presets": [
+        "php-laravel"
+      ],
+      "rules": {
+        "protectedCalls": [
+          {
+            "name": "reserveStock"
+          }
+        ]
+      }
+    },
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_REMOVED"
+    ],
+    "expectedReasons": [
+      "PROTECTED_CALL_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-020",
+    "classification": "critical",
+    "fixture": "notification-added",
+    "path": "app/Services/ShipmentService.php",
+    "description": "A customer e-mail is sent on every shipment (the project config marks Mail as an irreversible side effect).",
+    "config": {
+      "version": 1,
+      "presets": [
+        "php-laravel"
+      ],
+      "rules": {
+        "sideEffectCalls": [
+          {
+            "receiver": "Mail"
+          }
+        ]
+      }
+    },
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_ADDED"
+    ],
+    "expectedReasons": [
+      "SIDE_EFFECT_CALL_ADDED"
+    ]
+  },
+  {
+    "id": "MUT-021",
+    "classification": "critical",
+    "fixture": "verify-moved-between-routes",
+    "path": "routes/api.php",
+    "description": "Payment signature verification moves from the notify route closure into the status route closure; the notify route no longer verifies callbacks.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_REMOVED",
+      "CALL_ADDED"
+    ],
+    "expectedReasons": [
+      "SIGNATURE_VERIFICATION_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-022",
+    "classification": "critical",
+    "fixture": "charge-amount-call-replaced",
+    "path": "app/Services/OrderChargeService.php",
+    "description": "The charged amount switches from grandTotal() to subtotal(); the project config protects the first argument of charge.",
+    "config": {
+      "version": 1,
+      "presets": [
+        "php-laravel"
+      ],
+      "rules": {
+        "protectedArguments": [
+          {
+            "name": "charge",
+            "argument": 0
+          }
+        ]
+      }
+    },
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_REMOVED",
+      "CALL_ADDED"
+    ],
+    "expectedReasons": [
+      "PROTECTED_ARGUMENT_CHANGED"
+    ]
+  },
+  {
+    "id": "MUT-TS-001",
+    "classification": "critical",
+    "fixture": "typescript/transaction-unwrapped",
+    "path": "src/wallet/debit.ts",
+    "description": "Prisma $transaction wrapper is removed around a balance update.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_REMOVED"
+    ],
+    "expectedReasons": [
+      "TRANSACTION_BOUNDARY_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-TS-002",
+    "classification": "critical",
+    "fixture": "typescript/auth-middleware-removed",
+    "path": "src/routes/refund.ts",
+    "description": "Express requireAuth middleware is removed from the refund route.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_ARGUMENT_REMOVED"
+    ],
+    "expectedReasons": [
+      "MIDDLEWARE_GUARD_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-TS-003",
+    "classification": "critical",
+    "fixture": "typescript/ts-ignore-added",
+    "path": "src/payments/charge.ts",
+    "description": "A @ts-ignore hides passing a string amount to the gateway.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "AI_TRACK",
+    "expectedFactKinds": [
+      "DIRECTIVE_COMMENT_CHANGED"
+    ],
+    "expectedReasons": [
+      "DIRECTIVE_COMMENT_CHANGED"
+    ]
+  },
+  {
+    "id": "MUT-TS-004",
+    "classification": "critical",
+    "fixture": "typescript/shorthand-key-renamed",
+    "path": "src/payments/payload.ts",
+    "description": "Renaming a local used in object shorthand changes the payload key (amount → total).",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "AI_TRACK",
+    "expectedFactKinds": [
+      "ARRAY_ITEM_ADDED",
+      "ARRAY_ITEM_REMOVED"
+    ],
+    "expectedReasons": []
+  },
+  {
+    "id": "MUT-TS-005",
+    "classification": "critical",
+    "fixture": "typescript/optional-chain-parenthesized",
+    "path": "src/orders/contact.ts",
+    "description": "Parentheses break the optional chain; a missing order now throws.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "AI_TRACK",
+    "expectedFactKinds": [],
+    "expectedReasons": [
+      "COV-TS-001:UNRECOGNIZED_TS_CHANGE"
+    ]
+  },
+  {
+    "id": "MUT-TS-006",
+    "classification": "critical",
+    "fixture": "typescript/nest-guard-removed",
+    "path": "src/orders/refund.controller.ts",
+    "description": "NestJS @UseGuards(AuthGuard) is removed from the refund endpoint.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "ANNOTATION_REMOVED"
+    ],
+    "expectedReasons": [
+      "AUTHORIZATION_GUARD_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-TS-007",
+    "classification": "critical",
+    "fixture": "typescript/nest-roles-changed",
+    "path": "src/users/users.controller.ts",
+    "description": "Deleting users now requires the 'support' role instead of 'admin'.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "LITERAL_CHANGED"
+    ],
+    "expectedReasons": [
+      "AUTHORIZATION_ABILITY_CHANGED"
+    ]
+  },
+  {
+    "id": "MUT-TS-008",
+    "classification": "critical",
+    "fixture": "typescript/jwt-verify-to-decode",
+    "path": "src/auth/current-user.ts",
+    "description": "jwt.verify is replaced by jwt.decode, so token signatures are no longer checked.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_REMOVED"
+    ],
+    "expectedReasons": [
+      "SIGNATURE_VERIFICATION_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-TS-009",
+    "classification": "critical",
+    "fixture": "typescript/knex-row-lock-removed",
+    "path": "src/stock/reserve.ts",
+    "description": "knex .forUpdate() is removed from a stock read inside a transaction.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_REMOVED"
+    ],
+    "expectedReasons": [
+      "ROW_LOCK_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-TS-010",
+    "classification": "critical",
+    "fixture": "typescript/prisma-delete-added",
+    "path": "src/orders/cancel.ts",
+    "description": "Cancelling an order now hard-deletes its items with Prisma deleteMany.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_ADDED"
+    ],
+    "expectedReasons": [
+      "DATA_DELETION_ADDED"
+    ]
+  },
+  {
+    "id": "MUT-TS-011",
+    "classification": "critical",
+    "fixture": "typescript/sequelize-transaction-option-removed",
+    "path": "src/accounts/transfer.ts",
+    "description": "The credit side of a transfer no longer passes { transaction: t } and runs outside the transaction.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "ARRAY_ITEM_REMOVED"
+    ],
+    "expectedReasons": [
+      "TRANSACTION_BOUNDARY_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-TS-012",
+    "classification": "critical",
+    "fixture": "typescript/guard-removed",
+    "path": "src/refunds/approve.ts",
+    "description": "The admin check (guard clause) before approving a refund is removed.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "GUARD_REMOVED"
+    ],
+    "expectedReasons": [
+      "GUARD_CLAUSE_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-TS-013",
+    "classification": "critical",
+    "fixture": "typescript/wallet-sign-flip",
+    "path": "src/wallet/wallet.service.ts",
+    "description": "Debit adds the amount instead of subtracting it; the project config marks balance/amount operands as sensitive.",
+    "config": {
+      "version": 1,
+      "rules": {
+        "sensitiveOperands": [
+          {
+            "pattern": "/balance|amount/i",
+            "operators": "arithmetic"
+          }
+        ]
+      }
+    },
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "BINARY_OPERATOR_CHANGED"
+    ],
+    "expectedReasons": [
+      "ARITHMETIC_OPERATOR_CHANGED",
+      "SENSITIVE_OPERAND_CHANGED"
+    ]
+  },
+  {
+    "id": "MUT-TS-014",
+    "classification": "critical",
+    "fixture": "typescript/mailer-call-added",
+    "path": "src/orders/ship.ts",
+    "description": "Shipping now sends an email; the project config declares mailer calls as irreversible side effects.",
+    "config": {
+      "version": 1,
+      "rules": {
+        "sideEffectCalls": [
+          {
+            "receiver": "mailer"
+          }
+        ]
+      }
+    },
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_ADDED"
+    ],
+    "expectedReasons": [
+      "SIDE_EFFECT_CALL_ADDED"
+    ]
+  },
+  {
+    "id": "MUT-TS-015",
+    "classification": "critical",
+    "fixture": "typescript/zod-rule-relaxed",
+    "path": "src/transfers/body.ts",
+    "description": "The zod schema now accepts a zero transfer amount (min(1) → min(0)).",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "AI_TRACK",
+    "expectedFactKinds": [
+      "LITERAL_CHANGED"
+    ],
+    "expectedReasons": [
+      "VALIDATION_RULE_CHANGED"
+    ]
+  },
+  {
+    "id": "MUT-TS-016",
+    "classification": "critical",
+    "fixture": "typescript/charge-amount-literal",
+    "path": "src/orders/charge.ts",
+    "description": "The charged amount literal changes (100 → 1000); the project config protects the first argument of charge.",
+    "config": {
+      "version": 1,
+      "rules": {
+        "protectedArguments": [
+          {
+            "name": "charge",
+            "argument": 0
+          }
+        ]
+      }
+    },
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "LITERAL_CHANGED"
+    ],
+    "expectedReasons": [
+      "PROTECTED_ARGUMENT_CHANGED"
+    ]
+  },
+  {
+    "id": "MUT-TS-017",
+    "classification": "critical",
+    "fixture": "typescript/route-middleware-reordered",
+    "path": "src/routes/refund.ts",
+    "description": "requireAuth is moved after the refund handler, so it no longer runs before the refund is processed.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_ARGUMENTS_REORDERED"
+    ],
+    "expectedReasons": [
+      "MIDDLEWARE_GUARD_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-TS-018",
+    "classification": "critical",
+    "fixture": "typescript/verify-moved-between-handlers",
+    "path": "src/routes/admin.ts",
+    "description": "jwt.verify moves from the admin refund handler into the public status handler; the admin route no longer verifies tokens.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_REMOVED",
+      "CALL_ADDED"
+    ],
+    "expectedReasons": [
+      "SIGNATURE_VERIFICATION_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-TS-019",
+    "classification": "critical",
+    "fixture": "typescript/charge-amount-call-replaced",
+    "path": "src/orders/charge.ts",
+    "description": "The charged amount switches from orderTotal() to orderSubtotal() (dropping tax and shipping); the project config protects the first argument of charge.",
+    "config": {
+      "version": 1,
+      "rules": {
+        "protectedArguments": [
+          {
+            "name": "charge",
+            "argument": 0
+          }
+        ]
+      }
+    },
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_REMOVED",
+      "CALL_ADDED"
+    ],
+    "expectedReasons": [
+      "PROTECTED_ARGUMENT_CHANGED"
+    ]
   },
   {
     "id": "SAFE-001",
@@ -220,6 +720,7 @@
     "path": "app/Services/ExampleService.php",
     "description": "Formatting/comment-only change.",
     "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "expectedTrack": "AUTO_PASS",
     "expectedFactKinds": []
   },
   {
@@ -229,6 +730,7 @@
     "path": "app/Services/ExampleService.php",
     "description": "Local variable rename with all references updated (scope-aware alpha-equivalence).",
     "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "expectedTrack": "AUTO_PASS",
     "expectedFactKinds": []
   },
   {
@@ -238,6 +740,7 @@
     "path": "app/Entities/Observers/FreezeObserver.php",
     "description": "Comment and line-wrapping change inside a \\DB::transaction closure.",
     "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "expectedTrack": "AUTO_PASS",
     "expectedFactKinds": []
   },
   {
@@ -247,6 +750,59 @@
     "path": "app/Services/SettlementService.php",
     "description": "array() to [], quote style, redundant parentheses and trailing comma only.",
     "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "expectedTrack": "AUTO_PASS",
     "expectedFactKinds": []
+  },
+  {
+    "id": "SAFE-TS-001",
+    "classification": "safe",
+    "fixture": "typescript/format-only",
+    "path": "src/orders/discount.ts",
+    "description": "Prettier-style formatting: quotes, semicolons, trailing commas, redundant parentheses, property key quotes, comments.",
+    "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "expectedTrack": "AUTO_PASS",
+    "expectedFactKinds": [],
+    "expectedReasons": [
+      "NO_REDUCTION_BLOCKER"
+    ]
+  },
+  {
+    "id": "SAFE-TS-002",
+    "classification": "safe",
+    "fixture": "typescript/local-rename",
+    "path": "src/ledger/settle.ts",
+    "description": "Consistent rename of local variables inside a function.",
+    "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "expectedTrack": "AUTO_PASS",
+    "expectedFactKinds": [],
+    "expectedReasons": [
+      "NO_REDUCTION_BLOCKER"
+    ]
+  },
+  {
+    "id": "SAFE-TS-003",
+    "classification": "safe",
+    "fixture": "typescript/jsx-reformat",
+    "path": "src/ui/Receipt.tsx",
+    "description": "JSX reformatted across lines without changing rendered whitespace.",
+    "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "expectedTrack": "AUTO_PASS",
+    "expectedFactKinds": [],
+    "expectedReasons": [
+      "NO_REDUCTION_BLOCKER"
+    ]
+  },
+  {
+    "id": "SAFE-TS-004",
+    "classification": "safe",
+    "fixture": "typescript/nest-reformat",
+    "path": "src/reports/reports.controller.ts",
+    "description": "NestJS controller reformatted: quotes, decorator line breaks, a comment and a consistent local rename.",
+    "expectedCurrentDecision": "NOT_SELECTED_FOR_HUMAN_REVIEW",
+    "expectedTrack": "AUTO_PASS",
+    "expectedFactKinds": [],
+    "expectedReasons": [
+      "NO_REDUCTION_BLOCKER"
+    ]
   }
 ]

@@ -1,0 +1,9 @@
+{
+  "name": "reviewer-ts-analyzer",
+  "private": true,
+  "type": "module",
+  "description": "TypeScript / JavaScript analyzer for the review reduction engine (AST equivalence).",
+  "dependencies": {
+    "typescript": "5.9.3"
+  }
+}

@@ -10,6 +10,7 @@ use PhpParser\PhpVersion;
 use Reviewer\PhpAnalyzer\CallExtractor;
 use Reviewer\PhpAnalyzer\CallFacts;
 use Reviewer\PhpAnalyzer\Canonicalizer;
+use Reviewer\PhpAnalyzer\ScopeHashes;
 use Reviewer\PhpAnalyzer\StructuralDiff;
 use Reviewer\PhpAnalyzer\VariableScopes;
 
@@ -191,7 +192,10 @@ function analyzePair(
         $explainVariables,
     ))->run($beforeAst, $afterAst);
 
-    return ['facts' => [...$callFacts, ...$diff['facts']], 'unexplained' => $diff['unexplained']];
+    return [
+        'facts' => [...StructuralDiff::attachCallContainers($callFacts, $diff['callContainers']), ...$diff['facts']],
+        'unexplained' => $diff['unexplained'],
+    ];
 }
 
 // 先以原始變數名稱比較；不完整時再以 scope-aware canonical 名稱比較（區域變數改名）。
@@ -256,12 +260,12 @@ respond([
     'complete' => $complete,
     'reasonCode' => $reasonCode,
     'diagnostics' => $complete ? [] : [$reasonCode],
-    'facts' => sortedFacts(array_map(
+    'facts' => sortedFacts(ScopeHashes::annotate(array_map(
         static function (array $fact): array {
-            unset($fact['calleeKey']);
+            unset($fact['calleeKey'], $fact['slot']);
             return $fact;
         },
         $analysis['facts'],
-    )),
+    ), $afterAst)),
     'phpVersion' => PHP_VERSION,
 ]);

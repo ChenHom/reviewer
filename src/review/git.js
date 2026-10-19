@@ -171,3 +171,50 @@ export async function diffHunks(repo, baseSha, headSha, paths) {
 export async function readBlob(repo, sha) {
   return git(repo, ['cat-file', 'blob', sha]);
 }
+
+/**
+ * 讀取某個 commit 中某個路徑的檔案；路徑不存在時回傳 null。
+ *
+ * @param {string} repo - repository 路徑。
+ * @param {string} commit - commit SHA。
+ * @param {string} path - repository 相對路徑。
+ * @returns {Promise<{mode: string, type: string, content: Buffer|null}|null>} 檔案；不是 blob 時 content 為 null。
+ */
+export async function readTreeFile(repo, commit, path) {
+  const output = (await git(repo, ['ls-tree', '-z', commit, '--', path])).toString('utf8');
+  const entry = output.split('\0').find(Boolean);
+  if (!entry) return null;
+  const match = /^(\d{6}) (\w+) ([0-9a-f]+)\t/.exec(entry);
+  if (!match) throw new Error(`GIT_TREE_UNPARSABLE:${entry}`);
+  return { mode: match[1], type: match[2], content: match[2] === 'blob' ? await readBlob(repo, match[3]) : null };
+}
+
+/**
+ * 單一檔案（含 rename）在兩個 commit 之間的 unified diff（給 AI 審查讀的原文）。
+ *
+ * @param {string} repo - repository 路徑。
+ * @param {string} baseSha - base commit。
+ * @param {string} headSha - head commit。
+ * @param {string[]} paths - 檔案路徑（rename 時為舊路徑與新路徑）。
+ * @param {number} context - 每個 hunk 前後的行數。
+ * @returns {Promise<string>} diff 文字。
+ */
+export async function fileDiff(repo, baseSha, headSha, paths, context) {
+  return (await git(repo, [
+    'diff', `-U${context}`, '--no-color', '--no-ext-diff', '-M', baseSha, headSha, '--', ...paths,
+  ])).toString('utf8');
+}
+
+/**
+ * worktree 的狀態：目前 checkout 的 commit 與是否有未 commit 的追蹤檔案變更。
+ *
+ * @param {string} repo - repository 路徑。
+ * @returns {Promise<{head: string, clean: boolean}>} 狀態。
+ */
+export async function worktreeState(repo) {
+  const [head, status] = await Promise.all([
+    git(repo, ['rev-parse', 'HEAD']),
+    git(repo, ['status', '--porcelain', '--untracked-files=no']),
+  ]);
+  return { head: head.toString('utf8').trim(), clean: status.toString('utf8').trim() === '' };
+}

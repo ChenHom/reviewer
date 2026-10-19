@@ -1,18 +1,31 @@
 import { readFile } from 'node:fs/promises';
+import { extname } from 'node:path';
 import process from 'node:process';
 import { URL } from 'node:url';
 
 import { createAnalysisContextBinding } from '../../src/adapters/contracts.js';
-import { createPhpLaravelAdapter } from '../../src/adapters/php-laravel/adapter.js';
-import { PHP_LARAVEL_DOMAIN_INTERPRETERS } from '../../src/interpreters/php-laravel-domain.js';
+import { createProjectPolicy, parseProjectConfig } from '../../src/config/project-config.js';
 import { createAuthorityState } from '../../src/publication.js';
+import { languageFor } from '../../src/review/review.js';
+import { routeFile } from '../../src/routing.js';
 import { runAdapterPipeline } from '../../src/runner.js';
 import {
   calculateMutationMetrics,
   validateMutationEvaluation,
 } from './metrics.js';
 
-const adapter = createPhpLaravelAdapter();
+const adapters = new Map();
+
+/**
+ * 路徑對應語言的 adapter（每種語言共用一個）。
+ *
+ * @param {object} language - `LANGUAGES` 中的語言設定。
+ * @returns {object} executable adapter。
+ */
+function adapterFor(language) {
+  if (!adapters.has(language.id)) adapters.set(language.id, language.createAdapter());
+  return adapters.get(language.id);
+}
 
 /**
  * 讀取 JSON 檔。
@@ -25,18 +38,19 @@ async function readJson(url) {
 }
 
 /**
- * 讀取 mutation fixture source。
+ * 讀取 mutation fixture source。`fixture` 不含 `/` 時位於 `fixtures/php-laravel/`，
+ * 否則為 `<目錄>/<名稱>`（例如 `typescript/format-only`）；副檔名與 case 的 `path` 相同。
  *
- * @param {string} fixture - fixture directory name。
+ * @param {object} definition - case definition。
  * @param {'before'|'after'} side - source side。
- * @returns {Promise<string>} PHP source。
+ * @returns {Promise<string>} source。
  */
-async function readFixture(fixture, side) {
+async function readFixture(definition, side) {
+  const [directory, name] = definition.fixture.includes('/')
+    ? definition.fixture.split('/')
+    : ['php-laravel', definition.fixture];
   return readFile(
-    new URL(
-      `../../fixtures/php-laravel/${fixture}/${side}.php`,
-      import.meta.url,
-    ),
+    new URL(`../../fixtures/${directory}/${name}/${side}${extname(definition.path)}`, import.meta.url),
     'utf8',
   );
 }
@@ -59,15 +73,33 @@ function identityFor(id) {
 }
 
 /**
+ * case 的專案 policy：case 帶 `config`（`.reviewer.json` 內容）時套用該設定，否則為預設值。
+ *
+ * @param {object} definition - case definition。
+ * @returns {object} project policy。
+ * @throws {Error} 設定無效時。
+ */
+function policyFor(definition) {
+  if (definition.config === undefined) return createProjectPolicy(null);
+  const parsed = parseProjectConfig(JSON.stringify(definition.config));
+  if (!parsed.valid) throw new Error(`CASE_CONFIG_INVALID:${definition.id}:${parsed.errors.join(',')}`);
+  return createProjectPolicy(parsed);
+}
+
+/**
  * 執行單一 mutation case。
  *
  * @param {object} definition - case definition。
  * @returns {Promise<object>} normalized evaluation result。
  */
 async function executeCase(definition) {
+  const policy = policyFor(definition);
+  const language = languageFor(definition.path);
+  const adapter = adapterFor(language);
+  const interpreters = policy.interpretersFor(language);
   const [beforeSource, afterSource] = await Promise.all([
-    readFixture(definition.fixture, 'before'),
-    readFixture(definition.fixture, 'after'),
+    readFixture(definition, 'before'),
+    readFixture(definition, 'after'),
   ]);
 
   const identity = identityFor(definition.id);
@@ -80,10 +112,7 @@ async function executeCase(definition) {
   const adapterResult = await adapter.analyze(request);
   const authorityState = createAuthorityState(
     identity,
-    createAnalysisContextBinding(
-      adapterResult,
-      PHP_LARAVEL_DOMAIN_INTERPRETERS,
-    ),
+    createAnalysisContextBinding(adapterResult, interpreters),
   );
   const pipeline = await runAdapterPipeline(
     adapter,
@@ -91,12 +120,19 @@ async function executeCase(definition) {
     authorityState,
     {
       timeoutMs: 2_000,
-      factInterpreters: PHP_LARAVEL_DOMAIN_INTERPRETERS,
+      factInterpreters: interpreters,
     },
   );
 
+  const decision = pipeline.candidate.decision;
   return {
     ...definition,
+    track: routeFile({
+      path: definition.path,
+      decision: decision.status,
+      fallback: decision.fallback ?? null,
+      reasons: decision.reasons ?? [],
+    }, { oneWayDoors: policy.oneWayDoors }).track,
     publicationAccepted: pipeline.publication.accepted,
     analysisStatus: pipeline.candidate.analysisStatus,
     coverageStatus: pipeline.candidate.coverage.status,
@@ -135,6 +171,7 @@ function formatSummary(metrics) {
     `Critical false negatives     ${metrics.criticalFalseNegatives}`,
     `Critical direct facts        ${metrics.criticalDirectFactCount}`,
     `Critical fallback-only       ${metrics.criticalFallbackOnlyCount}`,
+    `Critical escalated           ${metrics.criticalEscalated}`,
     `Safe cases                   ${metrics.safeTotal}`,
     `Safe reduced                 ${metrics.safeReduced}`,
     `Safe held for review         ${metrics.safeHeld}`,
@@ -142,6 +179,7 @@ function formatSummary(metrics) {
     `Critical Recall              ${percent(metrics.criticalRecall)}`,
     `False Negative Rate          ${percent(metrics.falseNegativeRate)}`,
     `Critical Direct Fact Cover.  ${percent(metrics.criticalDirectFactCoverage)}`,
+    `Critical Escalation Rate     ${percent(metrics.criticalEscalationRate)}`,
     `Safe Reduction Rate          ${percent(metrics.safeReductionRate)}`,
     `Partial Coverage Rate        ${percent(metrics.partialCoverageRate)}`,
     `Analysis Failure Rate        ${percent(metrics.analysisFailureRate)}`,

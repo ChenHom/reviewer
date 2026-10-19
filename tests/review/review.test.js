@@ -138,13 +138,27 @@ test('describeFact 為每種 fact 產生可讀描述', () => {
   assert.equal(describe('RETURN_VALUE_CHANGED', { before: '$q->total()', after: '' }), '回傳值 $q->total() → （無）');
   assert.equal(describe('RETURN_VALUE_CHANGED', { before: '', after: 'null' }), '回傳值 （無） → null');
   assert.equal(describe('CALL_ARGUMENTS_REORDERED', { callee: 'max', before: '$a, $b', after: '$b, $a' }), 'max 的參數順序：($a, $b) → ($b, $a)');
-  assert.equal(describe('VARIABLE_CHANGED', { container: 'param', before: '$amount', after: '$value' }), '參數 $amount → $value');
-  assert.equal(describe('VARIABLE_CHANGED', { container: 'return', before: '$a', after: '$b' }), '變數 $a → $b');
+  assert.equal(describe('VARIABLE_CHANGED', { container: { type: 'param', keys: [], text: 'param' }, before: '$amount', after: '$value' }), '參數 $amount → $value');
+  assert.equal(describe('VARIABLE_CHANGED', { container: { type: 'return', keys: [], text: 'return' }, before: '$a', after: '$b' }), '變數 $a → $b');
+  // fact schema v2：結構化 callee / container 顯示 text，位置參數顯示 #index
+  const callee = { text: '$this->middleware', name: 'middleware', receiver: ['this'], kind: 'method', optional: false };
+  assert.equal(describe('CALL_REMOVED', { callee }), '移除呼叫 $this->middleware');
+  assert.equal(describe('CALL_ARGUMENT_CHANGED', { callee, argument: 0, before: "'a'", after: "'b'" }), "$this->middleware 的參數 #0：'a' → 'b'");
+  assert.equal(describe('CALL_ARGUMENT_REMOVED', { callee, argument: 1, value: "'verified'" }), "$this->middleware 移除參數 #1：'verified'");
+  assert.equal(describe('CALL_ARGUMENT_ADDED', { callee, argument: 'key', value: 'key: $b' }), '$this->middleware 新增參數 key：key: $b');
+  assert.equal(
+    describe('LITERAL_CHANGED', { container: { type: 'argument', callee, argument: 0, keys: [], text: '$this->middleware#0' }, before: '1', after: '2' }),
+    '值 1 → 2（$this->middleware#0）',
+  );
   // 多行、過長的片段壓成一行並截斷
   const long = `[\n    'a' => ${'1, '.repeat(40)}\n]`;
   const described = describe('RETURN_VALUE_CHANGED', { before: long, after: 'null' });
   assert.ok(!described.includes('\n'));
   assert.match(described, /^回傳值 \[ 'a' => 1, .{60,}… → null$/u);
+  assert.equal(describe('ANNOTATION_REMOVED', { value: '@UseGuards(AuthGuard)' }), '移除 @UseGuards(AuthGuard)');
+  assert.equal(describe('ANNOTATION_ADDED', { value: '@Public()' }), '新增 @Public()');
+  assert.equal(describe('DIRECTIVE_COMMENT_CHANGED', { comment: '// @ts-ignore', changeSide: 'after' }), '新增指示註解 // @ts-ignore');
+  assert.equal(describe('DIRECTIVE_COMMENT_CHANGED', { comment: '/* eslint-disable */', changeSide: 'before' }), '移除指示註解 /* eslint-disable */');
   assert.equal(describeFact({ kind: 'SOMETHING_NEW' }), 'SOMETHING_NEW');
 });
 
@@ -203,9 +217,29 @@ test('reviewRange 逐檔決策並彙整成 PR 層級結果', async () => {
   assert.equal(report.decision.files, report.files.length);
   assert.equal(report.decision.notSelected, 1);
 
+  // 路由：機械審查後剩下的都交給 AI；只有單向門在 AI 審查後必須人工確認。
+  const tracks = Object.fromEntries(report.files.map((file) => [file.path, file.track]));
+  assert.deepEqual(tracks, {
+    'notes.md': 'AI_TRACK',
+    'src/Added.php': 'AI_TRACK',
+    'src/Binary.php': 'AI_TRACK',
+    'src/Deleted.php': 'AI_TRACK',
+    'src/Exec.php': 'AI_TRACK',
+    'src/Format.php': 'AUTO_PASS',
+    'src/Guard.php': 'ESCALATED',
+    'src/Link.php': 'AI_TRACK',
+    'src/Op.php': 'AI_TRACK',
+    'src/Renamed.php': 'AI_TRACK',
+    'src/Unknown.php': 'AI_TRACK',
+  });
+  assert.deepEqual(guard.oneWayDoors, ['AUTHORIZATION_GUARD_REMOVED']);
+  assert.deepEqual(report.routing, { track: 'ESCALATED', autoPass: 1, aiTrack: 9, escalated: 1 });
+
   const text = formatReview(report);
   assert.match(text, /^Review：HUMAN_REVIEW_REQUIRED/);
-  assert.match(text, /TARGETED src\/Guard\.php\n\s+- AUTHORIZATION_GUARD_REMOVED\n\s+變更位置：base:L7\n\s+· base:L7 移除呼叫 \$this->authorize/);
+  assert.match(text, /^路由：ESCALATED（交給 AI 審查 10，其中 1 個 AI 審查後必須人工確認；不需要 review 1）$/m);
+  assert.match(text, /AI 審查後必須人工確認（ESCALATED，單向門）：\n[^]*TARGETED src\/Guard\.php\n[^]*交給 AI 審查，由 AI 判斷是否需要人工（AI_TRACK）：\n[^]*TARGETED src\/Op\.php/);
+  assert.match(text, /TARGETED src\/Guard\.php\n\s+- AUTHORIZATION_GUARD_REMOVED（單向門）\n\s+變更位置：base:L7\n\s+· base:L7 移除呼叫 \$this->authorize/);
   assert.match(text, /src\/Renamed\.php（原 src\/Moved\.php）/);
 
   const unhandled = formatReview({
@@ -228,7 +262,7 @@ test('reviewRange：只有排版變更時 PR 為 NOT_SELECTED；相同 commit �
 
 test('reviewRange：analyzer 失敗時該檔案 fail-closed 為 FULL', async () => {
   const report = await reviewRange({
-    repo, base, head: formatOnly, adapterOptions: { phpBinary: join(repo, 'no-such-php') },
+    repo, base, head: formatOnly, adapterOptions: { php: { phpBinary: join(repo, 'no-such-php') } },
   });
   assert.equal(report.decision.status, HUMAN_REVIEW);
   assert.match(report.files[0].reasons[0], /^ANALYZER_ERROR:/);
@@ -286,9 +320,11 @@ test('resolveCommit 拒絕不存在或像選項的 ref', async () => {
 });
 
 test('bin/review.js：文字、JSON、--out、--fail-on-review 與錯誤處理', async () => {
+  // AI 審查不能在測試中呼叫真的 API：確保子行程沒有 API key。
+  const env = { ...process.env, ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '' };
   const cli = async (args) => {
     try {
-      const { stdout, stderr } = await run(process.execPath, [CLI, ...args]);
+      const { stdout, stderr } = await run(process.execPath, [CLI, ...args], { env });
       return { code: 0, stdout, stderr };
     } catch (error) {
       return { code: error.code, stdout: error.stdout, stderr: error.stderr };
@@ -297,7 +333,7 @@ test('bin/review.js：文字、JSON、--out、--fail-on-review 與錯誤處理',
 
   const text = await cli(['--repo', repo, '--base', base, '--head', head]);
   assert.equal(text.code, 0);
-  assert.match(text.stdout, /需要 review：/);
+  assert.match(text.stdout, /AI 審查後必須人工確認（ESCALATED，單向門）：/);
 
   const out = join(repo, '..', `review-out-${process.pid}`, 'report.json');
   const json = await cli(['--repo', repo, '--base', base, '--head', head, '--json', '--out', out, '--fail-on-review']);
@@ -307,6 +343,8 @@ test('bin/review.js：文字、JSON、--out、--fail-on-review 與錯誤處理',
   await rm(join(out, '..'), { recursive: true, force: true });
 
   assert.equal((await cli(['--repo', repo, '--base', base, '--head', formatOnly, '--fail-on-review'])).code, 0);
+  assert.equal((await cli(['--repo', repo, '--base', base, '--head', head, '--fail-on-escalation'])).code, 1);
+  assert.equal((await cli(['--repo', repo, '--base', base, '--head', formatOnly, '--fail-on-escalation'])).code, 0);
 
   const help = await cli(['--help']);
   assert.equal(help.code, 0);
@@ -319,4 +357,23 @@ test('bin/review.js：文字、JSON、--out、--fail-on-review 與錯誤處理',
   const badConcurrency = await cli(['--repo', repo, '--base', base, '--concurrency', '0']);
   assert.equal(badConcurrency.code, 2);
   assert.match(badConcurrency.stderr, /OPTION_INVALID:--concurrency/);
+
+  // 沒有 AI 審查時 AI_TRACK 也需要人工；只有排版變更時不需要。
+  assert.equal((await cli(['--repo', repo, '--base', base, '--head', head, '--fail-on-human'])).code, 1);
+  assert.equal((await cli(['--repo', repo, '--base', base, '--head', formatOnly, '--fail-on-human'])).code, 0);
+  const human = JSON.parse((await cli(['--repo', repo, '--base', base, '--head', formatOnly, '--json'])).stdout);
+  assert.equal(human.ai, null);
+  assert.deepEqual(human.human, { required: false, files: 0, findings: 0, pendingFixes: 0 });
+
+  // AI 選項：沒有 API key 時在分析之前失敗；AI 子選項需要 --ai；effort 必須合法。
+  const noKey = await cli(['--repo', repo, '--base', base, '--ai']);
+  assert.equal(noKey.code, 2);
+  assert.match(noKey.stderr, /AI_NOT_CONFIGURED/);
+  const needsAi = await cli(['--repo', repo, '--base', base, '--ai-apply']);
+  assert.equal(needsAi.code, 2);
+  assert.match(needsAi.stderr, /OPTION_REQUIRES_AI:--ai-apply/);
+  const badEffort = await cli(['--repo', repo, '--base', base, '--ai', '--ai-effort', 'extreme']);
+  assert.equal(badEffort.code, 2);
+  assert.match(badEffort.stderr, /AI_EFFORT_INVALID:extreme/);
+  assert.match(help.stdout, /--ai-apply/);
 });

@@ -95,7 +95,7 @@ callee=$this->authorize / Gate::authorize
 AUTHORIZATION_GUARD_REMOVED
 ```
 
-之後 interpreter 已從 3 個擴充為 15 個（`PHP_LARAVEL_DOMAIN_INTERPRETERS`）：原本三個中，transaction boundary 與 authorization guard 也擴大了範圍（例如 `rollBack` 移除 → `TRANSACTION_ROLLBACK_REMOVED`、authorize 的 ability 字串改值 → `AUTHORIZATION_ABILITY_CHANGED`），另新增 middleware guard、row lock、payment signature verification、運算子、guard clause、運算式反轉、回傳值、參數順序、改用另一個變數（部分改名、合併變數）/ 參數改名、`const` 宣告的常數改值、Laravel validation rules、Laravel model attributes。各 interpreter 的範圍見 [README「已實作」](../README.md#已實作)；完整的 blocker 代碼以 `src/interpreters/php-laravel-domain.js` 為準。
+之後 interpreter 已從 3 個擴充為 15 個（`PHP_LARAVEL_DOMAIN_INTERPRETERS`）：原本三個中，transaction boundary 與 authorization guard 也擴大了範圍（例如 `rollBack` 移除 → `TRANSACTION_ROLLBACK_REMOVED`、authorize 的 ability 字串改值 → `AUTHORIZATION_ABILITY_CHANGED`），另新增 middleware guard、row lock、payment signature verification、運算子、guard clause、運算式反轉、回傳值、參數順序、改用另一個變數（部分改名、合併變數）/ 參數改名、`const` 宣告的常數改值、Laravel validation rules、Laravel model attributes。各 interpreter 的範圍見 [README「已實作」](../README.md#已實作)；完整的 blocker 代碼以 `src/interpreters/`（語言層 `core.js`、框架 preset `presets/php-laravel.js`、業務 preset `presets/payments.js`） 為準；`src/interpreters/php-laravel-domain.js` 的 `PHP_LARAVEL_DOMAIN_INTERPRETERS` 是三者的合集。
 
 這個分層很重要：
 
@@ -242,6 +242,21 @@ Real-repo evaluation（`evaluation/real-repo/`，說明見 [Real-repo Evaluation
 - 目標專案不在本 repo 內，這些數字無法只靠本 repo 重現；對真實目標專案執行的 Real-repo evaluation 不在 `npm run test:all` 與 CI 中，不屬於 release gate（`npm run test:all` 只以 `tests/evaluation/real-repo-*.test.js` 在 repo 內的 `fixtures/php-laravel` 與測試自建的小型 PHP 檔上測試這個工具本身與 gate）。資料是在真實程式碼上自動產生的 mutation，不是真實 PR 的 human concern。
 
 CI（`.github/workflows/review-reduction-safety.yml`，PHP 8.4）在 `npm run test:all` 之前先執行 `composer install --working-dir=analyzers/php`，並對 `analyzers/php/bin`、`analyzers/php/src` 與 `evaluation` 下的 `.php` 檔執行 `php -l`。
+
+### 三層審查（機械 → AI → 人工）：步驟 1–6、8、9
+
+設計見 [三層審查架構設計](superpowers/specs/2026-10-18-three-tier-review-design.md)，實作中的問題與處理見 [實作紀錄](superpowers/notes/2026-10-19-three-tier-implementation-notes.md)。
+
+- Fact schema v2：`callee` / `container` 改為語言中立的結構化欄位；新增 `CALL_ARGUMENT_REMOVED` / `CALL_ARGUMENT_ADDED`。
+- Interpreter 依層拆成語言層（`src/interpreters/core.js`）、框架 preset（`php-laravel`）與業務 preset（`payments`）；CLI 依副檔名選擇語言。
+- 路由：核心流程是機械審查 → AI 審查剩下的 → AI 審查後需要人工的才交給人工。需要 review 的檔案都交給 AI；命中單向門的（`ESCALATED`）AI 不能放行，之後一律人工確認；其他（`AI_TRACK`，包括 `FULL`）由 AI 判斷。`--fail-on-escalation`。
+- 第 2 層 AI 審查（`--ai`）：逐檔交給 Claude（structured outputs、server-side fallback、merge base 的 `codingstandards.md` 放在 cached system prompt），AI 判斷需要人工的項目成為 `kind: AI` 的 finding；AI 失敗一律交給人工；`--ai-apply` 把通過機械審查的小修正寫入 worktree；`--fail-on-human`。
+- Retro（`bin/retro.js`）：彙整 review 報表的 deterministic 指標；`--ai` 時提出規範增刪、`.reviewer.json` 規則與 mutation case 草案，規則以設定驗證器檢查、草案以機械審查確認。
+- 專案設定 `.reviewer.json`（從 merge base 讀取，只能新增攔截），見 [專案設定](project-config.md)。
+- TypeScript / JavaScript adapter：AST 等價判定（第 1 階段），以及結構比對輸出與 PHP 相同的 facts、decorator 與指示註解的 facts、scope hash（第 2、3 階段）；`node` preset（transaction、row lock、授權、middleware、token 驗證、validation、資料刪除），`.reviewer.json` 的規則也適用於 TS。
+- 二次 review 的輸入：每個 fact 的 scope hash（所屬 method 的 canonical AST hash）與 finding 指紋（`files[].findings`）。狀態機與 GitHub 整合（設計的步驟 7）尚未實作。
+
+目前 mutation evaluation（`npm run eval:mutations`）：49 個 case（critical 41、safe 8，含 23 個 TS case 與 9 個帶專案設定的 case），Critical Recall 100%、Safe Reduction Rate 100%、Critical Direct Fact Coverage 97.6%（只剩 optional chain 加括號的 TS case 沒有 fact）、Critical Escalation Rate 80.5%（8 個 critical case 沒有命中單向門，只靠 AI 審查判斷是否需要人工：4 個 PHP case，以及 TS 的 `@ts-ignore`、物件簡寫 key、optional chain、zod 規則放寬）。
 
 ## 2. 現在的完整 Pipeline
 

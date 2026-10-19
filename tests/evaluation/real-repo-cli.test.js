@@ -125,6 +125,11 @@ test('prepareBaseline 從 git ref 建立可執行的 snapshot', async () => {
     prepareBaseline({ reviewerRoot: REVIEWER_ROOT, ref: 'no-such-ref-xyz', directory: snapshot }),
     /git rev-parse no-such-ref-xyz/,
   );
+  // tar 失敗時回報 tar 的錯誤，git archive 不會因為沒有讀取端而卡住。
+  await assert.rejects(
+    prepareBaseline({ reviewerRoot: REVIEWER_ROOT, ref: 'HEAD', directory: join(workDir, 'no-such-dir', 'snapshot') }),
+    /tar exited with/,
+  );
 });
 
 test('analyzer 超過 timeout 時被終止並記為 ERROR（gate failure），不會卡住', async () => {

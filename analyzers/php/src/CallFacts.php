@@ -34,7 +34,7 @@ final class CallFacts
                     if ($afterArgument === null || $beforeArgument['signature'] === $afterArgument['signature']) {
                         continue;
                     }
-                    $facts[] = self::fact($path, 'CALL_ARGUMENT_CHANGED', $afterCall, $afterCall['callee'] . ':' . $argument, [
+                    $facts[] = self::fact($path, 'CALL_ARGUMENT_CHANGED', $afterCall, $afterCall['callee']['text'] . ':' . $argument, [
                         'callee' => $afterCall['callee'],
                         'argument' => $argument,
                         'before' => $beforeArgument['expression'],
@@ -72,7 +72,7 @@ final class CallFacts
     {
         $groups = [];
         foreach ($calls as $call) {
-            $groups[$call['subject'] . '|' . $call['calleeKey']][] = $call;
+            $groups[$call['slot'] . '|' . $call['calleeKey']][] = $call;
         }
 
         return $groups;
@@ -84,7 +84,7 @@ final class CallFacts
      */
     private static function callFact(string $path, string $kind, string $side, array $call, int $callIndex): array
     {
-        return self::fact($path, $kind, $call, $call['callee'] . ':' . $callIndex, [
+        return self::fact($path, $kind, $call, $call['callee']['text'] . ':' . $callIndex, [
             'callee' => $call['callee'],
             'changeSide' => $side,
         ], $call['startByte'], $call['statementEndByte']);
@@ -107,6 +107,7 @@ final class CallFacts
         return [
             // 內部配對 key（StructuralDiff budget 用），輸出前移除。
             'calleeKey' => $call['calleeKey'],
+            'slot' => $call['slot'],
             'id' => 'php-' . substr(
                 hash('sha256', implode('|', [$kind, $path, $call['subject'], $detail, $startByte, $endByte])),
                 0,

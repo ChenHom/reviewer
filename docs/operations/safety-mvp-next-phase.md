@@ -35,16 +35,17 @@ Adapter、evidence、impact、invariant 與 GitHub sink 都不能直接改寫 re
 
 ```bash
 npm ci
-npm run analyzer:install   # composer install --working-dir=analyzers/php --no-interaction
+npm run analyzer:install   # composer install --working-dir=analyzers/php，再 npm ci --prefix analyzers/ts
 npm run test:all
 ```
 
 - 需要 PATH 上的 `php`（PHP CLI ≥ 8.3，`analyzers/php/composer.json` 的要求）、Composer 2，以及 `git` 與 `tar`。review CLI 的測試會建立暫時的 git repository；real-repo evaluation 工具的測試（`tests/evaluation/real-repo-cli.test.js`，屬於 `test:safety`）會對本 repo 的 `HEAD` 執行 `git archive` 並以 `tar` 解開，所以本 repo 必須是有 commit 的 git checkout，不能是解壓縮的原始碼（例如 GitHub 的「Download ZIP」）。analyzer 依賴為 `nikic/php-parser` 5.9.0，版本鎖定在 `analyzers/php/composer.lock`；`analyzers/php/vendor/` 不進版控。
+- TypeScript / JavaScript analyzer 的依賴為 `typescript` 5.9.3（`analyzers/ts/package-lock.json`），`analyzers/ts/node_modules/` 不進版控；缺少時以 `TS_ANALYZER_DEPENDENCY_MISSING` fail-closed。TS analyzer 測試與 `eval:mutations` 的 TS case 使用真實 analyzer。
 - 缺少 `analyzers/php/vendor/autoload.php` 時 analyzer 以 `PHP_ANALYZER_DEPENDENCY_MISSING` fail-closed。PHP adapter 測試、`eval:mutations` 與 `eval:historical` 都使用真實 analyzer，因此沒有安裝依賴時 release gate 無法通過。
 
 `test:all` 依序執行 `lint`（ESLint，只檢查 JS）、`test:safety`、`test:e2e`、`test:coverage`、`eval:mutations`、`eval:historical`。`test:safety` 使用遞迴 `node --test`，`test:e2e` 明確執行 `tests/e2e/*.test.js`（Node.js 24.3 不接受目錄作為 test input），`test:coverage` 的最低門檻為 lines/functions/statements 90%、branches 85%。`test:all` 執行時不依賴網路、LLM、真實 GitHub token 或 production credential；只有 `npm ci` 與 `npm run analyzer:install` 安裝依賴時需要網路。
 
-CI（`.github/workflows/review-reduction-safety.yml`，Node.js 24、PHP 8.4、Composer 2）依序執行 `npm ci`、`composer install --working-dir=analyzers/php --no-interaction --no-progress --prefer-dist`、對 `analyzers/php/bin`、`analyzers/php/src` 與 `evaluation` 下每個 `.php` 檔執行 `php -l`，最後執行 `npm run test:all`。`php -l` 沒有對應的 npm script，本地可用同一行指令檢查：
+CI（`.github/workflows/review-reduction-safety.yml`，Node.js 24、PHP 8.4、Composer 2）依序執行 `npm ci`、`composer install --working-dir=analyzers/php --no-interaction --no-progress --prefer-dist`、`npm ci --prefix analyzers/ts --no-audit --no-fund`、對 `analyzers/php/bin`、`analyzers/php/src` 與 `evaluation` 下每個 `.php` 檔執行 `php -l`，最後執行 `npm run test:all`。`php -l` 沒有對應的 npm script，本地可用同一行指令檢查：
 
 ```bash
 find analyzers/php/bin analyzers/php/src evaluation -name '*.php' -print0 | xargs -0 -n1 php -l
