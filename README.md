@@ -51,10 +51,25 @@ Authoritative Candidate / Summary / Check
 
 ## Review 一個 PR
 
-```bash
-npm run analyzer:install   # 第一次需要安裝 PHP analyzer 依賴
+本機只需要 Node/npm、Git 與 Docker；PHP、Composer 與 PHP vendor 都封裝在 image 內。
 
-node bin/review.js --repo /path/to/project --base origin/master --head HEAD
+```bash
+npm run review:docker -- --base origin/master --head HEAD
+```
+
+Review 其他 repository：
+
+```bash
+REVIEW_TARGET=/path/to/project \
+  npm run review:docker -- --base origin/master --head HEAD
+```
+
+需要 `--out` 時，明確掛載輸出目錄並使用 container path：
+
+```bash
+REVIEW_OUTPUT_DIR=/path/to/output \
+  npm run review:docker -- \
+  --base origin/master --head HEAD --out /output/report.json
 ```
 
 對 `base..head` 的每個變更檔案逐一決策，列出需要 Human Review 的檔案、原因與行號。`TARGETED` 表示變更已被具體 fact 完整解釋、標示位置是 review 的起點；`FULL` 表示有無法自動解釋的變更、需完整 review 該檔案。兩者都仍需 review 整個檔案（見「目前能力邊界」）：
@@ -173,17 +188,11 @@ Historical 數字目前來自明確標示的 controlled fixture pilot，只驗�
 
 ## Release gate
 
-PHP analyzer 依賴 Composer 套件，第一次執行前先安裝：
-
 ```bash
-npm run analyzer:install
+npm run test:docker
 ```
 
-缺少依賴時 analyzer 會以 `PHP_ANALYZER_DEPENDENCY_MISSING` fail-closed。
-
-```bash
-npm run test:all
-```
+此命令建置包含 Node 24、PHP 8.4、Composer 與鎖定 vendor 的 image，再於無網路 container 內執行 PHP syntax lint 與完整 `npm run test:all`。Host 不需要安裝 PHP 或 Composer。
 
 包含：
 

@@ -6,13 +6,30 @@ corpus 不保存完整檔案，但 edits 會包含目標 repo 的原始碼片段
 
 ## 快速開始
 
-```bash
-npm run analyzer:install   # 第一次需要安裝 PHP analyzer 依賴
+Real-repo evaluation 也在 Reviewer image 內執行。Target repositories 唯讀掛載；output directory 是唯一可寫的 host mount：
 
-npm run eval:real-repo -- evaluate \
-  --repo shop=/path/to/shop-api \
-  --repo admin=/path/to/admin-api
+```bash
+npm run docker:build
+mkdir -p real-repo-eval-output
+
+docker run --rm --network none \
+  --user "$(id -u):$(id -g)" \
+  -e GIT_CONFIG_COUNT=2 \
+  -e GIT_CONFIG_KEY_0=safe.directory \
+  -e GIT_CONFIG_VALUE_0=/repos/shop \
+  -e GIT_CONFIG_KEY_1=safe.directory \
+  -e GIT_CONFIG_VALUE_1=/repos/admin \
+  -v /path/to/shop-api:/repos/shop:ro \
+  -v /path/to/admin-api:/repos/admin:ro \
+  -v "$PWD/real-repo-eval-output:/output:rw" \
+  reviewer:local \
+  node evaluation/real-repo/cli.js evaluate \
+  --repo shop=/repos/shop \
+  --repo admin=/repos/admin \
+  --out /output
 ```
+
+上例不使用 `--baseline-ref`，因此 runtime 可保持無網路。需要替不同 lockfile 建立 baseline vendor 時，另行建立包含該 lockfile 的 image，不在 runtime 開放網路安裝依賴。
 
 輸出（預設在 `real-repo-eval-output/`）：
 
@@ -26,10 +43,11 @@ npm run eval:real-repo -- evaluate \
 修改 analyzer 或 interpreter 後，建議與修改前的版本比較：
 
 ```bash
-npm run eval:real-repo -- evaluate --repo shop=/path/to/shop-api --baseline-ref <base ref>   # 例如 origin/master、HEAD~1
+# 在上方的 docker run 命令末尾加入：
+--baseline-ref <base ref>   # 例如 origin/master、HEAD~1
 ```
 
-`--baseline-ref` 以 `git archive` 取出該 ref 的 snapshot（不動目前的 working tree），執行前先準備好，ref 不存在時立即失敗。snapshot 的 `composer.lock` 與目前相同時直接複製 `vendor/`；不同時會執行 `composer install`，此時需要 `composer` 與網路。snapshot 在正常結束、發生錯誤或收到 Ctrl-C / SIGTERM 時都會被刪除；被 SIGKILL 強制結束時可能留在 `$TMPDIR/reviewer-baseline-*`，需手動刪除。
+`--baseline-ref` 以 `git archive` 取出該 ref 的 snapshot（不動目前的 working tree），執行前先準備好，ref 不存在時立即失敗。snapshot 的 `composer.lock` 與目前相同時直接複製 image 內的 `vendor/`；不同時需另行建立包含該 lockfile 的 image，runtime 不開放網路安裝依賴。snapshot 在正常結束、發生錯誤或收到 Ctrl-C / SIGTERM 時都會被刪除；被 SIGKILL 強制結束時可能留在 `$TMPDIR/reviewer-baseline-*`，需手動刪除。
 
 ## 標籤與 gate
 
@@ -85,6 +103,8 @@ Gate（任一項不為 0 時 gate 失敗）：
 摘要中的 Risky targeted rate 是 risky mutation 以 `TARGETED`（而非 `FULL`）送 Human Review 的比例。
 
 ## 個別指令
+
+以下命令在 Reviewer image 內執行；使用上方 `docker run` 的 image、repo mounts 與 output mount。
 
 ```bash
 CLI="node evaluation/real-repo/cli.js"

@@ -192,11 +192,13 @@ flowchart TD
 
 ## 8. Evaluation
 
-Release gate：
+Host 與 CI 的 release gate：
 
 ```bash
-npm run test:all
+npm run test:docker
 ```
+
+Image 內由 `sh bin/test-docker.sh` 先執行 PHP syntax lint，再執行既有 `npm run test:all`。PHP、Composer 與 vendor 不安裝到 host。
 
 Mutation baseline：
 

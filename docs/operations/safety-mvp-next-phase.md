@@ -18,14 +18,14 @@ Adapter、evidence、impact、invariant 與 GitHub sink 都不能直接改寫 re
 
 ## Release gate
 
-本地與 CI 使用同一組命令：
+本機與 CI 使用同一個 Docker image。Host 只需 Node/npm、Git 與 Docker：
 
 ```bash
-npm ci
-npm run test:all
+npm run docker:build
+npm run test:docker
 ```
 
-`test:safety` 使用遞迴 `node --test`，`test:e2e` 明確執行 `tests/e2e/*.test.js`（Node.js 24.3 不接受目錄作為 test input），`test:coverage` 的最低門檻為 lines/functions/statements 90%、branches 85%。測試不依賴網路、LLM、真實 GitHub token 或 production credential。
+`test:docker` 在無網路 container 內先執行 PHP syntax lint，再執行 `test:all`。其中 `test:safety` 使用遞迴 `node --test`，`test:e2e` 明確執行 `tests/e2e/*.test.js`（Node.js 24.3 不接受目錄作為 test input），`test:coverage` 的最低門檻為 lines/functions/statements 90%、branches 85%。測試不依賴網路、LLM、真實 GitHub token 或 production credential。
 
 ## Authority 與 CAS
 
