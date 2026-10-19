@@ -44,7 +44,7 @@ test('結構變更產生 fact（含 scope hash 與 UTF-8 byte provenance）；JS
   // `中文` 是 6 個 byte：`2` 位於第 2 行 `export const a = ` 之後。
   const offset = Buffer.byteLength("const s = '中文';\nexport const a = ");
   assert.deepEqual(fact.provenance, { path: 'src/a.js', startByte: offset, endByte: offset + 1 });
-  assert.deepEqual(fact.source, { adapterId: 'typescript-v1', adapterVersion: '0.2.0' });
+  assert.deepEqual(fact.source, { adapterId: 'typescript-v1', adapterVersion: '0.3.0' });
 
   const method = (body) => `export class S {\n  handle(x: number) {\n    ${body}\n  }\n}\n`;
   const scoped = await adapter.analyze(request(method('return x < 10;'), method('return x <= 10;')));

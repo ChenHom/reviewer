@@ -584,6 +584,32 @@
     ]
   },
   {
+    "id": "MUT-TS-016",
+    "classification": "critical",
+    "fixture": "typescript/charge-amount-literal",
+    "path": "src/orders/charge.ts",
+    "description": "The charged amount literal changes (100 → 1000); the project config protects the first argument of charge.",
+    "config": {
+      "version": 1,
+      "rules": {
+        "protectedArguments": [
+          {
+            "name": "charge",
+            "argument": 0
+          }
+        ]
+      }
+    },
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "LITERAL_CHANGED"
+    ],
+    "expectedReasons": [
+      "PROTECTED_ARGUMENT_CHANGED"
+    ]
+  },
+  {
     "id": "SAFE-001",
     "classification": "safe",
     "fixture": "format-only",

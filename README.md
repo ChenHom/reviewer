@@ -113,7 +113,7 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
   - `CALL_ARGUMENT_REMOVED` / `CALL_ARGUMENT_ADDED`（參數純移除或純新增：一邊的參數是另一邊的子序列，且增減的參數不含 closure；`argument` 為位置數字或具名參數名稱。同時改了其他參數時維持未解釋）
   - `CALL_REMOVED` / `CALL_ADDED`（含 closure 內的巢狀 call 與鏈式 call，如 `->lockForUpdate`；receiver 保留完整名稱，如 `$this->adminDB->transaction`）；同一位置換成另一個 method（`->first()` → `->firstOrFail()`）由這兩個 fact 一起解釋
   - fact schema v2：`callee` 與 `container` 是語言中立的結構化欄位，interpreter 只比對結構，不解析 PHP 語法字串。`callee` 為 `{ text, name, receiver, kind, optional }`，例如 `$this->adminDB->transaction` → `name: 'transaction'`、`receiver: ['this', 'adminDB']`、`kind: 'method'`；`\Illuminate\Support\Facades\Gate::authorize` → `receiver: ['Illuminate', 'Support', 'Facades', 'Gate']`、`kind: 'static'`；鏈式 call 的 `receiver` 為 `null`。`container` 為 `{ type, keys, text, … }`，例如 `Route::group#0[middleware]` → `type: 'argument'`、`callee`（`Route::group`）、`argument: 0`、`keys: ['middleware']`。`text` 是原本的文字格式，只供顯示（定義見 `src/facts/structured.js`）
-  - `BINARY_OPERATOR_CHANGED`（左右運算元不變，只有運算子改變）
+  - `BINARY_OPERATOR_CHANGED`（左右運算元不變，只有運算子改變；帶 container，如 `$g->charge#0`）
   - `GUARD_REMOVED` / `GUARD_ADDED`（body 只有 throw / return / exit 的 if）
   - `ARRAY_ITEM_REMOVED` / `ARRAY_ITEM_ADDED`（帶 container，如 `property:$beforeActionList`、`Route::group#0[middleware]`）
   - `LITERAL_CHANGED`（數字、字串、true / false / null 換成另一個字面值；帶 container，如 `const:RATE`、`$q->take#0`、`return[title]`）
@@ -161,11 +161,11 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
 Mutation corpus：
 
 ```
-Total cases                       43（critical 35、safe 8；TS 19 個）
+Total cases                       44（critical 36、safe 8；TS 20 個）
 Critical Recall               100.0%
 False Negative Rate             0.0%
-Critical Direct Fact Coverage  97.1%
-Critical Escalation Rate       77.1%
+Critical Direct Fact Coverage  97.2%
+Critical Escalation Rate       77.8%
 Safe Reduction Rate           100.0%
 Partial Coverage Rate          14.0%
 Analysis Failure Rate           0.0%

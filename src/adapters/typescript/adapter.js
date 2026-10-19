@@ -13,7 +13,7 @@ import { executeAnalyzer } from '../analyzer-process.js';
 export const TYPESCRIPT_ADAPTER_DESCRIPTOR = Object.freeze({
   id: 'typescript-v1',
   // 0.2.0：第 2、3 階段，輸出 semantic facts。
-  version: '0.2.0',
+  version: '0.3.0',
   languages: ['typescript', 'javascript'],
   capabilities: [
     'changed-regions',

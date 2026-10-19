@@ -275,6 +275,7 @@ final class StructuralDiff
             && $this->same($before->right, $after->right)
         ) {
             $this->addFact('BINARY_OPERATOR_CHANGED', $after, $this->afterSource, [
+                'container' => $container,
                 'operatorBefore' => $before->getOperatorSigil(),
                 'operatorAfter' => $after->getOperatorSigil(),
                 'before' => $this->text($before, $this->beforeSource),

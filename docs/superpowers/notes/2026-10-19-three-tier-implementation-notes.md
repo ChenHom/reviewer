@@ -68,7 +68,7 @@
    - 解構簡寫 `const { a } = o`（改名會改變取用的 key）。
    - 有 direct `eval` 或 `with` 時整個檔案不做正規化（設計寫的是 scope 層級，但 `eval` 可以透過 closure 存取外層變數，以檔案為單位比較簡單也比較安全）。
 4. **`fn.toString()` 的限制**：JavaScript 可以用 `Function.prototype.toString()` 讀到原始碼，所以理論上連排版變更都可觀察。與 PHP 接受反射的取捨相同，排版與註解仍視為等價，不另外處理。
-5. **指示註解的位置是近似的**：以「註解文字 + 下一個 token 的文字」比較。同一個 `@ts-ignore` 移到另一個 token 前面會被視為不同（要求 review）；移到同名 token 前面則無法分辨。
+5. **指示註解的位置是近似的**：以「註解文字 + 下一個 token 的文字」比較。同一個 `@ts-ignore` 移到另一個 token 前面會被視為不同（要求 review）；移到同名 token 前面則無法分辨。（PR #8 的 review 指出這是 fail-open，已修正，見「PR #8 review 的修正」。）
 6. **TypeScript parser 的文法錯誤也算 `TS_PARSE_ERROR`**：例如 `.js` 中的舊式八進位 `010` 會被 parser 回報為錯誤，因此該檔案為 `FULL`。寧可要求 review。
 7. **字串與 template literal 不互相正規化**：`'a'` 與 `` `a` `` 在 tagged template 中語意不同，第 1 階段一律視為不同。
 8. **real-repo evaluation 沒有 TS 版本**：產生器（`evaluation/real-repo/generate.php`）是 PHP 專用，TS 需要另寫，留待之後。
@@ -149,6 +149,15 @@
 5. **「從未被引用」只看 AI 疑慮的 `standard` 欄位**：AI 沒有引用不代表規範沒用（例如 AI 因為規範而回答 PASS），報告中只列為精簡的候選。
 6. **`.yaml` → `.json`**：設計 §7 寫 `.reviewer.yaml`，實作沿用步驟 4 決定的 `.reviewer.json`。
 7. **同一個 head 的報表只算一次**（重跑時保留最後一份）；報表沒有 PR 編號，以 repository + head SHA 區分。
+
+## PR #8 review 的修正（Codex review，commit `1275769` 之後）
+
+1. **`protectedArguments` 漏掉參數內的值變更**（P1，確認為真）：analyzer 只在沒有更細的 fact 時才輸出 `CALL_ARGUMENT_CHANGED`，所以 `charge(100)` → `charge(1000)` 是 `LITERAL_CHANGED`（container 為 `charge#0`），規則引擎沒有比對，結果是 `FACT_UNHANDLED`（`AI_TRACK`），設定的單向門沒有生效。TS 與 PHP 都重現。修正：
+   - 規則引擎也比對 container 為該參數（`type: argument`，含巢狀 key）的 fact，以及位置參數的 `CALL_ARGUMENTS_REORDERED`；`BINARY_OPERATOR_CHANGED` 不再提前 return，可以同時產生 `SENSITIVE_OPERAND_CHANGED` 與 `PROTECTED_ARGUMENT_CHANGED`。規則引擎版本 `1.1.0`。
+   - PHP 與 TS analyzer 的 `BINARY_OPERATOR_CHANGED` 加上 `container`（原本沒有，運算子改變無法對應到參數）。adapter 版本改為 `0.3.0`。
+   - 新增 MUT-TS-016（帶 `protectedArguments` 的位置參數字面值改變 → `ESCALATED`）。
+   - 限制：container 是最近的一層呼叫，`charge(f(a + 1))` 中的運算子改變對應到 `f#0`，不會對應到 `charge#0`。
+2. **指示註解移到文字相同的 token 前面時沒有 fact**（P1，確認為真）：`// @ts-ignore` 從第一個 `foo(1)` 移到 `foo(2)` 前面，key 都是 `// @ts-ignore@foo`，AST 相同，結果是 `COMPLETE` 沒有 fact → `AUTO_PASS`（fail-open）。修正：key 加上「同樣文字的 token 中第幾個」；前面新增或刪除同樣文字的 token 也會讓編號改變，這時多產生 fact（保守）。
 
 ## 跨步驟的注意事項
 

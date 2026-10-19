@@ -370,6 +370,7 @@ export class StructuralDiff {
           && this.same(before.right, after.right)
         ) {
           this.addFact('BINARY_OPERATOR_CHANGED', after, {
+            container: where,
             operatorBefore: ts.tokenToString(before.operatorToken.kind),
             operatorAfter: ts.tokenToString(after.operatorToken.kind),
             before: textOf(before),
