@@ -48,8 +48,8 @@ node bin/review.js --repo /path/to/project --base origin/master --ai --fail-on-h
 
 ## 決策：`TARGETED` 與 `FULL`
 
-- 每個檔案只有兩種決策：`NOT_SELECTED_FOR_HUMAN_REVIEW`（兩個版本在 AST 比較下等價，且不是 rename 或權限變更）或 `HUMAN_REVIEW_REQUIRED`。PR 層級只有在所有檔案都不需要 review 時才是 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
-- `HUMAN_REVIEW_REQUIRED` 分兩種：`TARGETED`（每個變更都已被 fact 解釋）與 `FULL`（有無法解釋的變更，或檔案沒有或無法分析）。兩者都要看整個檔案，差別是 Reviewer 是否已經知道每個變更是什麼。
+- 每個檔案只有兩種決策：`NOT_SELECTED_FOR_HUMAN_REVIEW`（兩個版本在 AST 比較下等價、不是 rename 或權限變更，而且沒有被專案政策攔下）或 `HUMAN_REVIEW_REQUIRED`。PR 層級只有在所有檔案都不需要 review 時才是 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
+- `HUMAN_REVIEW_REQUIRED` 分兩種：`TARGETED`（每個變更都已被 fact 解釋；或內容等價，但被專案政策攔下，例如 `PROTECTED_PATH`、`POLICY_FILE_CHANGED`）與 `FULL`（有無法解釋的變更、檔案沒有或無法分析，或專案設定無效 `POLICY_CONFIG_INVALID`）。兩者都要看整個檔案，差別是 Reviewer 是否已經知道每個變更是什麼。
 - 輸出的行號是 review 的起點，不是範圍：reduction 是 file-level，不是 region-level。
 - 語意與完整表格見 [PR Review CLI「決策語意」](review-cli.md#決策語意)，檔案分類順序見[「檔案分類」](review-cli.md#檔案分類)。
 
