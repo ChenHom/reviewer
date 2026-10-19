@@ -83,6 +83,8 @@ test('middleware：路由的 middleware 參數被移除或換掉、app.use / add
     [fn('consumer.apply(AuthMiddleware).forRoutes(OrdersController);\n  return 1;'), fn('return 1;')],
     [fn("router.post('/a', requireRole('admin'), h);"), fn("router.post('/a', requireRole(level), h);")],
     [fn("fastify.get('/x', { preHandler: auth.verify }, h);"), fn("fastify.get('/x', { preHandler: noop() }, h);")],
+    [fn("router.post('/refund', requireAuth, refund);"), fn("router.post('/refund', refund, requireAuth);")],
+    [fn('app.use(helmet(), rateLimit);'), fn('app.use(rateLimit, helmet());')],
   ];
   for (const [before, after] of cases) assert.ok(review(before, after).blockers.includes('MIDDLEWARE_GUARD_REMOVED'), after);
 
@@ -93,6 +95,8 @@ test('middleware：路由的 middleware 參數被移除或換掉、app.use / add
   assert.deepEqual(review(fn("router.get(['/a', '/b'], h);"), fn("router.get(['/a'], h);")).blockers, []);
   assert.deepEqual(review(fn("return axios.post('/a', body, config);"), fn("return axios.post('/a', config);")).blockers, []);
   assert.deepEqual(review(fn("return api.post('/a', body);"), fn("return api.post('/a');")).blockers, []);
+  assert.deepEqual(review(fn('return Math.max(a, b);'), fn('return Math.max(b, a);')).blockers, ['ARGUMENTS_REORDERED']);
+  assert.deepEqual(review(fn("return axios.post(url, body, config);"), fn("return axios.post(url, config, body);")).blockers, ['ARGUMENTS_REORDERED']);
 });
 
 test('授權：NestJS guard / role decorator、Public decorator、CASL 與 useGlobalGuards', () => {

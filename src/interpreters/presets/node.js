@@ -277,6 +277,11 @@ export const NODE_MIDDLEWARE_INTERPRETER = Object.freeze({
       return { handled: false };
     }
 
+    // `router.post('/refund', requireAuth, refund)` → `router.post('/refund', refund, requireAuth)`：
+    // handler 依序執行，前面的 handler 回應後，換到後面的 middleware 就不會執行。
+    if (kind === 'CALL_ARGUMENTS_REORDERED' && isRouteRegistration(callee)) {
+      return { handled: true, blockers: ['MIDDLEWARE_GUARD_REMOVED'] };
+    }
     // `router.post('/refund', requireAuth, refund)` 移除 `requireAuth`。
     if (kind === 'CALL_ARGUMENT_REMOVED' && isRouteRegistration(callee)) {
       return isRouteMiddlewareArgument(callee, fact.properties.argument, fact.properties.value)

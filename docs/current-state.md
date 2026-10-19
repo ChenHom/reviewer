@@ -256,7 +256,7 @@ CI（`.github/workflows/review-reduction-safety.yml`，PHP 8.4）在 `npm run te
 - TypeScript / JavaScript adapter：AST 等價判定（第 1 階段），以及結構比對輸出與 PHP 相同的 facts、decorator 與指示註解的 facts、scope hash（第 2、3 階段）；`node` preset（transaction、row lock、授權、middleware、token 驗證、validation、資料刪除），`.reviewer.json` 的規則也適用於 TS。
 - 二次 review 的輸入：每個 fact 的 scope hash（所屬 method 的 canonical AST hash）與 finding 指紋（`files[].findings`）。狀態機與 GitHub 整合（設計的步驟 7）尚未實作。
 
-目前 mutation evaluation（`npm run eval:mutations`）：44 個 case（critical 36、safe 8，含 20 個 TS case 與 7 個帶專案設定的 case），Critical Recall 100%、Safe Reduction Rate 100%、Critical Direct Fact Coverage 97.2%（只剩 optional chain 加括號的 TS case 沒有 fact）、Critical Escalation Rate 77.8%（8 個 critical case 沒有命中單向門，只靠 AI 審查判斷是否需要人工：4 個 PHP case，以及 TS 的 `@ts-ignore`、物件簡寫 key、optional chain、zod 規則放寬）。
+目前 mutation evaluation（`npm run eval:mutations`）：45 個 case（critical 37、safe 8，含 21 個 TS case 與 7 個帶專案設定的 case），Critical Recall 100%、Safe Reduction Rate 100%、Critical Direct Fact Coverage 97.3%（只剩 optional chain 加括號的 TS case 沒有 fact）、Critical Escalation Rate 78.4%（8 個 critical case 沒有命中單向門，只靠 AI 審查判斷是否需要人工：4 個 PHP case，以及 TS 的 `@ts-ignore`、物件簡寫 key、optional chain、zod 規則放寬）。
 
 ## 2. 現在的完整 Pipeline
 

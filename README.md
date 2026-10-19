@@ -143,7 +143,7 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
   - Transaction（移除 `prisma.$transaction`、`startTransaction` / `commitTransaction` / `withTransaction`、DB receiver 的 `transaction` / `commit`、knex `.transacting()`、`@Transactional()`，或移除 Sequelize `{ transaction: t }` / Mongoose `{ session }` 選項 → `TRANSACTION_BOUNDARY_REMOVED`；`rollbackTransaction` / `abortTransaction` / transaction 物件的 `rollback` → `TRANSACTION_ROLLBACK_REMOVED`；Sentry 等 tracing 的 transaction 不算）
   - Row lock（knex `.forUpdate()` / `.forShare()`、TypeORM `.setLock()`、`{ lock }` / `{ lockMode }` 選項被移除 → `ROW_LOCK_REMOVED`）
   - 授權（NestJS `@UseGuards` / `@Roles` 等被移除、`@UseGuards` 少了 guard 或換掉、`@Public()` 等被加上、CASL `throwUnlessCan` 等被移除、`app.useGlobalGuards` 被移除 → `AUTHORIZATION_GUARD_REMOVED`；`@Roles` / `@Permissions` 的參數改變或增減 → `AUTHORIZATION_ABILITY_CHANGED`）
-  - Middleware（Express / Koa / Fastify 的 app / router 路由註冊少了 middleware 參數或換掉、middleware 陣列少了元素、`app.use` / `addHook` / Nest `consumer.apply` / `passport.authenticate` 被移除、Fastify 的 `onRequest` / `preHandler` 等 hook 選項被移除 → `MIDDLEWARE_GUARD_REMOVED`；`axios.post` 等不是路由註冊）
+  - Middleware（Express / Koa / Fastify 的 app / router 路由註冊少了 middleware 參數、換掉或改變順序、middleware 陣列少了元素、`app.use` / `addHook` / Nest `consumer.apply` / `passport.authenticate` 被移除、Fastify 的 `onRequest` / `preHandler` 等 hook 選項被移除 → `MIDDLEWARE_GUARD_REMOVED`；`axios.post` 等不是路由註冊）
   - Token / 簽章驗證（`jwt.verify`、`jwtService.verifyAsync`、jose `jwtVerify`、`crypto.timingSafeEqual`、Stripe `webhooks.constructEvent` 與名稱像簽章驗證的 method 被移除 → `SIGNATURE_VERIFICATION_REMOVED`）
   - Validation（zod / joi / yup schema、class-validator decorator、`ValidationPipe`、`useGlobalPipes` / `@UsePipes`、`safeParse` 等、Fastify 路由的 `schema` → `VALIDATION_RULE_CHANGED`）
   - 資料刪除（新增 `deleteMany`、`dropTable`、`findByIdAndDelete`、S3 `deleteObject`、knex `.del()`、DB / repository / model 上的 `delete` / `remove` / `destroy` / `clear`、Sequelize `User.destroy`、`fs.rm` / `unlink` / `rimraf` → `DATA_DELETION_ADDED`；`map.delete`、`socket.destroy` 等不算）
@@ -161,11 +161,11 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
 Mutation corpus：
 
 ```
-Total cases                       44（critical 36、safe 8；TS 20 個）
+Total cases                       45（critical 37、safe 8；TS 21 個）
 Critical Recall               100.0%
 False Negative Rate             0.0%
-Critical Direct Fact Coverage  97.2%
-Critical Escalation Rate       77.8%
+Critical Direct Fact Coverage  97.3%
+Critical Escalation Rate       78.4%
 Safe Reduction Rate           100.0%
 Partial Coverage Rate          14.0%
 Analysis Failure Rate           0.0%

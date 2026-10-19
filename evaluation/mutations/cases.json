@@ -610,6 +610,21 @@
     ]
   },
   {
+    "id": "MUT-TS-017",
+    "classification": "critical",
+    "fixture": "typescript/route-middleware-reordered",
+    "path": "src/routes/refund.ts",
+    "description": "requireAuth is moved after the refund handler, so it no longer runs before the refund is processed.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_ARGUMENTS_REORDERED"
+    ],
+    "expectedReasons": [
+      "MIDDLEWARE_GUARD_REMOVED"
+    ]
+  },
+  {
     "id": "SAFE-001",
     "classification": "safe",
     "fixture": "format-only",
