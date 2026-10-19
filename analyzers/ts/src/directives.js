@@ -24,8 +24,10 @@ const JSDOC_TYPE_TAGS = new Set([
   'type', 'param', 'arg', 'argument', 'returns', 'return', 'typedef', 'template', 'satisfies', 'implements', 'extends',
   'augments', 'enum', 'callback', 'property', 'prop', 'this', 'overload', 'import', 'readonly', 'private', 'protected', 'public',
   // 沒有型別運算式、但 TypeScript 會依此檢查或推論的標籤。
-  'override', 'constructor', 'class', 'abstract', 'deprecated',
+  'override', 'constructor', 'class', 'abstract', 'deprecated', 'internal',
 ]);
+/** TS 檔中仍有作用的 JSDoc 標籤：`@internal`（`stripInternal` 時決定宣告檔是否輸出）。 */
+const TS_JSDOC_TAGS = new Set(['internal']);
 const NAMED_JSDOC_TAGS = new Set(['param', 'arg', 'argument', 'property', 'prop', 'template', 'typedef', 'callback']);
 
 /**
@@ -98,14 +100,15 @@ function normalizeType(type) {
  * JSDoc 中帶型別的標籤（`@param {number} x - 說明` → `@param{number} x`）；說明文字不列入，所以只改說明不算變更。
  *
  * @param {string} comment - 原始註解文字（型別中引號內的空白有意義，不能先壓縮）。
+ * @param {Set<string>} [tagNames=JSDOC_TYPE_TAGS] - 列入的標籤（預設為 JS 檔的標籤）。
  * @returns {string|null} 標籤摘要；不是 JSDoc 或沒有型別標籤時為 null。
  */
-export function jsdocTypes(comment) {
+export function jsdocTypes(comment, tagNames = JSDOC_TYPE_TAGS) {
   if (!comment.startsWith('/**')) return null;
   const tags = [];
   const pattern = /@([A-Za-z]+)/g;
   for (let match = pattern.exec(comment); match; match = pattern.exec(comment)) {
-    if (!JSDOC_TYPE_TAGS.has(match[1])) continue;
+    if (!tagNames.has(match[1])) continue;
     let rest = comment.slice(pattern.lastIndex).trimStart();
     let type = '';
     if (rest.startsWith('{')) {
@@ -150,7 +153,7 @@ function forEachToken(node, sourceFile, visit) {
  * 以 parser 產生的 token 取得註解（template、regex、JSX 文字中的 `//` 不會被誤認為註解）。
  * 用「下一個 token」近似註解作用的位置：同一個指示移到另一個 token（包括文字相同的另一個 token）前面時
  * 會被視為不同。前面新增或刪除同樣文字的 token 也會讓編號改變，這時寧可多產生 fact。
- * JS 檔中帶型別標籤的 JSDoc 也列入（key 只含標籤與型別，見 `jsdocTypes()`）。
+ * JS 檔中帶型別標籤的 JSDoc 也列入（key 只含標籤與型別，見 `jsdocTypes()`）；TS 檔只列入 `@internal`。
  *
  * @param {ts.SourceFile} sourceFile - source file。
  * @returns {Array<{key: string, comment: string, token: string, node: ts.Node, pos: number, end: number}>} 指示註解。
@@ -177,7 +180,7 @@ export function directiveComments(sourceFile) {
       seen.add(range.pos);
       const raw = text.slice(range.pos, range.end);
       const comment = raw.replace(/\s+/g, ' ').trim();
-      const types = javascript ? jsdocTypes(raw) : null;
+      const types = jsdocTypes(raw, javascript ? JSDOC_TYPE_TAGS : TS_JSDOC_TAGS);
       if (!DIRECTIVE.test(comment) && types === null) continue;
       const content = DIRECTIVE.test(comment) ? comment : `/** ${types} */`;
       directives.push({ key: `${content}@${tokenText}#${occurrence}`, comment, token: tokenText, node: token, pos: range.pos, end: range.end });

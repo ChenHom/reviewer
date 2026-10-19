@@ -32,6 +32,9 @@ final class StructuralDiff
     /** 已消耗的 call fact 次數（與 $facts 一起構成「已解釋」的證據） */
     private int $consumed = 0;
 
+    /** @var list<array{budgetKey: string, startByte: int, container: array<string, mixed>}> 在位置參數中被消耗的 call fact */
+    private array $callContainers = [];
+
     private Canonicalizer $beforeHasher;
 
     private Canonicalizer $afterHasher;
@@ -61,20 +64,46 @@ final class StructuralDiff
         $this->afterHasher = $afterHasher ?? new Canonicalizer();
 
         foreach ($callFacts as $fact) {
-            $key = self::budgetKey(
-                $fact['kind'],
-                $fact['slot'],
-                $fact['calleeKey'],
-                $fact['properties']['argument'] ?? null,
-            );
+            $key = self::factBudgetKey($fact);
             $this->budget[$key] = ($this->budget[$key] ?? 0) + 1;
         }
     }
 
     /**
+     * 在位置參數中被消耗的 call fact 加上該參數的 container（不改變 fact id），讓 `protectedArguments` 等規則
+     * 能對應到外層的參數（`$g->charge($this->fee())` → `$g->charge($this->total())`）。同一個 budget key 的
+     * call fact 可以互換，優先選位置相同的那一個，否則選任一個還沒有 container 的。
+     *
+     * @param list<array<string, mixed>> $callFacts
+     * @param list<array{budgetKey: string, startByte: int, container: array<string, mixed>}> $entries run() 的 callContainers
+     * @return list<array<string, mixed>>
+     */
+    public static function attachCallContainers(array $callFacts, array $entries): array
+    {
+        foreach ($entries as $entry) {
+            $target = null;
+            foreach ($callFacts as $index => $fact) {
+                if (self::factBudgetKey($fact) !== $entry['budgetKey'] || isset($fact['properties']['container'])) {
+                    continue;
+                }
+                $target ??= $index;
+                if ($fact['provenance']['startByte'] === $entry['startByte']) {
+                    $target = $index;
+                    break;
+                }
+            }
+            if ($target !== null) {
+                $callFacts[$target]['properties']['container'] = $entry['container'];
+            }
+        }
+
+        return $callFacts;
+    }
+
+    /**
      * @param list<Stmt> $before
      * @param list<Stmt> $after
-     * @return array{facts: list<array<string, mixed>>, unexplained: list<array{string, int}>}
+     * @return array{facts: list<array<string, mixed>>, unexplained: list<array{string, int}>, callContainers: list<array<string, mixed>>}
      */
     public function run(array $before, array $after): array
     {
@@ -91,7 +120,7 @@ final class StructuralDiff
             $this->unexplained('invariant', null);
         }
 
-        return ['facts' => $this->facts, 'unexplained' => $this->unexplained];
+        return ['facts' => $this->facts, 'unexplained' => $this->unexplained, 'callContainers' => $this->callContainers];
     }
 
     private static function budgetKey(string $kind, string $subject, string $callee, ?string $argument): string
@@ -99,7 +128,20 @@ final class StructuralDiff
         return implode("\x1f", [$kind, $subject, $callee, $argument ?? '']);
     }
 
-    private function consume(string $kind, array $call, ?string $argument = null): bool
+    /**
+     * @param array<string, mixed> $fact
+     */
+    private static function factBudgetKey(array $fact): string
+    {
+        $argument = $fact['properties']['argument'] ?? null;
+
+        return self::budgetKey($fact['kind'], $fact['slot'], $fact['calleeKey'], $argument === null ? null : (string) $argument);
+    }
+
+    /**
+     * @param array<string, mixed>|null $container call 所在的 container；位置參數時記下來（見 attachCallContainers()）
+     */
+    private function consume(string $kind, array $call, ?string $argument = null, ?array $container = null): bool
     {
         $key = self::budgetKey($kind, $call['slot'], $call['calleeKey'], $argument);
         if (($this->budget[$key] ?? 0) < 1) {
@@ -107,6 +149,9 @@ final class StructuralDiff
         }
         $this->budget[$key] -= 1;
         $this->consumed += 1;
+        if (($container['type'] ?? null) === 'argument') {
+            $this->callContainers[] = ['budgetKey' => $key, 'startByte' => $call['startByte'], 'container' => $container];
+        }
 
         return true;
     }
@@ -115,7 +160,10 @@ final class StructuralDiff
      * 同一位置的 call 換成另一個 method：同時消耗 before 的 CALL_REMOVED 與 after 的 CALL_ADDED；
      * 任一個沒有預算時兩個都不消耗。
      */
-    private function consumeReplacement(array $beforeCall, array $afterCall): bool
+    /**
+     * @param array<string, mixed> $container
+     */
+    private function consumeReplacement(array $beforeCall, array $afterCall, array $container): bool
     {
         $removed = self::budgetKey('CALL_REMOVED', $beforeCall['slot'], $beforeCall['calleeKey'], null);
         $added = self::budgetKey('CALL_ADDED', $afterCall['slot'], $afterCall['calleeKey'], null);
@@ -123,7 +171,8 @@ final class StructuralDiff
             return false;
         }
 
-        return $this->consume('CALL_REMOVED', $beforeCall) && $this->consume('CALL_ADDED', $afterCall);
+        return $this->consume('CALL_REMOVED', $beforeCall, null, $container)
+            && $this->consume('CALL_ADDED', $afterCall, null, $container);
     }
 
     private function same(mixed $before, mixed $after): bool
@@ -190,7 +239,7 @@ final class StructuralDiff
         if ($this->isCall($before)) {
             // 被移除（或新增）的 call 與鄰近的 call 同類型時（`X->a()->b()` → `X->b()`），
             // 先以鏈的增減解釋，否則逐一比較 receiver、名稱與參數。
-            if (!$this->explainChainChange($before, $after)) {
+            if (!$this->explainChainChange($before, $after, $container)) {
                 $this->compareCalls($before, $after, $container);
             }
             return;
@@ -205,7 +254,8 @@ final class StructuralDiff
                     $this->compare($before->$name, $after->$name, $container);
                 }
             }
-            $this->addReorderFact($before, $after, $this->structuredCallee($after, $this->afterSource), null);
+            $context = ($container['type'] ?? null) === 'argument' ? ['container' => $container] : [];
+            $this->addReorderFact($before, $after, $this->structuredCallee($after, $this->afterSource), null, $context);
             return;
         }
 
@@ -285,7 +335,7 @@ final class StructuralDiff
             return;
         }
 
-        if ($this->explainChainChange($before, $after)) {
+        if ($this->explainChainChange($before, $after, $container)) {
             return;
         }
 
@@ -294,20 +344,22 @@ final class StructuralDiff
 
     /**
      * 鏈中移除或新增一個 call，由對應的 CALL_REMOVED / CALL_ADDED 解釋。
+     *
+     * @param array<string, mixed> $container
      */
-    private function explainChainChange(Node $before, Node $after): bool
+    private function explainChainChange(Node $before, Node $after, array $container): bool
     {
         // 鏈中移除一個 call：`X->inner()->outer()` → `X->outer()`（`before` 是被移除的 inner）
         if ($this->isCall($before) && $this->receiverOf($before) !== null && $this->same($this->receiverOf($before), $after)) {
             $call = $this->beforeCalls[spl_object_id($before)] ?? null;
-            if ($call !== null && $this->consume('CALL_REMOVED', $call)) {
+            if ($call !== null && $this->consume('CALL_REMOVED', $call, null, $container)) {
                 return true;
             }
         }
         // 鏈中新增一個 call：`X->outer()` → `X->inner()->outer()`
         if ($this->isCall($after) && $this->receiverOf($after) !== null && $this->same($before, $this->receiverOf($after))) {
             $call = $this->afterCalls[spl_object_id($after)] ?? null;
-            if ($call !== null && $this->consume('CALL_ADDED', $call)) {
+            if ($call !== null && $this->consume('CALL_ADDED', $call, null, $container)) {
                 return true;
             }
         }
@@ -329,7 +381,7 @@ final class StructuralDiff
             && $afterCall !== null
             && !$this->same($before->name, $after->name)
             && $beforeCall['calleeKey'] !== $afterCall['calleeKey']
-            && $this->consumeReplacement($beforeCall, $afterCall);
+            && $this->consumeReplacement($beforeCall, $afterCall, $container);
 
         foreach ($before->getSubNodeNames() as $name) {
             if ($name !== 'args' && !($name === 'name' && $nameExplained)) {
@@ -339,8 +391,10 @@ final class StructuralDiff
 
         $beforeArgs = $before->args;
         $afterArgs = $after->args;
+        // 這個 call 本身位於另一個 call 的位置參數中（`$g->charge($this->fee($a, $b))`）時，參數 fact 也帶上外層參數的 container。
+        $context = ($container['type'] ?? null) === 'argument' ? ['container' => $container] : [];
         if (count($beforeArgs) !== count($afterArgs)) {
-            if (!$this->explainArgumentCountChange($beforeArgs, $afterArgs, $beforeCall, $afterCall)) {
+            if (!$this->explainArgumentCountChange($beforeArgs, $afterArgs, $beforeCall, $afterCall, $context)) {
                 $this->unexplained('argument-count', $before);
             }
             return;
@@ -352,6 +406,7 @@ final class StructuralDiff
                 $after,
                 $afterCall['callee'] ?? $this->structuredCallee($after, $this->afterSource),
                 $afterCall['subject'] ?? null,
+                $context,
             );
             return;
         }
@@ -374,15 +429,15 @@ final class StructuralDiff
             }
 
             if ($beforeName !== null) {
-                if ($afterCall !== null && $this->consume('CALL_ARGUMENT_CHANGED', $afterCall, $beforeName)) {
+                if ($afterCall !== null && $this->consume('CALL_ARGUMENT_CHANGED', $afterCall, $beforeName, $container)) {
                     continue;
                 }
-                $this->compare($beforeArg->value, $afterArg->value, $this->argumentContainer($afterCall, $beforeName));
+                $this->compare($beforeArg->value, $afterArg->value, $this->argumentContainer($afterCall, $beforeName, $container));
                 continue;
             }
 
             $unexplainedBefore = count($this->unexplained);
-            $this->compare($beforeArg->value, $afterArg->value, $this->argumentContainer($afterCall, $index));
+            $this->compare($beforeArg->value, $afterArg->value, $this->argumentContainer($afterCall, $index, $container));
             if (
                 count($this->unexplained) > $unexplainedBefore
                 && $afterCall !== null
@@ -393,6 +448,7 @@ final class StructuralDiff
                 // 位置參數無法被更細的 fact 解釋：輸出 fallback fact（不視為已解釋）。
                 $this->addFact('CALL_ARGUMENT_CHANGED', $afterArg, $this->afterSource, [
                     'callee' => $afterCall['callee'],
+                    ...$context,
                     'argument' => $index,
                     'before' => $this->text($beforeArg, $this->beforeSource),
                     'after' => $this->text($afterArg, $this->afterSource),
@@ -518,7 +574,7 @@ final class StructuralDiff
         if ($item instanceof Stmt\Expression && $this->isCall($item->expr)) {
             $call = $calls[spl_object_id($item->expr)] ?? null;
             $kind = $side === 'before' ? 'CALL_REMOVED' : 'CALL_ADDED';
-            if ($call !== null && !$call['hasCallbackBody'] && $this->consume($kind, $call)) {
+            if ($call !== null && !$call['hasCallbackBody'] && $this->consume($kind, $call, null, $container)) {
                 return;
             }
         }
@@ -601,8 +657,9 @@ final class StructuralDiff
 
     /**
      * @param array<string, mixed> $callee 結構化 callee。
+     * @param array<string, mixed> $context 外層參數的 container（`['container' => …]`），沒有時為空陣列。
      */
-    private function addReorderFact(Node $before, Node $after, array $callee, ?string $subject): void
+    private function addReorderFact(Node $before, Node $after, array $callee, ?string $subject, array $context = []): void
     {
         $join = fn (array $args, string $source): string => implode(', ', array_map(
             fn (Node $arg): string => $this->text($arg, $source),
@@ -610,6 +667,7 @@ final class StructuralDiff
         ));
         $this->addFact('CALL_ARGUMENTS_REORDERED', $after, $this->afterSource, [
             'callee' => $callee,
+            ...$context,
             'before' => $join($before->args, $this->beforeSource),
             'after' => $join($after->args, $this->afterSource),
             'changeSide' => 'after',
@@ -625,9 +683,15 @@ final class StructuralDiff
      * @param array<Node> $afterArgs
      * @param array<string, mixed>|null $beforeCall
      * @param array<string, mixed>|null $afterCall
+     * @param array<string, mixed> $context 外層參數的 container（`['container' => …]`），沒有時為空陣列。
      */
-    private function explainArgumentCountChange(array $beforeArgs, array $afterArgs, ?array $beforeCall, ?array $afterCall): bool
-    {
+    private function explainArgumentCountChange(
+        array $beforeArgs,
+        array $afterArgs,
+        ?array $beforeCall,
+        ?array $afterCall,
+        array $context = [],
+    ): bool {
         if ($beforeCall === null || $afterCall === null) {
             return false;
         }
@@ -651,6 +715,7 @@ final class StructuralDiff
         foreach ($changed as $index => $arg) {
             $this->addFact($removed ? 'CALL_ARGUMENT_REMOVED' : 'CALL_ARGUMENT_ADDED', $arg, $source, [
                 'callee' => $afterCall['callee'],
+                ...$context,
                 'argument' => $arg->name?->toString() ?? $index,
                 'value' => $this->text($arg, $source),
                 'changeSide' => $removed ? 'before' : 'after',
@@ -837,15 +902,18 @@ final class StructuralDiff
 
     /**
      * @param array<string, mixed>|null $call
+     * @param array<string, mixed> $within call 所在的 container；是另一個 call 的參數時以 `outer` 連到它
+     *   （`$g->charge($q->fee($a + 1))` 的運算子改變也屬於 `$g->charge#0`）。
      * @return array<string, mixed>
      */
-    private function argumentContainer(?array $call, int|string $argument): array
+    private function argumentContainer(?array $call, int|string $argument, array $within): array
     {
         $callee = $call['callee'] ?? null;
 
         return self::container('argument', ($callee['text'] ?? 'call') . '#' . $argument, [
             'callee' => $callee,
             'argument' => $argument,
+            ...(($within['type'] ?? null) === 'argument' ? ['outer' => $within] : []),
         ]);
     }
 

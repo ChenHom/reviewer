@@ -16,7 +16,7 @@ import { stringMatcher } from '../config/matchers.js';
 import { structuredCallee, structuredContainer } from '../facts/structured.js';
 import { operatorCategory } from './core.js';
 
-export const CONFIG_RULES_ENGINE_VERSION = '1.1.0';
+export const CONFIG_RULES_ENGINE_VERSION = '1.2.0';
 
 /**
  * 呼叫規則（`{ name?, receiver? }`）的比對函式。`receiver` 含 `.` 時比對以 `.` 連接的完整路徑，
@@ -56,19 +56,21 @@ function protectedArgumentBlockers(fact, rules) {
   const properties = fact?.properties ?? {};
   const matching = (callee, argumentMatches) => rules.filter((rule) => rule.callee(callee) && argumentMatches(rule)).map((rule) => rule.blocker);
 
+  const blockers = [];
   const callee = structuredCallee(properties.callee);
   if (callee && ['CALL_ARGUMENT_CHANGED', 'CALL_ARGUMENT_REMOVED', 'CALL_ARGUMENT_ADDED'].includes(fact.kind)) {
-    return matching(callee, (rule) => rule.argument(properties.argument));
+    blockers.push(...matching(callee, (rule) => rule.argument(properties.argument)));
   }
   if (callee && fact.kind === 'CALL_ARGUMENTS_REORDERED') {
-    return matching(callee, (rule) => rule.positional);
+    blockers.push(...matching(callee, (rule) => rule.positional));
   }
-  const container = structuredContainer(properties.container);
-  const owner = structuredCallee(container?.callee);
-  if (container?.type === 'argument' && owner) {
-    return matching(owner, (rule) => rule.argument(container.argument));
+  // 位於某個呼叫的參數中的 fact（含巢狀呼叫的 call / 參數 fact）：以所在的參數，以及 `outer` 連到的外層參數比對
+  // （`charge(fee(a + 1))` 的運算子改變屬於 `fee#0`，也屬於 `charge#0`）。
+  for (let container = structuredContainer(properties.container); container; container = structuredContainer(container.outer)) {
+    const owner = structuredCallee(container.callee);
+    if (container.type === 'argument' && owner) blockers.push(...matching(owner, (rule) => rule.argument(container.argument)));
   }
-  return [];
+  return [...new Set(blockers)];
 }
 
 /**

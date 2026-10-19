@@ -12,12 +12,13 @@
  * - `kind`：`method` | `static` | `function` | `constructor`。
  * - `optional`：PHP `?->` / TS `?.`。
  *
- * container：`{ type, keys, text, name?, callee?, argument? }`
+ * container：`{ type, keys, text, name?, callee?, argument?, outer? }`
  * - `type`：`argument` | `property` | `const` | `assign` | `return` | `if` | `while` | `for` |
  *   `ternary` | `match` | `match-arm` | `param` | `closure-use` | `global` | `static` | `file`。
  * - `keys`：巢狀陣列 / 物件的字串 key 路徑。
  * - `name`：`property` / `const` / `assign` 的名稱（不含 `$`）。
  * - `callee` / `argument`：`argument` 的所屬呼叫（可能為 null）與位置（數字）或具名參數名稱（字串）。
+ * - `outer`：所屬呼叫本身位於另一個呼叫的參數中時，外層參數的 container（`charge(fee(x))` 中 `fee#0` 的 outer 是 `charge#0`）。
  */
 
 export const CALLEE_KINDS = Object.freeze(['method', 'static', 'function', 'constructor']);

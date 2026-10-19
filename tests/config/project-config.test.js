@@ -110,7 +110,7 @@ test('設定的 preset、規則、單向門與路徑都反映在 policy', () => 
   assert.ok(ids.includes('php-laravel-transaction-boundary'));
   assert.ok(!ids.includes('php-laravel-payment-idempotency'), '只啟用 php-laravel preset');
   const rules = policy.interpretersFor(php).find(({ id }) => id === 'config-rules');
-  assert.equal(rules.version, `1.1.0+${parsed.digest.slice(0, 16)}`);
+  assert.equal(rules.version, `1.2.0+${parsed.digest.slice(0, 16)}`);
 
   assert.ok(policy.oneWayDoors.includes('CONSTANT_VALUE_CHANGED'));
   assert.ok(policy.oneWayDoors.includes('PAYMENT_IDEMPOTENCY_IDENTITY_CHANGED'));

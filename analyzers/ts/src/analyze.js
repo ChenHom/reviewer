@@ -1,6 +1,6 @@
 import ts from 'typescript';
 
-import { buildCallFacts, extractCalls, factId } from './calls.js';
+import { attachCallContainers, buildCallFacts, extractCalls, factId } from './calls.js';
 import { createCanonicalizer } from './canonicalizer.js';
 import { directiveComments } from './directives.js';
 import { annotateScopes } from './scope-hashes.js';
@@ -86,6 +86,7 @@ function analyzePass({ path, before, after, beforeHasher, afterHasher, explainVa
   const diff = new StructuralDiff({
     path, beforeHasher, afterHasher, beforeCalls, afterCalls, callFacts, explainVariables,
   }).run(before, after);
+  attachCallContainers(callFacts, diff.callContainers);
   return {
     facts: [...callFacts.map(({ budgetKey, ...fact }) => fact), ...diff.facts],
     unexplained: diff.unexplained,

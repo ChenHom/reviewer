@@ -192,7 +192,10 @@ function analyzePair(
         $explainVariables,
     ))->run($beforeAst, $afterAst);
 
-    return ['facts' => [...$callFacts, ...$diff['facts']], 'unexplained' => $diff['unexplained']];
+    return [
+        'facts' => [...StructuralDiff::attachCallContainers($callFacts, $diff['callContainers']), ...$diff['facts']],
+        'unexplained' => $diff['unexplained'],
+    ];
 }
 
 // 先以原始變數名稱比較；不完整時再以 scope-aware canonical 名稱比較（區域變數改名）。

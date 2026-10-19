@@ -6,7 +6,7 @@ import { executeAnalyzer } from '../analyzer-process.js';
 export const PHP_LARAVEL_ADAPTER_DESCRIPTOR = Object.freeze({
   id: 'php-laravel-v1',
   // 0.2.0：fact schema v2（結構化 callee / container、CALL_ARGUMENT_REMOVED / ADDED）。
-  version: '0.4.0',
+  version: '0.5.0',
   languages: ['php'],
   capabilities: [
     'changed-regions',

@@ -162,15 +162,15 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
 Mutation corpus：
 
 ```
-Total cases                       47（critical 39、safe 8；TS 22 個）
+Total cases                       49（critical 41、safe 8；TS 23 個）
 Critical Recall               100.0%
 False Negative Rate             0.0%
-Critical Direct Fact Coverage  97.4%
-Critical Escalation Rate       79.5%
+Critical Direct Fact Coverage  97.6%
+Critical Escalation Rate       80.5%
 Safe Reduction Rate           100.0%
-Partial Coverage Rate          14.9%
+Partial Coverage Rate          14.3%
 Analysis Failure Rate           0.0%
-Full Review Fallback Rate      14.9%
+Full Review Fallback Rate      14.3%
 ```
 
 Real-repo evaluation（[說明](evaluation/real-repo/README.md)；兩個真實 PHP 金流專案與一個 Laravel 11 專案、3,093 個檔案，seed 42、rate 0.3，共 12,283 筆：3,093 unchanged、3,648 safe、5,542 risky）。`npm run eval:real-repo -- evaluate --repo <label>=<path> ...` 的摘要輸出：

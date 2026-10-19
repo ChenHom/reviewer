@@ -210,6 +210,8 @@ export class StructuralDiff {
     this.facts = [];
     this.unexplained = [];
     this.consumed = 0;
+    /** 在位置參數中被消耗的 call fact：`{budgetKey, startByte, container}`（見 `attachCallContainers()`）。 */
+    this.callContainers = [];
   }
 
   /**
@@ -217,7 +219,8 @@ export class StructuralDiff {
    *
    * @param {ts.SourceFile} before - before。
    * @param {ts.SourceFile} after - after。
-   * @returns {{facts: object[], unexplained: Array<[string, number]>}} 結構性 facts 與未解釋差異。
+   * @returns {{facts: object[], unexplained: Array<[string, number]>, callContainers: object[]}} 結構性 facts、未解釋差異，
+   *   以及在位置參數中被消耗的 call fact。
    */
   run(before, after) {
     this.compareList(before.statements, after.statements, container('file'));
@@ -230,7 +233,7 @@ export class StructuralDiff {
     ) {
       this.markUnexplained('invariant', null);
     }
-    return { facts: this.facts, unexplained: this.unexplained };
+    return { facts: this.facts, unexplained: this.unexplained, callContainers: this.callContainers };
   }
 
   /**
@@ -265,18 +268,21 @@ export class StructuralDiff {
   }
 
   /**
-   * 消耗一個 call fact 的 budget。
+   * 消耗一個 call fact 的 budget。呼叫位於某個呼叫的位置參數中（`charge(calculateFee())`）時記下該參數，
+   * 讓 call fact 也帶有參數的 container（`protectedArguments` 等規則才能對應到外層的參數）。
    *
    * @param {string} kind - `CALL_REMOVED` / `CALL_ADDED`。
    * @param {object|undefined} call - call record。
+   * @param {object|null} [where=null] - container。
    * @returns {boolean} 是否消耗成功。
    */
-  consume(kind, call) {
+  consume(kind, call, where = null) {
     if (!call) return false;
     const key = `${kind}\u001f${call.slot}\u001f${call.key}`;
     if ((this.budget.get(key) ?? 0) < 1) return false;
     this.budget.set(key, this.budget.get(key) - 1);
     this.consumed += 1;
+    if (where?.type === 'argument') this.callContainers.push({ budgetKey: key, startByte: call.range.startByte, container: where });
     return true;
   }
 
@@ -285,13 +291,14 @@ export class StructuralDiff {
    *
    * @param {object} beforeCall - before 的 call record。
    * @param {object} afterCall - after 的 call record。
+   * @param {object} where - container。
    * @returns {boolean} 是否消耗成功。
    */
-  consumeReplacement(beforeCall, afterCall) {
+  consumeReplacement(beforeCall, afterCall, where) {
     const removed = `CALL_REMOVED\u001f${beforeCall.slot}\u001f${beforeCall.key}`;
     const added = `CALL_ADDED\u001f${afterCall.slot}\u001f${afterCall.key}`;
     if ((this.budget.get(removed) ?? 0) < 1 || (this.budget.get(added) ?? 0) < 1) return false;
-    return this.consume('CALL_REMOVED', beforeCall) && this.consume('CALL_ADDED', afterCall);
+    return this.consume('CALL_REMOVED', beforeCall, where) && this.consume('CALL_ADDED', afterCall, where);
   }
 
   /**
@@ -337,7 +344,7 @@ export class StructuralDiff {
     const before = unwrapParens(beforeInput);
     const after = unwrapParens(afterInput);
     if (this.same(before, after)) return;
-    if (this.explainChainChange(before, after)) return;
+    if (this.explainChainChange(before, after, where)) return;
 
     if (isLiteral(before) && isLiteral(after)) {
       this.addFact('LITERAL_CHANGED', after, { container: where, before: textOf(before), after: textOf(after), changeSide: 'after' });
@@ -464,15 +471,16 @@ export class StructuralDiff {
    *
    * @param {ts.Node} before - before。
    * @param {ts.Node} after - after。
+   * @param {object} where - container。
    * @returns {boolean} 是否已解釋。
    */
-  explainChainChange(before, after) {
+  explainChainChange(before, after, where) {
     const beforeReceiver = isCall(before) ? receiverOfCall(before) : null;
-    if (beforeReceiver && this.same(unwrapParens(beforeReceiver), after) && this.consume('CALL_REMOVED', this.beforeCalls.get(before))) {
+    if (beforeReceiver && this.same(unwrapParens(beforeReceiver), after) && this.consume('CALL_REMOVED', this.beforeCalls.get(before), where)) {
       return true;
     }
     const afterReceiver = isCall(after) ? receiverOfCall(after) : null;
-    return Boolean(afterReceiver && this.same(before, unwrapParens(afterReceiver)) && this.consume('CALL_ADDED', this.afterCalls.get(after)));
+    return Boolean(afterReceiver && this.same(before, unwrapParens(afterReceiver)) && this.consume('CALL_ADDED', this.afterCalls.get(after), where));
   }
 
   /**
@@ -490,7 +498,7 @@ export class StructuralDiff {
     const afterCallee = unwrapParens(after.expression);
 
     // 同一位置換成另一個呼叫（`jwt.verify(...)` → `jwt.decode(...)`）：由兩邊的 CALL_REMOVED / CALL_ADDED 解釋名稱的差異。
-    if (beforeCall && afterCall && beforeCall.key !== afterCall.key && this.consumeReplacement(beforeCall, afterCall)) {
+    if (beforeCall && afterCall && beforeCall.key !== afterCall.key && this.consumeReplacement(beforeCall, afterCall, where)) {
       const memberBase = (node) => (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node) ? node.expression : null);
       const beforeBase = memberBase(beforeCallee);
       const afterBase = memberBase(afterCallee);
@@ -516,13 +524,18 @@ export class StructuralDiff {
     const beforeArgs = [...(before.arguments ?? [])];
     const afterArgs = [...(after.arguments ?? [])];
     const callee = this.calleeFor(after, this.afterCalls);
+    // 這個呼叫本身位於另一個呼叫的參數中（`charge(fee(a, b))`）時，參數 fact 帶上外層參數的 container，
+    // 參數的 container 也以 `outer` 連到外層參數（`charge(fee(a + 1))` 的運算子改變也屬於 `charge#0`）。
+    const context = where?.type === 'argument' ? { container: where } : {};
+    const outer = where?.type === 'argument' ? { outer: where } : {};
     if (beforeArgs.length !== afterArgs.length) {
-      if (!this.explainArgumentCountChange(beforeArgs, afterArgs, after, callee)) this.markUnexplained('argument-count', before);
+      if (!this.explainArgumentCountChange(beforeArgs, afterArgs, after, callee, context)) this.markUnexplained('argument-count', before);
       return;
     }
     if (this.argumentsReordered(beforeArgs, afterArgs)) {
       this.addFact('CALL_ARGUMENTS_REORDERED', after, {
         callee,
+        ...context,
         before: beforeArgs.map(textOf).join(', '),
         after: afterArgs.map(textOf).join(', '),
         changeSide: 'after',
@@ -533,11 +546,12 @@ export class StructuralDiff {
       const afterArg = afterArgs[index];
       if (this.same(beforeArg, afterArg)) return;
       const mark = this.unexplained.length;
-      this.compare(beforeArg, afterArg, container('argument', `${callee.text}#${index}`, { callee, argument: index }));
+      this.compare(beforeArg, afterArg, container('argument', `${callee.text}#${index}`, { callee, argument: index, ...outer }));
       if (this.unexplained.length > mark && !containsCallback(beforeArg) && !containsCallback(afterArg)) {
         // 位置參數無法被更細的 fact 解釋：輸出 fallback fact（不視為已解釋）。
         this.addFact('CALL_ARGUMENT_CHANGED', afterArg, {
           callee,
+          ...context,
           argument: index,
           before: textOf(beforeArg),
           after: textOf(afterArg),
@@ -556,9 +570,10 @@ export class StructuralDiff {
    * @param {ts.Node[]} afterArgs - after 的參數。
    * @param {ts.Node} after - after 的呼叫。
    * @param {object} callee - 結構化 callee。
+   * @param {object} [context={}] - 外層參數的 container（`{ container }`），沒有時為空物件。
    * @returns {boolean} 是否已解釋。
    */
-  explainArgumentCountChange(beforeArgs, afterArgs, after, callee) {
+  explainArgumentCountChange(beforeArgs, afterArgs, after, callee, context = {}) {
     const pairs = lcs(beforeArgs.map((arg) => this.beforeHasher.serialize(arg)), afterArgs.map((arg) => this.afterHasher.serialize(arg)));
     if (pairs.length !== Math.min(beforeArgs.length, afterArgs.length)) return false;
     const removed = beforeArgs.length > afterArgs.length;
@@ -567,6 +582,7 @@ export class StructuralDiff {
     for (const [arg, index] of changed) {
       this.addFact(removed ? 'CALL_ARGUMENT_REMOVED' : 'CALL_ARGUMENT_ADDED', arg, {
         callee,
+        ...context,
         argument: index,
         value: textOf(arg),
         changeSide: removed ? 'before' : 'after',
@@ -744,7 +760,7 @@ export class StructuralDiff {
 
     if (ts.isExpressionStatement(item)) {
       const call = calls.get(unwrapAwait(item.expression));
-      if (call && !call.hasCallback && this.consume(removed ? 'CALL_REMOVED' : 'CALL_ADDED', call)) return;
+      if (call && !call.hasCallback && this.consume(removed ? 'CALL_REMOVED' : 'CALL_ADDED', call, where)) return;
     }
     if (ts.isIfStatement(item)) {
       const exit = guardExit(item);

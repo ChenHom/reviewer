@@ -156,7 +156,7 @@
    - 規則引擎也比對 container 為該參數（`type: argument`，含巢狀 key）的 fact，以及位置參數的 `CALL_ARGUMENTS_REORDERED`；`BINARY_OPERATOR_CHANGED` 不再提前 return，可以同時產生 `SENSITIVE_OPERAND_CHANGED` 與 `PROTECTED_ARGUMENT_CHANGED`。規則引擎版本 `1.1.0`。
    - PHP 與 TS analyzer 的 `BINARY_OPERATOR_CHANGED` 加上 `container`（原本沒有，運算子改變無法對應到參數）。adapter 版本改為 `0.3.0`。
    - 新增 MUT-TS-016（帶 `protectedArguments` 的位置參數字面值改變 → `ESCALATED`）。
-   - 限制：container 是最近的一層呼叫，`charge(f(a + 1))` 中的運算子改變對應到 `f#0`，不會對應到 `charge#0`。
+   - 原本的限制「container 是最近的一層呼叫，`charge(f(a + 1))` 中的運算子改變對應到 `f#0`，不會對應到 `charge#0`」已在第 18 點修正。
 2. **指示註解移到文字相同的 token 前面時沒有 fact**（P1，確認為真）：`// @ts-ignore` 從第一個 `foo(1)` 移到 `foo(2)` 前面，key 都是 `// @ts-ignore@foo`，AST 相同，結果是 `COMPLETE` 沒有 fact → `AUTO_PASS`（fail-open）。修正：key 加上「同樣文字的 token 中第幾個」；前面新增或刪除同樣文字的 token 也會讓編號改變，這時多產生 fact（保守）。
 3. **AI 回答 PASS 卻附上修正時被放行**（P1，確認為真）：schema 允許這種組合，原本記為 `PASS`、修正被丟掉，文字報表的「通過」段落也不顯示修正，`--fail-on-human` 會通過。修正：PASS + 非空的 `fix.edits` 照 FIX 處理（有 `--ai-apply` 且通過檢查時套用，否則交給人工並附上修正建議）。
 4. **ESLint 的其他 inline 設定沒有追蹤**（P2，確認為真）：只新增 `/* eslint no-eval: "off" */` 或 `/* global foo */` 時 AST 相同，檔案為 `AUTO_PASS`，但 CI 的 lint 結果會改變。修正：block comment 開頭為 `eslint`、`eslint-env`、`global(s)`、`exported` 時視為指示註解（一般文字提到 eslint 不算）；順便加入同類的 `biome-ignore`、`oxlint-disable` / `enable`、`deno-lint-ignore`。
@@ -174,6 +174,13 @@
 15. **PHP 的呼叫在 route closure 之間移動時沒有 fact**（P1，確認為真）：與第 9 點相同的問題。`verificationSign()` 從 `Route::post('/payments/notify', …)` 的 closure 移到 `/payments/status` 的 closure 時，以所屬 method（頂層程式碼為同一組）配對，兩邊各一次 → 沒有 `CALL_REMOVED`、沒有 `SIGNATURE_VERIFICATION_REMOVED`。修正：`CallExtractor` 與 TS 相同，以 closure / arrow function 的錨點（`Route::get('/x')#1` 這種「呼叫 + 常數參數 + 第幾個參數」，錨點相同時依出現順序編號）組成 slot，`CallFacts` 與 `StructuralDiff` 的配對與預算改以 slot 為單位。新增 MUT-021（`ESCALATED`）。影響：`DB::transaction(function () { $q->save(); })` 解開成 `$q->save();` 時，原本只有 `CALL_REMOVED \DB::transaction`，現在另有 `$q->save` 的 `CALL_REMOVED` / `CALL_ADDED`（呼叫移出交易，寧可多報）。PHP adapter 版本 `0.4.0`。
 16. **移除 inline callback middleware 沒有 fact**（P1，確認為真）：`router.post('/refund', (req, res, next) => { …; next(); }, refund)` → `router.post('/refund', refund)` 時，參數數量改變的解釋遇到 callback 參數就放棄，沒有 `CALL_ARGUMENT_REMOVED`，middleware interpreter 看不到 → 只有 callback 內呼叫的 `CALL_REMOVED`（`AI_TRACK`）。修正：callback 參數也產生 `CALL_ARGUMENT_REMOVED` / `ADDED`（`MIDDLEWARE_GUARD_REMOVED` 因此生效），但仍不算已解釋（callback 的內容沒有比對），檔案維持 `FULL`。
 17. **沒有型別運算式的 JSDoc 標籤沒有追蹤**（P2，確認為真）：JS 檔中新增 `/** @override */`（TypeScript 會檢查該方法確實覆寫基底類別的成員；`noImplicitOverride` 也依此判斷）或移除 `@constructor`、`@abstract`、`@deprecated` 時，第 10 點只看帶型別的標籤 → `AUTO_PASS`。修正：這些標籤（`@override`、`@constructor`、`@class`、`@abstract`、`@deprecated`）也列入 key。
+18. **參數中的巢狀呼叫被替換時沒有參數的 container**（P1，確認為真）：`charge(calculateFee())` → `charge(calculateTotal())` 只有內層的 `CALL_REMOVED` / `CALL_ADDED`，沒有 container，也沒有 `CALL_ARGUMENT_CHANGED`，設定的 `protectedArguments`（`charge` 的第 0 個參數）對應不到 → `AI_TRACK`。TS 與 PHP 都重現；同樣的問題也出現在鏈的增減（`charge(q.fee().round())` → `charge(q.round())`）、巢狀呼叫的參數增減或換順序（`charge(fee(a, b))` → `charge(fee(a))`），以及第 1 點記錄的更深一層的值變更（`charge(f(a + 1))`）。修正：
+   - 結構比對在某個參數中消耗 call fact 時記下該參數，輸出前把 container 加到對應的 `CALL_REMOVED` / `CALL_ADDED`（同一個 budget key 的 call fact 可互換，優先選位置相同的；fact id 不變）。
+   - 巢狀呼叫的 `CALL_ARGUMENT_*` / `CALL_ARGUMENTS_REORDERED` 帶上外層參數的 container；參數的 container 以 `outer` 連到外層參數。
+   - 規則引擎同時以 callee + 參數與 container（含 `outer` 鏈）比對，版本 `1.2.0`。TS 與 PHP adapter 版本 `0.5.0`。
+   - 新增 MUT-TS-019 與 MUT-022（帶 `protectedArguments` 的設定，`ESCALATED`；兩個 case 在修正前都會失敗）。
+   - PHP 的鏈變更只有被消耗的 call fact（例如 `$q->fee`）帶 container；配對 key 改變而多出來的 `->round` / `$q->round` 沒有被消耗，不帶 container，但至少有一個 fact 會命中規則。
+19. **TS 檔的 `@internal` 沒有追蹤**（P2，確認為真）：TS 檔原本完全不看 JSDoc，`stripInternal` 時新增或移除 `/** @internal */` 會改變輸出的宣告檔，結果是 `AUTO_PASS`。修正：TS 檔列入 `@internal`（JS 檔也列入）。
 
 ## 跨步驟的注意事項
 

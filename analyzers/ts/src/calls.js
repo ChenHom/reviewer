@@ -127,3 +127,19 @@ export function buildCallFacts(path, beforeCalls, afterCalls) {
   }
   return facts;
 }
+
+/**
+ * 在位置參數中被結構比對消耗的 call fact 加上該參數的 container（不改變 fact id）。同一個 budget key 的 call fact
+ * 可以互換，優先選位置相同的那一個，否則選任一個還沒有 container 的。
+ *
+ * @param {object[]} callFacts - buildCallFacts() 的結果（含 `budgetKey`）。
+ * @param {Array<{budgetKey: string, startByte: number, container: object}>} entries - StructuralDiff 的 `callContainers`。
+ * @returns {void} 無回傳值。
+ */
+export function attachCallContainers(callFacts, entries) {
+  for (const { budgetKey, startByte, container } of entries) {
+    const candidates = callFacts.filter((fact) => fact.budgetKey === budgetKey && fact.properties.container === undefined);
+    const target = candidates.find((fact) => fact.provenance.startByte === startByte) ?? candidates[0];
+    if (target) target.properties = { ...target.properties, container };
+  }
+}

@@ -356,6 +356,36 @@
     ]
   },
   {
+    "id": "MUT-022",
+    "classification": "critical",
+    "fixture": "charge-amount-call-replaced",
+    "path": "app/Services/OrderChargeService.php",
+    "description": "The charged amount switches from grandTotal() to subtotal(); the project config protects the first argument of charge.",
+    "config": {
+      "version": 1,
+      "presets": [
+        "php-laravel"
+      ],
+      "rules": {
+        "protectedArguments": [
+          {
+            "name": "charge",
+            "argument": 0
+          }
+        ]
+      }
+    },
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_REMOVED",
+      "CALL_ADDED"
+    ],
+    "expectedReasons": [
+      "PROTECTED_ARGUMENT_CHANGED"
+    ]
+  },
+  {
     "id": "MUT-TS-001",
     "classification": "critical",
     "fixture": "typescript/transaction-unwrapped",
@@ -654,6 +684,33 @@
     ],
     "expectedReasons": [
       "SIGNATURE_VERIFICATION_REMOVED"
+    ]
+  },
+  {
+    "id": "MUT-TS-019",
+    "classification": "critical",
+    "fixture": "typescript/charge-amount-call-replaced",
+    "path": "src/orders/charge.ts",
+    "description": "The charged amount switches from orderTotal() to orderSubtotal() (dropping tax and shipping); the project config protects the first argument of charge.",
+    "config": {
+      "version": 1,
+      "rules": {
+        "protectedArguments": [
+          {
+            "name": "charge",
+            "argument": 0
+          }
+        ]
+      }
+    },
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_REMOVED",
+      "CALL_ADDED"
+    ],
+    "expectedReasons": [
+      "PROTECTED_ARGUMENT_CHANGED"
     ]
   },
   {
