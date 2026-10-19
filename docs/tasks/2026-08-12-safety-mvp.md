@@ -4,6 +4,8 @@ Implementation plan: [2026-08-12-review-reduction-safety.md](../superpowers/plan
 
 Status: `IMPLEMENTED`
 
+> 歷史紀錄：本文記錄 Safety MVP 初期（2026-08-12）的任務清單，之後不再更新。下文的範圍與取捨（例如「no runtime dependencies」「TypeScript/Vitest are deferred」「不做完整 PHP/Laravel parsing」）是當時的決定，不代表現況。目前的能力、依賴與驗證數字見 [README](../../README.md)（[「已實作」](../../README.md#已實作)、[「目前驗證基準」](../../README.md#目前驗證基準)）與 [Current State](../current-state.md)。
+
 Production entrypoint: `src/runner.js` → `runSafetyMvp()`. `runAnalysis()` remains the analysis-only stage used inside that pipeline.
 
 Testing strategy: [Safety MVP 測試策略](../testing/safety-mvp-test-strategy.md). Every new behavior must cover positive, negative, boundary, and integration cases; run `npm run lint`, `npm run test:safety`, and `npm run test:coverage`.

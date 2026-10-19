@@ -187,7 +187,7 @@
 1. **real-repo evaluation 的 `compare`**：`--baseline-ref` 指向 fact schema v2 之前的 commit 時，每筆有 fact 的結果在 `facts` 欄位都會不同（`callee` / `container` 的形狀改變，且多了 `properties.scope`）。這是預期的；比較時請看 `decision`、`fallback`、`reasons` 與 gate。`evaluation/real-repo/run.js` 以 baseline snapshot 自己的 `PHP_LARAVEL_DOMAIN_INTERPRETERS` 執行，所以保留了這個相容入口。
 2. **real-repo evaluation 沒有在本機重跑**：目標專案不在 repo 內（見 `docs/current-state.md`）。步驟 1、2 是行為不變的重構，mutation corpus 結果相同；但 `CALL_ARGUMENT_REMOVED` / `ADDED` 會讓部分真實檔案從 `FULL` 變成 `TARGETED`，建議合併前在本機對目標專案執行 `npm run eval:real-repo -- evaluate --baseline-ref <修改前>`，確認 `RISKY_REDUCED` 仍為 0。
 3. **尚未實作**（設計 §8 步驟 7）：GitHub 留言中的狀態與 ack 指令、置頂儀表板、Check、PR 自我宣告的風險。使用者決定步驟 7 最後處理，先完成步驟 8、9。
-4. **待決事項**（設計 §9）中仍未決定的：`FULL` 中「未分析」檔案的預設路由（目前依建議為 `ESCALATED`，可用 `aiTrackPaths` 放寬）、AI 是否直接 commit、豁免權限、TS 型別變更的路由。
+4. **待決事項**（設計 §9）中仍未決定的：`FULL` 中「未分析」檔案的預設路由（當時依建議為 `ESCALATED`，可用 `aiTrackPaths` 放寬；後來改為 `AI_TRACK` 並移除該設定，見下方〈流程調整（2026-10-19，步驟 1–6 完成後）〉）、AI 是否直接 commit、豁免權限、TS 型別變更的路由。
 
 ## 流程調整（2026-10-19，步驟 1–6 完成後）
 

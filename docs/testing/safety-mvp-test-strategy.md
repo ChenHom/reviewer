@@ -6,13 +6,18 @@
 
 目前測試使用 Node.js native ESM、`node:test`、table-driven cases 與 deterministic exhaustive cases；不依賴 LLM、網路或無法重現的隨機資料（唯一例外：working tree 的 `analyzers/php/composer.lock` 與 `HEAD` 不同時，real-repo baseline 測試需要 Composer 與網路，見下方前置需求）。N-01 的 AdapterResult ingress、context binding contract tests，以及可執行的 PHP/Laravel Adapter 都在範圍內。
 
-只有下表四個測試檔會執行外部程式；其他測試（contracts、coverage、reducer、evidence / impact / invariant、semantic facts、domain interpreters、publication、storage、sink、E2E 與 evaluation metrics）都不執行外部程式。
+只有下表的測試檔會執行外部程式（真實 analyzer、`git`、`tar`，或以 child process 執行 `node` 的 CLI）；其他測試（contracts、coverage、reducer、evidence / impact / invariant、semantic facts、domain interpreters、publication、storage、sink、E2E 與 evaluation metrics）都不執行外部程式。新增會啟動外部程式的測試時要補進此表；可用 `grep -rlE 'child_process|createPhpLaravelAdapter|createTypeScriptAdapter|reviewRange|loadReviewer' tests` 找出目前的清單。
 
 | 測試 | 執行的外部程式 |
 |---|---|
 | `tests/adapters/php-laravel.test.js` | `php analyzers/php/bin/analyze.php`（真實 analyzer，nikic/php-parser 5.9.0） |
 | `tests/adapters/php-laravel-failures.test.js` | 以 Node 撰寫的 fake analyzer 模擬 process 失敗；缺少依賴的案例執行真實的 `analyze.php` |
 | `tests/review/review.test.js` | `git`（在暫存目錄建立 repository）、真實 analyzer 與 `bin/review.js` |
+| `tests/adapters/typescript.test.js` | `node analyzers/ts/bin/analyze.js`（真實 TS analyzer，typescript 5.9.3）；不存在的 node binary 與複製到隔離目錄的 analyzer（缺少依賴）模擬失敗 |
+| `tests/interpreters/config-rules.test.js` | `php analyzers/php/bin/analyze.php`（真實 analyzer）；TS 案例直接呼叫 `analyze()`，不啟動 process |
+| `tests/review/findings-review.test.js`、`tests/review/project-config-review.test.js`、`tests/review/typescript-review.test.js` | `git`（在暫存目錄建立 repository）與經 `reviewRange()` 執行的真實 analyzer（PHP、TS） |
+| `tests/ai/ai-review.test.js` | `git`（在暫存目錄建立 repository，另以 `ln -s` 建立 symlink）與經 `reviewRange()` 執行的真實 analyzer；AI client 是假的，不呼叫 API |
+| `tests/retro/retro.test.js` | 以 `node` 執行 `bin/retro.js` |
 | `tests/evaluation/real-repo-cli.test.js` | `php evaluation/real-repo/generate.php`、真實 analyzer、`git` 與 `tar`（從本 repo 的 `HEAD` 建立 baseline snapshot）；working tree 的 `analyzers/php/composer.lock` 與 `HEAD` 不同時另外執行 `composer install` |
 
 `npm run eval:mutations` 與 `npm run eval:historical` 也以真實 analyzer 執行完整 pipeline。因此執行測試前需要：
@@ -63,7 +68,7 @@ real-repo generator 以 seed 與檔案路徑重設 `mt_srand`，相同 seed 產�
 - Analysis failure、Summary 缺失或 Summary 發布失敗不能回傳 status success。
 - `PASS` 只代表 authoritative Summary 綁定正確，不代表不需要 Human Review；Review decision 必須另外檢查。
 - Reduction 是 file-level。`TARGETED` 與 `FULL` 都是 `HUMAN_REVIEW_REQUIRED`，都要求 review 整個檔案；兩者的差別是 Reviewer 是否已經知道每個變更是什麼，不是要看的範圍大小。
-  - PHP 檔案的 `TARGETED` 表示檔案中的每個變更都已被具體的 fact 解釋（包括沒有 domain 規則、只產生 `FACT_UNHANDLED` 的 fact），或內容等價、只有 rename / 權限改變（`FILE_RENAMED` / `FILE_MODE_CHANGED`，可能沒有任何 fact）。至少有一個變更無法解釋，或檔案沒有（或無法）分析時是 `FULL`。
+  - 經 analyzer 分析的檔案（PHP、TypeScript / JavaScript）的 `TARGETED` 表示檔案中的每個變更都已被具體的 fact 解釋（包括沒有 domain 規則、只產生 `FACT_UNHANDLED` 的 fact），或內容等價、只有 rename / 權限改變（`FILE_RENAMED` / `FILE_MODE_CHANGED`，可能沒有任何 fact）。至少有一個變更無法解釋，或檔案沒有（或無法）分析時是 `FULL`。
   - reducer 只在 blocker 都不以 `COV-`、`COVERAGE_`、`ANALYZER_` 開頭時給 `TARGETED`；policy requirement 與 `AUDIT_SAMPLE` 也是 `TARGETED`。任何 coverage / analyzer blocker 都必須維持 `FULL`。
   - `TARGETED` 標示的位置只是 review 起點。測試與輸出不得把 `TARGETED` 斷言或呈現為「只有這些行需要 review」。
 
@@ -130,7 +135,7 @@ real-repo generator 以 seed 與檔案路徑重設 `mt_srand`，相同 seed 產�
 
 測試：`tests/interpreters/php-laravel-domain.test.js`（直接呼叫 interpreter）、`tests/interpreters/presets.test.js`（preset 組合），以及 `tests/adapters/php-laravel.test.js` 中經真實 analyzer 的整合案例。各 interpreter 產生的原因代碼見 [PR Review CLI「Domain 原因代碼」](../review-cli.md#domain-原因代碼)。
 
-- `PHP_LARAVEL_DOMAIN_INTERPRETERS`（15 個）通過 `validateFactInterpreters()`，且 id 唯一。
+- `PHP_LARAVEL_DOMAIN_INTERPRETERS`（18 個）通過 `validateFactInterpreters()`，且 id 唯一。
 - `calleeParts()` 先移除 fully-qualified 前導 `\`，再拆出 receiver / method（含 `?->` 與鏈式 `->x`）；空字串或非字串回傳 `null`。
 - 每個 interpreter 的每個 blocker 都要有正向案例，並要有「非目標的 fact kind、receiver、container 或 subject 回傳 `handled: false`」的反向案例。反向案例至少包括：非 DB receiver 與 `CALL_ADDED` 不是 transaction 移除；`$model->authorize` 不是授權 guard；只新增 middleware、只改 `prefix` 或 `Route::group` 的 closure 參數不是 middleware 移除；`sign`、`signIn`、`design` 不是驗簽；位置參數不是 idempotency key；非 `rules()` method、非 return 位置與沒有 receiver 的 `->validate` 不是 validation rule；`$appends` 等其他 property 不是 model attribute。
 - 所有 interpreter 都回傳 `handled: false` 的 fact 必須落到 `FACT_UNHANDLED`，不得被當成已處理。
@@ -197,7 +202,7 @@ real-repo generator 以 seed 與檔案路徑重設 `mt_srand`，相同 seed 產�
 - git 解析：`parseRawDiff` 解析修改、新增、刪除、rename（含相似度）、權限與 type change，格式錯誤時為 `GIT_DIFF_UNPARSABLE`；`parseHunks` / `changedLines` 把 hunk 轉成 head / base 行號；`lineLocator` 以 UTF-8 byte offset 計算行號；`resolveCommit` 拒絕空字串與像選項的 ref（`GIT_REF_INVALID`）以及不存在的 ref（`GIT_FAILED`）。
 - 比較範圍：從 merge base 算起。base 在分支建立後的新 commit 不列入；報表的 `base.sha` 是 base ref 的 commit，`mergeBase` 是比較起點；merge base 與 base 不同時文字輸出標示比較起點，相同時不標示；沒有共同祖先時為 `GIT_NO_MERGE_BASE`。
 - 檔案分類：[「檔案分類」](../review-cli.md#檔案分類)表的每一列都要有案例；第 1–7 步不得呼叫 analyzer，一律 `FULL`。analyzer 失敗（例如 PHP binary 不存在）時該檔案 fail-closed 為 `FULL`（`ANALYZER_ERROR:*`），PR 不得因此變成 `NOT_SELECTED_FOR_HUMAN_REVIEW`。目前 `SUBMODULE_CHANGED` 與 `UNSUPPORTED_CHANGE_TYPE:type-changed` 沒有 `reviewRange()` 層級的案例（type change 只有 `parseRawDiff` 的解析案例），`--timeout-ms` 逾時造成的 `ANALYZER_ERROR:PHP_ANALYZER_ABORTED` 只在 adapter 層測試。
-- rename 與權限變更（只限送進 analyzer 且有結果的 PHP 檔，即「檔案分類」第 9 步）：內容等價時必須是 `TARGETED`，原因只有 `FILE_RENAMED` / `FILE_MODE_CHANGED`；內容也有變更時接在 analyzer 的原因之後。第 1–8 步的檔案（非 PHP、symlink、binary、`ANALYZER_ERROR` 等）維持該步的 `FULL` 與原因代碼，不加這兩個代碼，例如內容不變的 `notes.md` → `docs.md` 是 `FULL`（`UNSUPPORTED_FILE_TYPE`）。目前只有內容等價的案例。
+- rename 與權限變更（只限送進 analyzer 且有結果的支援語言檔，即「檔案分類」第 9 步）：內容等價時必須是 `TARGETED`，原因只有 `FILE_RENAMED` / `FILE_MODE_CHANGED`；內容也有變更時接在 analyzer 的原因之後。第 1–8 步的檔案（不支援的語言、symlink、binary、`ANALYZER_ERROR` 等）維持該步的 `FULL` 與原因代碼，不加這兩個代碼，例如內容不變的 `notes.md` → `docs.md` 是 `FULL`（`UNSUPPORTED_FILE_TYPE`）。目前只有內容等價的案例。
 - 逐檔決策：`NOT_SELECTED_FOR_HUMAN_REVIEW`、`TARGETED`、`FULL` 都要有案例。需要 review 的檔案附 `changedLines`（git hunk 的 head / base 行號），`NOT_SELECTED_FOR_HUMAN_REVIEW` 不附；經 analyzer 分析的檔案另有每個 fact 的 side 與行號，不只 `TARGETED`，有部分變更無法解釋的 `FULL`（`COV-PHP-001:<原因>` 加上已找到的 fact 的原因）也會有，測試不得假設 `FULL` 沒有 fact 位置。這些位置只是 review 起點（見「Safety invariants」）。
 - PR 彙整（`summarizeFiles`）：只有所有檔案都是 `NOT_SELECTED_FOR_HUMAN_REVIEW` 時 PR 才是 `NOT_SELECTED_FOR_HUMAN_REVIEW`；`reasons` 是需要 review 的檔案原因去重後排序的結果；只有排版變更時 `reasons` 為 `[]`；沒有任何檔案變更（例如 base 與 head 是同一個 commit）時為 `NO_CHANGES`。
 - 輸出與 exit code：文字輸出（`formatReview`，含 `FACT_UNHANDLED ×N` 的合併）、`describeFact` 對每種 fact 的描述、`--json`、`--out`（內容與 stdout 的 JSON 相同）、`--help`；exit code 0、1（`--fail-on-review` 且需要 review）與 2（例如 `OPTION_MISSING`、`OPTION_INVALID`）。exit code 的完整定義見 [「Exit code 與錯誤」](../review-cli.md#exit-code-與錯誤)。

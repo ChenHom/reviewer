@@ -244,8 +244,8 @@ node <reviewer>/bin/review.js \
 它目前的流程：
 
 1. 以 `git merge-base <base> <head>` 為比較起點，用 `git diff -M <merge base> <head>` 取得變更檔案（含 rename 偵測），與 GitHub PR 的「Files changed」相同。
-2. 只把 `.php` 的修改與 rename 送進 PHP Adapter；其他變更不分析（見下方「檔案處理規則」）。
-3. 套用 production interpreter set：`src/interpreters/php-laravel-domain.js` 的 `PHP_LARAVEL_DOMAIN_INTERPRETERS`。
+2. 只把支援語言（PHP、TypeScript / JavaScript）檔案的修改與 rename 送進對應的 Adapter（PHP Adapter、TypeScript Adapter）；其他變更不分析（見下方「檔案處理規則」）。
+3. 套用各語言的預設 interpreter set：PHP 為 `src/interpreters/php-laravel-domain.js` 的 `PHP_LARAVEL_DOMAIN_INTERPRETERS`，TypeScript / JavaScript 為 `node` preset（`src/interpreters/presets/node.js`）；`.reviewer.json` 可調整 preset 與新增規則（見 [專案設定](../project-config.md)）。
 4. 逐檔決策，再以 `summarizeFiles`（`src/review/review.js`）彙整成 PR 層級決策。
 5. 輸出文字報表，或以 `--json` / `--out` 輸出 JSON 報表。這份報表還不是正式的 Review Scope Plan（見下方「尚未提供」）。
 
@@ -259,10 +259,10 @@ node <reviewer>/bin/review.js \
 
 檔案處理規則（對 Harness 特別重要）：
 
-- 只有修改或 rename 的 `.php` 檔會被分析。新增與刪除的 PHP 檔、非 PHP 檔、binary、symlink、submodule、type change，以及 analyzer 執行失敗的檔案，一律是 `HUMAN_REVIEW_REQUIRED` / `FULL`，不分析內容。
+- 只有修改或 rename 的支援語言檔（PHP、TypeScript / JavaScript）會被分析。新增與刪除的支援語言檔、其他語言的檔案、binary、symlink、submodule、type change，以及 analyzer 執行失敗的檔案，一律是 `HUMAN_REVIEW_REQUIRED` / `FULL`，不分析內容。
 - rename 與檔案權限變更即使內容等價也要求 review（此時為 `TARGETED`）。
 - PR 層級只有在**所有**檔案都是 `NOT_SELECTED_FOR_HUMAN_REVIEW` 時才是 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
-- 因此 agent 新增的檔案永遠不會被縮減；Not Selected 只會來自內容在 AST 比較下等價、沒有改名也沒有改權限的既有 `.php` 修改。
+- 因此 agent 新增的檔案永遠不會被縮減；Not Selected 只會來自內容在 AST 比較下等價、沒有改名也沒有改權限的既有 PHP、TypeScript / JavaScript 檔修改。
 - 各情況的原因代碼見 [PR Review CLI](../review-cli.md)「檔案分類」與「原因代碼」。
 
 ### 前置需求

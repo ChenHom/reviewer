@@ -9,11 +9,11 @@
 ```mermaid
 flowchart LR
     V["PR Review CLI<br/>bin/review.js"] --> W{"git diff -M<br/>merge base → head<br/>逐檔分類"}
-    W -->|".php 修改 / rename"| A["before / after source"]
-    W -->|"新增、刪除、非 PHP、binary、<br/>symlink、submodule、type change"| X["FULL（不送 analyzer）"]
+    W -->|"PHP、TS / JS 修改 / rename"| A["before / after source"]
+    W -->|"新增、刪除、不支援的語言、binary、<br/>symlink、submodule、type change"| X["FULL（不送 analyzer）"]
     SP["runStoredAdapterPipeline<br/>（注入的 adapter request；目前只有測試呼叫）"] --> A
 
-    A --> B["PHP/Laravel Adapter<br/>（nikic/php-parser AST）"]
+    A --> B["PHP/Laravel Adapter（nikic/php-parser AST）<br/>或 TypeScript Adapter（TypeScript compiler API）"]
     B --> C["Changed Regions + Runtime Context"]
     B --> D["Provider-neutral Semantic Facts"]
 
@@ -58,7 +58,7 @@ flowchart LR
 圖中有兩條使用 pipeline 結果的路徑：
 
 - **PR Review CLI**（`bin/review.js`）：與 GitHub PR 相同，比較 head 相對於 `git merge-base <base> <head>` 的變更。每個送進 analyzer 的檔案各自走一次 Adapter → Interpreters → Reducer，所有變更檔案再彙整成 PR 層級決策。analysis identity 的 `baseSha` 是 merge base；報表的 `base.sha` 仍是 `--base` 指向的 commit，另以 `mergeBase` 標出比較起點。
-  - 只有 `.php` 的修改與 rename 會送進 analyzer；新增、刪除、非 PHP、binary、symlink、submodule 與 type change 一律 `FULL`。analyzer process 失敗（找不到 `php`、逾時、非 0 結束、輸出不是 JSON）時該檔也是 `FULL`（`ANALYZER_ERROR:<訊息>`）。
+  - 只有支援語言（PHP、TypeScript / JavaScript）檔案的修改與 rename 會送進 analyzer；新增、刪除、其他語言、binary、symlink、submodule 與 type change 一律 `FULL`。analyzer process 失敗（找不到 `php`、逾時、非 0 結束、輸出不是 JSON）時該檔也是 `FULL`（`ANALYZER_ERROR:<訊息>`）。
   - rename（`FILE_RENAMED`）與權限變更（`FILE_MODE_CHANGED`）即使內容等價也要求 review：原本 `NOT_SELECTED_FOR_HUMAN_REVIEW` 的檔案改為 `TARGETED`；其他經 analyzer 分析的檔案在原因後加上適用的代碼（`TARGETED` / `FULL` 不變）。沒有分析結果就判為 `FULL` 的檔案（上一點不送 analyzer 的檔案，以及 `BINARY_FILE`、`ANALYZER_ERROR`）不會加上。
   - PR 層級只有在**所有**檔案都是 `NOT_SELECTED_FOR_HUMAN_REVIEW` 時才是 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
   - 每個檔案使用 in-memory authority state，不寫入 CAS store，也不發布到 GitHub。
@@ -145,7 +145,7 @@ Adapter 只說「發生什麼」。
 
 Interpreter 才說「這件事對 Review policy 代表什麼」。
 
-目前 PHP 預設的 interpreter set 共 15 個，依層拆成語言層 `src/interpreters/core.js`（運算子、guard clause、反轉、回傳值、參數順序、變數、常數）、框架 preset `src/interpreters/presets/php-laravel.js`（transaction、授權、middleware、row lock、validation、model attributes）與業務 preset `src/interpreters/presets/payments.js`（`idempotencyKey`、簽章驗證）；`resolveInterpreters(presets)` 依名稱組出 set，`PHP_LARAVEL_DOMAIN_INTERPRETERS` 是三者的合集。Interpreter 比對 fact schema v2 的結構化 `callee` / `container`（`name`、`receiver`、`type`、`keys` 等），不解析 PHP 語法字串；`receiver` 不含 fully-qualified 前導 `\`，所以 `\DB::transaction` 與 `DB::transaction` 相同。例如：
+目前 PHP 預設的 interpreter set 共 18 個，依層拆成語言層 `src/interpreters/core.js`（運算子、guard clause、反轉、回傳值、參數順序、變數、常數、annotation、指示註解）、框架 preset `src/interpreters/presets/php-laravel.js`（transaction、授權、middleware、row lock、validation、model attributes、資料刪除）與業務 preset `src/interpreters/presets/payments.js`（`idempotencyKey`、簽章驗證）；`resolveInterpreters(presets)` 依名稱組出 set，`PHP_LARAVEL_DOMAIN_INTERPRETERS` 是三者的合集。Interpreter 比對 fact schema v2 的結構化 `callee` / `container`（`name`、`receiver`、`type`、`keys` 等），不解析 PHP 語法字串；`receiver` 不含 fully-qualified 前導 `\`，所以 `\DB::transaction` 與 `DB::transaction` 相同。例如：
 
 ```
 CALL_ARGUMENT_CHANGED（named argument idempotencyKey）
@@ -168,6 +168,7 @@ CALL_REMOVED（$this->authorize、$this->authorizeForUser、Gate::authorize）
 - 另外三個 domain interpreter：middleware guard、row lock、payment signature verification。
 - 七個 generic interpreter：operator change（`BINARY_OPERATOR_CHANGED`）、guard clause（`GUARD_REMOVED` / `GUARD_ADDED`）、negation（`EXPRESSION_NEGATED`）、return value（`RETURN_VALUE_CHANGED`）、argument order（`CALL_ARGUMENTS_REORDERED`）、variable change（`VARIABLE_CHANGED`）、constant value（`const` 宣告值的 `LITERAL_CHANGED`）。
 - 兩個 Laravel interpreter：validation rules、model attributes（`$fillable` / `$guarded`、`$hidden` / `$visible`、`$casts` / `casts()`）。
+- 再加上三個：資料刪除（`laravel-data-deletion`，`DATA_DELETION_ADDED`）、annotation（`core-annotation`，`ANNOTATION_REMOVED` / `ANNOTATION_ADDED`）、指示註解（`core-directive-comment`，`DIRECTIVE_COMMENT_CHANGED`）。
 
 一個 fact 可以被多個 interpreter 處理，例如 `rules()` 的整個回傳值換成常數或從常數換掉（`RETURN_VALUE_CHANGED` fact，如 `return self::RULES;` → `return [];`）時，同時產生 `RETURN_VALUE_CHANGED` 與 `VALIDATION_RULE_CHANGED`；只改陣列內的規則（`LITERAL_CHANGED`、`ARRAY_ITEM_*`，如 `'required'` 改成 `'nullable'`）時只產生 `VALIDATION_RULE_CHANGED`。完整清單見 [README「已實作」](../README.md#已實作)，每個輸出代碼的意義見 [PR Review CLI「Domain 原因代碼」](review-cli.md#domain-原因代碼)。
 
@@ -212,7 +213,7 @@ flowchart TD
 
 `HUMAN_REVIEW_REQUIRED` 帶有 fallback（`src/reducer.js`）：
 
-- `FULL`：分析失敗（`ANALYSIS_FAILED`），或 blocker 中有 `COV-`、`COVERAGE_`、`ANALYZER_` 開頭的代碼（coverage obligation 未完整、analyzer 或 interpreter 錯誤）。PHP 檔有變更無法以 fact 解釋時就是這種情況（`COV-PHP-001:UNRECOGNIZED_PHP_CHANGE`）。
+- `FULL`：分析失敗（`ANALYSIS_FAILED`），或 blocker 中有 `COV-`、`COVERAGE_`、`ANALYZER_` 開頭的代碼（coverage obligation 未完整、analyzer 或 interpreter 錯誤）。PHP 檔有變更無法以 fact 解釋時就是這種情況（`COV-PHP-001:UNRECOGNIZED_PHP_CHANGE`；TS / JS 為 `COV-TS-001:UNRECOGNIZED_TS_CHANGE`）。
 - `TARGETED`：coverage 完整，只剩 fact / domain blocker（含 `FACT_UNHANDLED`）或 policy / audit 要求，也就是每一處變更都已被具體 fact 解釋。
 
 兩者都是 file-level 決策。`TARGETED` 不代表只需看標示的行：原因與位置是 review 的起點，整個檔案仍需 review。
@@ -250,7 +251,7 @@ flowchart TD
 | Routing / Findings / Project config | `src/routing.js`、`src/findings.js`、`src/config/` | 三層審查路由、二次 review 的 finding 指紋、`.reviewer.json` 專案設定 |
 | Fact Contract | `src/facts/contracts.js` | Fact validation、JSON-safe canonicalization |
 | Fact Interpreter | `src/facts/interpreter.js` | versioned interpreter boundary、fail-closed handling |
-| PHP/Laravel Rules | `src/interpreters/core.js`、`src/interpreters/presets/` | 15 個 deterministic domain interpreters（語言層 + `php-laravel` / `payments` preset） |
+| PHP/Laravel Rules | `src/interpreters/core.js`、`src/interpreters/presets/` | 18 個 deterministic domain interpreters（語言層 + `php-laravel` / `payments` preset；TS / JS 的 `node` preset 見 `src/interpreters/presets/node.js`） |
 | Coverage | `src/coverage.js` | required obligations |
 | Evidence / Impact / Invariants | `src/{evidence,impact,invariants}.js` | unresolved fact blockers |
 | Reducer | `src/reducer.js` | eligibility aggregation、review scope decision（`TARGETED` / `FULL`） |
@@ -278,17 +279,7 @@ npm run test:all
 
 CI（`.github/workflows/review-reduction-safety.yml`，Node.js 24、PHP 8.4）在 `npm ci` 之後先執行 `composer install --working-dir=analyzers/php`，再對 `analyzers/php/bin`、`analyzers/php/src` 與 `evaluation` 下的 `.php` 檔執行 `php -l`，最後執行 `npm run test:all`。
 
-Mutation baseline（`npm run eval:mutations`，20 cases：16 critical、4 safe）：
-
-```
-Critical Recall               100.0%
-False Negative Rate             0.0%
-Critical Direct Fact Coverage 100.0%
-Safe Reduction Rate           100.0%
-Partial Coverage Rate          15.0%
-Analysis Failure Rate           0.0%
-Full Review Fallback Rate      15.0%
-```
+Mutation baseline（`npm run eval:mutations`）：case 數與各項指標以 [README「目前驗證基準」](../README.md#目前驗證基準) 為準。
 
 Real-repo evaluation：
 
@@ -358,4 +349,4 @@ Human / AI Reviewer
 6. Harness `review <workId>` integration。
 7. region-level blocker → fact → provenance contract。在此之前，`TARGETED` 的位置只是 review 起點。
 8. optional impact provider，例如 code-review-graph。
-9. LLM 僅作 hypothesis / explanation，不取得 reduction authority。
+9. 第 2 層 AI 審查（`--ai`，見 [PR Review CLI「AI 審查」](review-cli.md#ai-審查第-2-層--ai)）已實作，不再是待辦。AI 不取得 reduction authority：機械審查的 `decision`、`--fail-on-review` 與 CAS authority / publication 都不受 AI 影響（`runAiReview()` 只由 `src/review/review.js` 在機械審查與路由之後呼叫）；AI 只決定 `AI_TRACK` 檔案是否還需要人工（`needsHuman`、`--fail-on-human`），`ESCALATED`（單向門）檔案不能被 AI 放行。
