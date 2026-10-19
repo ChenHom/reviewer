@@ -138,6 +138,7 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
 - TypeScript / JavaScript analyzer（`analyzers/ts`，TypeScript compiler API，`typescript` 鎖定 5.9.3，以執行 CLI 的同一個 Node 執行）：
   - AST 等價判定：排版、一般註解、引號、分號、trailing comma、多餘括號、property key 是否加引號、數字寫法、JSX 依渲染空白規則的換行，以及 function 內一致的區域變數改名視為等價（參數、物件簡寫、解構、會被賦予匿名 function 的變數、有 `eval` / `with` 的檔案不做改名正規化）
   - 結構比對輸出與 PHP 相同的 generic facts（`CALL_REMOVED` / `CALL_ADDED`、`CALL_ARGUMENT_*`、`BINARY_OPERATOR_CHANGED`、`GUARD_*`、`ARRAY_ITEM_*`（物件 / 陣列成員）、`LITERAL_CHANGED`、`EXPRESSION_NEGATED`、`RETURN_VALUE_CHANGED`、`CALL_ARGUMENTS_REORDERED`、`VARIABLE_CHANGED`），以及 decorator 的 `ANNOTATION_REMOVED` / `ANNOTATION_ADDED` 與 `@ts-ignore`、`eslint-disable`、`#__PURE__`、shebang 等的 `DIRECTIVE_COMMENT_CHANGED`。callee 的 `receiver` 為 `this.db` → `['this', 'db']`；每個 fact 帶 scope hash（`ts:` 前綴）與 UTF-8 byte 位置
+  - 匿名 callback 內的呼叫依 callback 各自配對（錨點為傳給哪個呼叫的第幾個參數與該呼叫的常數參數，例如路由路徑），呼叫從一個 handler 移到另一個時產生 `CALL_REMOVED` / `CALL_ADDED`；JS 檔中帶型別的 JSDoc（`@type`、`@param` 等，checkJs 會讀取）改變時產生 `DIRECTIVE_COMMENT_CHANGED`
   - 判斷不了就不解釋（`COV-TS-001:UNRECOGNIZED_TS_CHANGE`）：property key 改變、型別註記、`as` 轉型、`function` 與箭頭函式互換、import 順序、modifier 增減等
 - Deterministic Node.js interpreters（preset `node`，TS / JS 預設啟用）：
   - Transaction（移除 `prisma.$transaction`、`startTransaction` / `commitTransaction` / `withTransaction`、DB receiver 的 `transaction` / `commit`、knex `.transacting()`、`@Transactional()`，或移除 Sequelize `{ transaction: t }` / Mongoose `{ session }` 選項 → `TRANSACTION_BOUNDARY_REMOVED`；`rollbackTransaction` / `abortTransaction` / transaction 物件的 `rollback` → `TRANSACTION_ROLLBACK_REMOVED`；Sentry 等 tracing 的 transaction 不算）
@@ -161,11 +162,11 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
 Mutation corpus：
 
 ```
-Total cases                       45（critical 37、safe 8；TS 21 個）
+Total cases                       46（critical 38、safe 8；TS 22 個）
 Critical Recall               100.0%
 False Negative Rate             0.0%
-Critical Direct Fact Coverage  97.3%
-Critical Escalation Rate       78.4%
+Critical Direct Fact Coverage  97.4%
+Critical Escalation Rate       78.9%
 Safe Reduction Rate           100.0%
 Partial Coverage Rate          14.0%
 Analysis Failure Rate           0.0%

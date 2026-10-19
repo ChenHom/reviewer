@@ -249,6 +249,26 @@ function functionName(node) {
 }
 
 /**
+ * 沒有名稱的 function-like（匿名 callback）：不會成為 subject，其中的呼叫歸屬於外層的具名 function。
+ *
+ * @param {ts.Node} node - node。
+ * @returns {boolean} 是否為匿名 function-like。
+ */
+export function isAnonymousFunction(node) {
+  return FUNCTION_LIKE.has(node.kind) && functionName(node) === null;
+}
+
+/**
+ * 具名的 function-like（subject 的邊界）。
+ *
+ * @param {ts.Node} node - node。
+ * @returns {boolean} 是否為具名 function-like。
+ */
+export function isNamedFunction(node) {
+  return FUNCTION_LIKE.has(node.kind) && functionName(node) !== null;
+}
+
+/**
  * node 所屬的具名 function-like 與 class（與 PHP 的 subject 規則相同）。
  *
  * @param {ts.Node} node - node。

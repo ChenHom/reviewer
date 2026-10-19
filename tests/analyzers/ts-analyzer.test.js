@@ -60,6 +60,12 @@ const cases = [
   ['eslint global added', 'a.js', fn('return foo;'), `/* global foo: readonly */\n${fn('return foo;')}`, ['DIRECTIVE_COMMENT_CHANGED']],
   ['biome ignore added', 'a.ts', fn('return x;'), `// biome-ignore lint/style: reason\n${fn('return x;')}`, ['DIRECTIVE_COMMENT_CHANGED']],
   ['comment mentioning eslint', 'a.js', fn('return x;'), `// eslint is configured in eslint.config.js\n/* see eslint docs */\n${fn('return x;')}`, null],
+  // JS 檔（checkJs）中帶型別的 JSDoc：型別改變要 review，只改說明不用；TS 檔不使用 JSDoc 型別。
+  ['jsdoc type changed in js', 'a.js', `/** @type {number} */\nexport let total = 0;\n`, `/** @type {string} */\nexport let total = 0;\n`, ['DIRECTIVE_COMMENT_CHANGED', 'DIRECTIVE_COMMENT_CHANGED']],
+  ['jsdoc param type changed in js', 'a.js', `/**\n * @param {number} x - 數量\n */\n${fn('return x;')}`, `/**\n * @param {string} x - 數量\n */\n${fn('return x;')}`, ['DIRECTIVE_COMMENT_CHANGED', 'DIRECTIVE_COMMENT_CHANGED']],
+  ['jsdoc type added in js', 'a.js', fn('return x;'), `/** @returns {Promise<{ id: string }>} */\n${fn('return x;')}`, ['DIRECTIVE_COMMENT_CHANGED']],
+  ['jsdoc description only in js', 'a.js', `/**\n * @param {number} x - 數量\n */\n${fn('return x;')}`, `/**\n * 計算。\n * @param {number} x - 商品數量\n */\n${fn('return x;')}`, null],
+  ['jsdoc type changed in ts', 'a.ts', `/** @type {number} */\nexport let total = 0;\n`, `/** @type {string} */\nexport let total = 0;\n`, null],
   ['directive unchanged with repeated tokens', 'a.ts', fn('foo(1);\n// @ts-ignore\nfoo(2);'), fn('foo(1);\n  // @ts-ignore\n  foo(2);'), null],
   ['only decorator removed', 'a.ts', 'export class A {\n  @Transactional()\n  m() {}\n}\n', 'export class A {\n  m() {}\n}\n', ['ANNOTATION_REMOVED']],
   ['only decorator added', 'a.ts', 'export class A {\n  m() {}\n}\n', 'export class A {\n  @Public()\n  m() {}\n}\n', ['ANNOTATION_ADDED']],
@@ -103,4 +109,16 @@ test('JSX 文字依 JSX 空白規則正規化', () => {
   assert.equal(cleanJsxText('\n   \n'), '');
   assert.equal(cleanJsxText(' a '), ' a ');
   assert.equal(cleanJsxText('a\t\n b'), 'a b');
+});
+
+test('匿名 callback 各自配對呼叫：呼叫從一個 callback 移到另一個時產生 CALL_REMOVED / CALL_ADDED', () => {
+  const routes = (admin, health = '') => `export function routes(router: any, jwt: any, key: string) {\n${health}  router.get('/admin', (req: any, res: any) => {\n${admin}    res.send(1);\n  });\n  router.get('/public', (req: any, res: any) => {\n${admin ? '' : '    jwt.verify(req.token, key);\n'}    res.send(2);\n  });\n}\n`;
+  const moved = analyze({ path: 'r.ts', beforeSource: routes('    jwt.verify(req.token, key);\n'), afterSource: routes('') });
+  assert.equal(moved.complete, true);
+  assert.deepEqual(moved.facts.map(({ kind, properties }) => `${kind}:${properties.callee.text}`).sort(), ['CALL_ADDED:jwt.verify', 'CALL_REMOVED:jwt.verify']);
+
+  // 前面新增另一條路由（錨點不同）不會讓既有 callback 中的呼叫被當成移除。
+  const health = "  router.get('/health', (req: any, res: any) => {\n    res.send(0);\n  });\n";
+  const added = analyze({ path: 'r.ts', beforeSource: routes('    jwt.verify(req.token, key);\n'), afterSource: routes('    jwt.verify(req.token, key);\n', health) });
+  assert.ok(!added.facts.some((fact) => fact.kind === 'CALL_REMOVED'), JSON.stringify(added.facts.map(({ kind }) => kind)));
 });

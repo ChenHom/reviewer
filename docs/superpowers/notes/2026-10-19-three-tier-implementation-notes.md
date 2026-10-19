@@ -164,6 +164,9 @@
 6. **AI 的修正造成語法錯誤時仍被套用**（P1，確認為真）：修正後的內容無法解析時，機械審查的結果是 `FULL`（`COV-TS-001:TS_PARSE_ERROR`）而不是單向門，原本只擋 `ESCALATED`，壞掉的內容被寫入 worktree 並記為 `FIXED`。修正：支援的語言必須完整分析修正後的內容（不是 `FULL`）才套用，否則為 `AI_FIX_UNVERIFIED`；不支援的檔案類型沒有 analyzer，維持照樣套用。代價是 analyzer 無法解釋的合理修正也不會自動套用（變成建議，交給人工）。
 7. **帶參數的單向門代碼沒有 finding**（P2，確認為真）：路由以基本代碼比對（`FACT_UNHANDLED:ts-1` → `FACT_UNHANDLED`），finding 卻以完整字串比對；專案把 `FACT_UNHANDLED`、`ANALYZER_ERROR` 等列為單向門時，檔案是 `ESCALATED` 但沒有任何 finding。修正：`src/routing.js` 匯出 `baseCode()`，finding 以同樣的規則比對。
 8. **路由 middleware 換順序沒有升級**（P1，確認為真）：`router.post('/refund', requireAuth, refund)` → `router.post('/refund', refund, requireAuth)` 只產生 `CALL_ARGUMENTS_REORDERED`（`ARGUMENTS_REORDERED`，`AI_TRACK`）。handler 依序執行，`refund` 先回應時 `requireAuth` 不會執行，等於移除認證。修正：路由註冊（`isRouteRegistration`）的參數順序改變一律產生 `MIDDLEWARE_GUARD_REMOVED`（包括 `app.use(a, b)` → `app.use(b, a)`，寧可多送人工）；新增 MUT-TS-017。
+9. **呼叫在匿名 callback 之間移動時沒有 fact**（P1，確認為真）：call 的配對以 subject + callee 分組，同一個具名 function 內的所有匿名 callback 共用一組。`jwt.verify` 從 `/admin` 的 handler 移到 `/public` 的 handler 時兩邊各一次，沒有 `CALL_REMOVED`，結構比對也無法解釋 → `FULL` / `AI_TRACK`，沒有 `SIGNATURE_VERIFICATION_REMOVED`。修正：分組再加上匿名 callback 的錨點（傳給哪個呼叫的第幾個參數、該呼叫的常數參數，例如路由路徑；錨點相同時依出現順序編號）。在前面新增錨點不同的 callback（例如另一條路由）不影響既有的分組；改變路由路徑或測試名稱等常數參數會讓其中的呼叫被當成移除 + 新增（寧可多報）。新增 MUT-TS-018。TS adapter 版本 `0.4.0`。
+   - **PHP analyzer 有同樣的限制**（closure 內的呼叫以所屬 method 配對），這次沒有修改；記為之後的工作。
+10. **JS 檔中帶型別的 JSDoc 沒有追蹤**（P2，確認為真）：開啟 checkJs / `// @ts-check` 時，`/** @type {number} */` 改成 `{string}` 會改變型別檢查結果，但註解不在 AST 中 → `AUTO_PASS`。這與 TS 的型別註記一律不視為等價的原則不一致。修正：JS 檔中帶型別標籤（`@type`、`@param`、`@returns`、`@typedef`、`@template` 等）的 JSDoc 列入指示註解；比較的 key 只含標籤、型別與參數名稱，只改說明文字不算變更。TS 檔不使用 JSDoc 型別，不列入。
 
 ## 跨步驟的注意事項
 

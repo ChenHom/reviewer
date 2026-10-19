@@ -625,6 +625,22 @@
     ]
   },
   {
+    "id": "MUT-TS-018",
+    "classification": "critical",
+    "fixture": "typescript/verify-moved-between-handlers",
+    "path": "src/routes/admin.ts",
+    "description": "jwt.verify moves from the admin refund handler into the public status handler; the admin route no longer verifies tokens.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_REMOVED",
+      "CALL_ADDED"
+    ],
+    "expectedReasons": [
+      "SIGNATURE_VERIFICATION_REMOVED"
+    ]
+  },
+  {
     "id": "SAFE-001",
     "classification": "safe",
     "fixture": "format-only",

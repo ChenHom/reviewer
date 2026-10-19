@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import ts from 'typescript';
 
-import { byteRange, calleeOf, containsCallback, subjectOf } from './syntax.js';
+import { byteRange, calleeOf, containsCallback, isAnonymousFunction, isConstant, isNamedFunction, subjectOf, textOf } from './syntax.js';
 
 /**
  * 抽取呼叫，並依 subject + callee 分組配對 before / after，輸出 CALL_REMOVED / CALL_ADDED
@@ -21,7 +21,29 @@ export function factId(parts) {
 }
 
 /**
+ * 匿名 callback 的錨點文字：傳給哪個呼叫的第幾個參數，以及該呼叫的常數參數
+ * （`router.get('/admin', (req, res) => …)` → `I:router.get('/admin',_)#1`）。
+ * 不是呼叫參數的匿名 function 以所在位置的 node 種類表示。
+ *
+ * @param {ts.Node} node - 匿名 function-like。
+ * @param {function(ts.Identifier): string} nameOf - identifier 的比對用名稱。
+ * @returns {string} 錨點文字。
+ */
+function callbackAnchor(node, nameOf) {
+  const parent = node.parent;
+  if (parent && (ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.arguments?.includes(node)) {
+    const literals = parent.arguments.map((argument) => (isConstant(argument) ? textOf(argument) : '_')).join(',');
+    return `${calleeOf(parent, nameOf).key}(${literals})#${parent.arguments.indexOf(node)}`;
+  }
+  return ts.SyntaxKind[parent?.kind] ?? 'root';
+}
+
+/**
  * 抽取檔案中所有 call record。
+ *
+ * 同一個 subject 內的呼叫再依所在的匿名 callback 分組（`slot`）：呼叫從一個 callback 移到另一個
+ * （例如 `jwt.verify` 從 `/admin` 的 handler 移到 `/public`）時，兩邊的計數會不同，產生 CALL_REMOVED /
+ * CALL_ADDED。錨點相同的 callback 依出現順序編號；前面新增錨點不同的 callback（例如另一條路由）不影響編號。
  *
  * @param {ts.SourceFile} sourceFile - source file。
  * @param {string} path - 檔案路徑。
@@ -30,30 +52,43 @@ export function factId(parts) {
  */
 export function extractCalls(sourceFile, path, nameOf) {
   const calls = new Map();
-  const visit = (node) => {
+  const occurrences = new Map();
+  const visit = (node, chain) => {
+    let inner = chain;
+    if (isNamedFunction(node)) {
+      inner = '';
+    } else if (isAnonymousFunction(node)) {
+      const anchor = callbackAnchor(node, nameOf);
+      const counter = `${subjectOf(node, path)}\u001f${chain}\u001f${anchor}`;
+      const occurrence = occurrences.get(counter) ?? 0;
+      occurrences.set(counter, occurrence + 1);
+      inner = `${chain}>${anchor}#${occurrence}`;
+    }
     if (ts.isCallExpression(node) && !ts.isDecorator(node.parent)) {
       const { callee, key } = calleeOf(node, nameOf);
       // 獨立成一個 statement 的呼叫（含 `await f()`）：fact 範圍延伸到 statement 結尾。
       const statement = ts.isExpressionStatement(node.parent)
         ? node.parent
         : (ts.isAwaitExpression(node.parent) && ts.isExpressionStatement(node.parent.parent) ? node.parent.parent : null);
+      const subject = subjectOf(node, path);
       calls.set(node, {
         node,
         callee,
         key,
-        subject: subjectOf(node, path),
+        subject,
+        slot: `${subject}\u001f${chain}`,
         hasCallback: (node.arguments ?? []).some((argument) => containsCallback(argument)),
         range: { startByte: byteRange(node).startByte, endByte: byteRange(statement ?? node).endByte },
       });
     }
-    ts.forEachChild(node, visit);
+    ts.forEachChild(node, (child) => visit(child, inner));
   };
-  visit(sourceFile);
+  visit(sourceFile, '');
   return calls;
 }
 
 /**
- * 依 subject + callee key 分組，配對後多出來的呼叫成為 CALL_REMOVED / CALL_ADDED。
+ * 依 slot（subject + 所在的匿名 callback）+ callee key 分組，配對後多出來的呼叫成為 CALL_REMOVED / CALL_ADDED。
  *
  * @param {string} path - 檔案路徑。
  * @param {Map<ts.Node, object>} beforeCalls - before 的 call records。
@@ -64,7 +99,7 @@ export function buildCallFacts(path, beforeCalls, afterCalls) {
   const group = (calls) => {
     const groups = new Map();
     for (const call of [...calls.values()].sort((left, right) => left.range.startByte - right.range.startByte)) {
-      const key = `${call.subject}|${call.key}`;
+      const key = `${call.slot}|${call.key}`;
       groups.set(key, [...(groups.get(key) ?? []), call]);
     }
     return groups;
@@ -73,7 +108,7 @@ export function buildCallFacts(path, beforeCalls, afterCalls) {
   const after = group(afterCalls);
   const facts = [];
   const fact = (kind, side, call, index) => facts.push({
-    budgetKey: `${kind}\u001f${call.subject}\u001f${call.key}`,
+    budgetKey: `${kind}\u001f${call.slot}\u001f${call.key}`,
     id: factId([kind, path, call.subject, `${call.callee.text}:${index}`, call.range.startByte, call.range.endByte]),
     kind,
     subject: call.subject,

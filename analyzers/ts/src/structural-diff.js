@@ -273,7 +273,7 @@ export class StructuralDiff {
    */
   consume(kind, call) {
     if (!call) return false;
-    const key = `${kind}\u001f${call.subject}\u001f${call.key}`;
+    const key = `${kind}\u001f${call.slot}\u001f${call.key}`;
     if ((this.budget.get(key) ?? 0) < 1) return false;
     this.budget.set(key, this.budget.get(key) - 1);
     this.consumed += 1;
@@ -288,8 +288,8 @@ export class StructuralDiff {
    * @returns {boolean} 是否消耗成功。
    */
   consumeReplacement(beforeCall, afterCall) {
-    const removed = `CALL_REMOVED\u001f${beforeCall.subject}\u001f${beforeCall.key}`;
-    const added = `CALL_ADDED\u001f${afterCall.subject}\u001f${afterCall.key}`;
+    const removed = `CALL_REMOVED\u001f${beforeCall.slot}\u001f${beforeCall.key}`;
+    const added = `CALL_ADDED\u001f${afterCall.slot}\u001f${afterCall.key}`;
     if ((this.budget.get(removed) ?? 0) < 1 || (this.budget.get(added) ?? 0) < 1) return false;
     return this.consume('CALL_REMOVED', beforeCall) && this.consume('CALL_ADDED', afterCall);
   }

@@ -18,6 +18,48 @@ const DIRECTIVE = new RegExp([
   String.raw`^///\s*<(?:reference|amd-module|amd-dependency)\b`,
 ].join('|'));
 
+const JS_FILE = /\.(?:[mc]?js|jsx)$/i;
+/** JS 檔中 TypeScript（`checkJs` / `// @ts-check`）會讀取的 JSDoc 型別標籤。TS 檔不使用 JSDoc 型別。 */
+const JSDOC_TYPE_TAGS = new Set([
+  'type', 'param', 'arg', 'argument', 'returns', 'return', 'typedef', 'template', 'satisfies', 'implements', 'extends',
+  'augments', 'enum', 'callback', 'property', 'prop', 'this', 'overload', 'import', 'readonly', 'private', 'protected', 'public',
+]);
+const NAMED_JSDOC_TAGS = new Set(['param', 'arg', 'argument', 'property', 'prop', 'template', 'typedef', 'callback']);
+
+/**
+ * JSDoc 中帶型別的標籤（`@param {number} x - 說明` → `@param{number} x`）；說明文字不列入，所以只改說明不算變更。
+ *
+ * @param {string} comment - 正規化後的註解。
+ * @returns {string|null} 標籤摘要；不是 JSDoc 或沒有型別標籤時為 null。
+ */
+export function jsdocTypes(comment) {
+  if (!comment.startsWith('/**')) return null;
+  const tags = [];
+  const pattern = /@([A-Za-z]+)/g;
+  for (let match = pattern.exec(comment); match; match = pattern.exec(comment)) {
+    if (!JSDOC_TYPE_TAGS.has(match[1])) continue;
+    let rest = comment.slice(pattern.lastIndex).trimStart();
+    let type = '';
+    if (rest.startsWith('{')) {
+      let depth = 0;
+      let end = rest.length - 1;
+      for (let index = 0; index < rest.length; index += 1) {
+        if (rest[index] === '{') depth += 1;
+        if (rest[index] === '}') depth -= 1;
+        if (depth === 0) {
+          end = index;
+          break;
+        }
+      }
+      type = rest.slice(0, end + 1);
+      rest = rest.slice(end + 1);
+    }
+    const name = NAMED_JSDOC_TAGS.has(match[1]) ? ` ${/^\s*(\[[^\]]*\]|[\w$.]+)/.exec(rest)?.[1] ?? ''}` : '';
+    tags.push(`@${match[1]}${type}${name}`);
+  }
+  return tags.length > 0 ? tags.join(';') : null;
+}
+
 /**
  * 逐一走訪所有 token（含標點）。
  *
@@ -41,6 +83,7 @@ function forEachToken(node, sourceFile, visit) {
  * 以 parser 產生的 token 取得註解（template、regex、JSX 文字中的 `//` 不會被誤認為註解）。
  * 用「下一個 token」近似註解作用的位置：同一個指示移到另一個 token（包括文字相同的另一個 token）前面時
  * 會被視為不同。前面新增或刪除同樣文字的 token 也會讓編號改變，這時寧可多產生 fact。
+ * JS 檔中帶型別標籤的 JSDoc 也列入（key 只含標籤與型別，見 `jsdocTypes()`）。
  *
  * @param {ts.SourceFile} sourceFile - source file。
  * @returns {Array<{key: string, comment: string, token: string, node: ts.Node, pos: number, end: number}>} 指示註解。
@@ -52,6 +95,7 @@ export function directiveComments(sourceFile) {
   const shebang = ts.getShebang(text);
   if (shebang) directives.push({ key: `${shebang}@<shebang>`, comment: shebang, token: '<shebang>', node: sourceFile, pos: 0, end: shebang.length });
   const occurrences = new Map();
+  const javascript = JS_FILE.test(sourceFile.fileName);
   forEachToken(sourceFile, sourceFile, (token) => {
     // JSX 子節點的文字不是 trivia（`<p>// x</p>` 的 `// x` 是要顯示的文字）。
     if (token.kind === ts.SyntaxKind.JsxText) return;
@@ -65,8 +109,10 @@ export function directiveComments(sourceFile) {
       if (seen.has(range.pos)) continue;
       seen.add(range.pos);
       const comment = text.slice(range.pos, range.end).replace(/\s+/g, ' ').trim();
-      if (!DIRECTIVE.test(comment)) continue;
-      directives.push({ key: `${comment}@${tokenText}#${occurrence}`, comment, token: tokenText, node: token, pos: range.pos, end: range.end });
+      const types = javascript ? jsdocTypes(comment) : null;
+      if (!DIRECTIVE.test(comment) && types === null) continue;
+      const content = DIRECTIVE.test(comment) ? comment : `/** ${types} */`;
+      directives.push({ key: `${content}@${tokenText}#${occurrence}`, comment, token: tokenText, node: token, pos: range.pos, end: range.end });
     }
   });
   return directives;
