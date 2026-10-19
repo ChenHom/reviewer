@@ -1,6 +1,6 @@
 # 三層審查架構（機械 → AI → 人工）設計
 
-狀態：§8 的步驟 1–6 與 8 已實作（實作中遇到的問題與處理方式見 [實作紀錄](../notes/2026-10-19-three-tier-implementation-notes.md)），步驟 7、9 尚未實作（使用者決定步驟 7 最後處理）。本文把「三層審查」藍圖對照目前的程式碼，標出哪些已存在、哪些要新增，以及新增時必須守住的 safety invariant。現有能力以 [README](../../../README.md) 與 [Current State](../../current-state.md) 為準。
+狀態：§8 的步驟 1–6、8、9 已實作（實作中遇到的問題與處理方式見 [實作紀錄](../notes/2026-10-19-three-tier-implementation-notes.md)），步驟 7（GitHub 整合）尚未實作（使用者決定最後處理）。本文把「三層審查」藍圖對照目前的程式碼，標出哪些已存在、哪些要新增，以及新增時必須守住的 safety invariant。現有能力以 [README](../../../README.md) 與 [Current State](../../current-state.md) 為準。
 
 已定案的決策：
 

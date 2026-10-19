@@ -73,7 +73,7 @@
 7. **字串與 template literal 不互相正規化**：`'a'` 與 `` `a` `` 在 tagged template 中語意不同，第 1 階段一律視為不同。
 8. **real-repo evaluation 沒有 TS 版本**：產生器（`evaluation/real-repo/generate.php`）是 PHP 專用，TS 需要另寫，留待之後。
 9. **執行環境**：本機（Node 22）與 CI（Node 24）都會跑 TS analyzer；TS analyzer 用執行 CLI 的同一個 Node（`process.execPath`）。
-10. **測試時觀察到一次不穩定**：`tests/evaluation/real-repo-cli.test.js` 的「收到 SIGTERM 時移除 snapshot」在整個 suite 平行執行時失敗一次，單獨執行與重跑都通過。這個測試依賴時序，與本次變更無關；新增的 TS 測試讓 suite 的負載變高，可能更容易觸發。
+10. **測試時觀察到一次不穩定**：`tests/evaluation/real-repo-cli.test.js` 的「收到 SIGTERM 時移除 snapshot」在整個 suite 平行執行時失敗一次，單獨執行與重跑都通過。這個測試依賴時序，與本次變更無關；新增的 TS 測試讓 suite 的負載變高，可能更容易觸發。步驟 8 時同一個檔案的「prepareBaseline 從 git ref 建立可執行的 snapshot」也在整個 suite 平行執行時失敗一次，單獨執行與重跑都通過。
 
 ## 步驟 6：Finding 指紋與局部 AST hash
 
@@ -135,6 +135,20 @@
 12. **模型與參數**：模型預設 `claude-opus-5-5`，effort 預設 `high`（明確設定；這個模型 thinking 一律開啟，不傳 `thinking`）；`max_tokens` 32,000 並以 streaming 取得完整回應。預設啟用 server-side fallback（`fallbacks: "default"`），由備援模型回答的檔案在報表中標示；這個參數只在 Claude API 可用。
 13. **輸出語言固定為繁體中文**（寫在 system prompt），目前不能設定。
 14. **沒有 `--ai` 時**，`human.required` 把 `AI_TRACK` 也算進去（沒有人看過）。因此 `--fail-on-human` 不加 `--ai` 時等同 `--fail-on-review`。
+
+## 步驟 9b：Retro
+
+**做了什麼**：`bin/retro.js` 與 `src/retro/`（`metrics.js`、`proposals.js`、`format.js`），文件 `docs/retro.md`。`src/review/review.js` 拆出 `analysisContext()` 與 `reviewSources()`（AI 修正的檢查與 mutation case 草案的驗證共用）；`src/ai/client.js` 的 `review()` 可以指定輸出的 schema 與驗證。
+
+**問題與處理**：
+
+1. **輸入來源**：設計 §7 寫「透過 API 讀取各 PR 的狀態留言、ack 理由與人工 review comment」，這些要等步驟 7 的 GitHub 整合。處理：retro 讀 `bin/review.js --out` 的 JSON 報表（CI 可以存成 artifact），人工留言以 JSON Lines 檔案輸入（格式見 `docs/retro.md`，之後由步驟 7 從 GitHub 匯出）。豁免率、REOPENED 次數、宣告與偵測不一致列為不可用。
+2. **「以 PR 提出」**：開 PR 屬於步驟 7。處理：retro 只輸出草案（`retro.md`、`reviewer.proposed.json`、`mutation-drafts.json`），不修改任何檔案。
+3. **規則必須先有通過的 mutation case**（設計 §7 第 2 點）：retro 以「加入建議規則後的設定」對每個草案執行同一套機械審查，標示是否產生預期的原因代碼；但「搬進 `cases.json` 並通過 `npm run eval:mutations`」仍由人執行。
+4. **AI 提出的規則以字串（JSON 文字）表示**：structured outputs 的 schema 不方便表達每個 section 不同形狀的物件；收到後 parse 並以 `parseProjectConfig()` 逐條驗證，無效的不採用。
+5. **「從未被引用」只看 AI 疑慮的 `standard` 欄位**：AI 沒有引用不代表規範沒用（例如 AI 因為規範而回答 PASS），報告中只列為精簡的候選。
+6. **`.yaml` → `.json`**：設計 §7 寫 `.reviewer.yaml`，實作沿用步驟 4 決定的 `.reviewer.json`。
+7. **同一個 head 的報表只算一次**（重跑時保留最後一份）；報表沒有 PR 編號，以 repository + head SHA 區分。
 
 ## 跨步驟的注意事項
 

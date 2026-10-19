@@ -39,10 +39,11 @@ const TAGS = ['diff', 'file', 'machine_review', 'coding_standards'];
  * 跳脫內容中的標籤結尾（`</diff>` → `<\/diff>`），讓內容無法提前關閉標籤。
  *
  * @param {string} text - 內容。
+ * @param {string[]} [tags] - 要跳脫的標籤名稱（預設為檔案審查使用的標籤）。
  * @returns {string} 跳脫後的內容。
  */
-export function escapeTags(text) {
-  return String(text).replace(new RegExp(`<(/?)(${TAGS.join('|')})\\b`, 'gi'), (match, slash, name) => `<${slash ? '\\/' : ''}${name}\u200b`);
+export function escapeTags(text, tags = TAGS) {
+  return String(text).replace(new RegExp(`<(/?)(${tags.join('|')})\\b`, 'gi'), (match, slash, name) => `<${slash ? '\\/' : ''}${name}\u200b`);
 }
 
 /**

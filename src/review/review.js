@@ -411,22 +411,21 @@ export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs
   // 設定無效時以預設值分析（仍列出 fact），但每個檔案都是 FULL + POLICY_CONFIG_INVALID。
   const policy = createProjectPolicy(config.parsed);
   const context = {
+    ...analysisContext({
+      policy,
+      invalid: config.status === 'invalid',
+      adapterOptions,
+      timeoutMs,
+      identity: {
+        repository: basename(root),
+        baseSha: forkPoint,
+        headSha,
+        policyId: 'pr-review',
+        policyVersion: '1',
+        runnerVersion: '1',
+      },
+    }),
     repo: root,
-    project: { policy, invalid: config.status === 'invalid' },
-    languages: LANGUAGES.map((language) => ({
-      ...language,
-      adapter: language.createAdapter(adapterOptions[language.id]),
-      interpreters: policy.interpretersFor(language),
-    })),
-    timeoutMs,
-    identity: {
-      repository: basename(root),
-      baseSha: forkPoint,
-      headSha,
-      policyId: 'pr-review',
-      policyVersion: '1',
-      runnerVersion: '1',
-    },
   };
   // --ai-apply 會改寫 worktree：worktree 必須正好是 head 且沒有未 commit 的變更。
   if (ai?.apply) {
@@ -446,7 +445,7 @@ export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs
       mergeBase: forkPoint,
       headSha,
       describeReason: reasonWithHint,
-      checkFix: (path, beforeSource, afterSource) => checkFix(context, routingOptions, path, beforeSource, afterSource),
+      checkFix: (path, beforeSource, afterSource) => reviewSources(context, path, beforeSource, afterSource),
     });
     files = result.files;
     aiSummary = result.summary;
@@ -469,19 +468,42 @@ export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs
 }
 
 /**
- * AI 修正後的內容再交給機械審查（與 PR 的檔案相同的 adapter、interpreters 與專案設定），回傳路由。
- * 不支援的檔案類型無法檢查，視為 `AI_TRACK`。
+ * 機械審查的共用設定：每個語言的 adapter 與 interpreters、專案設定與 identity。
  *
- * @param {object} context - analysis context。
- * @param {object} routingOptions - 路由設定。
- * @param {string} path - 檔案路徑。
- * @param {string} beforeSource - head 內容。
- * @param {string} afterSource - 修正後內容。
- * @returns {Promise<{track: string}>} 路由。
+ * @param {object} options - 選項。
+ * @param {object} options.policy - createProjectPolicy() 的結果。
+ * @param {boolean} [options.invalid=false] - 專案設定是否無效。
+ * @param {object} [options.adapterOptions={}] - 各語言 adapter 的選項。
+ * @param {number} [options.timeoutMs=30000] - 單一檔案的 analyzer deadline。
+ * @param {object} options.identity - AnalysisIdentity。
+ * @returns {object} analysis context。
  */
-async function checkFix(context, routingOptions, path, beforeSource, afterSource) {
+export function analysisContext({ policy, invalid = false, adapterOptions = {}, timeoutMs = 30_000, identity }) {
+  return {
+    project: { policy, invalid },
+    languages: LANGUAGES.map((language) => ({
+      ...language,
+      adapter: language.createAdapter(adapterOptions[language.id]),
+      interpreters: policy.interpretersFor(language),
+    })),
+    timeoutMs,
+    identity,
+  };
+}
+
+/**
+ * 以機械審查判斷一組 before / after 原始碼（用於 AI 修正的檢查與 retro 的 mutation case 草案），
+ * 回傳決策與路由。不支援的檔案類型無法分析，視為 `AI_TRACK`。
+ *
+ * @param {object} context - analysisContext() 的結果。
+ * @param {string} path - 檔案路徑（決定語言）。
+ * @param {string} beforeSource - before。
+ * @param {string} afterSource - after。
+ * @returns {Promise<{decision: string, fallback: string|null, reasons: string[], track: string, oneWayDoors: string[]}>} 結果。
+ */
+export async function reviewSources(context, path, beforeSource, afterSource) {
   const language = languageFor(path, context.languages);
-  if (!language) return { track: TRACK.AI_TRACK, oneWayDoors: [] };
+  if (!language) return { decision: HUMAN_REVIEW, fallback: 'FULL', reasons: ['UNSUPPORTED_FILE_TYPE'], track: TRACK.AI_TRACK, oneWayDoors: [] };
   const analysis = await analyzeFile({ ...context, ...language }, path, beforeSource, afterSource);
   const selected = analysis.decision.status === NOT_SELECTED;
   const file = applyProjectPolicy({
@@ -490,5 +512,10 @@ async function checkFix(context, routingOptions, path, beforeSource, afterSource
     fallback: selected ? null : (analysis.decision.fallback ?? 'FULL'),
     reasons: analysis.decision.reasons ?? [],
   }, context.project);
-  return routeFile(file, routingOptions);
+  return {
+    decision: file.decision,
+    fallback: file.fallback,
+    reasons: file.reasons,
+    ...routeFile(file, { oneWayDoors: context.project.policy.oneWayDoors }),
+  };
 }

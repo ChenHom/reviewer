@@ -65,9 +65,10 @@ function usageOf(usage) {
  * 解讀 API 回應：拒絕、截斷、沒有文字、JSON 或格式錯誤都是失敗。
  *
  * @param {object} response - BetaMessage。
+ * @param {function(unknown): {valid: boolean, errors: string[]}} [validate=validateAiOutput] - 輸出驗證。
  * @returns {{ok: true, output: object}|{ok: false, error: string}} 結果。
  */
-export function parseResponse(response) {
+export function parseResponse(response, validate = validateAiOutput) {
   if (response?.stop_reason === 'refusal') {
     const category = response.stop_details?.category;
     return { ok: false, error: `AI_REFUSED${category ? `:${category}` : ''}` };
@@ -81,7 +82,7 @@ export function parseResponse(response) {
   } catch {
     return { ok: false, error: 'AI_OUTPUT_NOT_JSON' };
   }
-  const validation = validateAiOutput(output);
+  const validation = validate(output);
   return validation.valid ? { ok: true, output } : { ok: false, error: `AI_OUTPUT_INVALID:${validation.errors.join(',')}` };
 }
 
@@ -113,12 +114,16 @@ export async function createAnthropicReviewer({ model = DEFAULT_MODEL, effort = 
     model,
     effort,
     /**
-     * 審查一個檔案。
+     * 送出一個請求（預設為檔案審查的輸出格式；retro 以 `schema` / `validate` 指定自己的格式）。
      *
-     * @param {{system: object[], message: string}} request - prompt。
+     * @param {object} request - prompt。
+     * @param {object[]} request.system - system content blocks。
+     * @param {string} request.message - user message。
+     * @param {object} [request.schema=AI_OUTPUT_SCHEMA] - 輸出的 JSON schema。
+     * @param {function(unknown): {valid: boolean, errors: string[]}} [request.validate=validateAiOutput] - 輸出驗證。
      * @returns {Promise<object>} `{ ok, output?, error?, model, fallback, usage }`。
      */
-    async review({ system, message }) {
+    async review({ system, message, schema = AI_OUTPUT_SCHEMA, validate = validateAiOutput }) {
       let response;
       try {
         response = await api.beta.messages.stream({
@@ -126,7 +131,7 @@ export async function createAnthropicReviewer({ model = DEFAULT_MODEL, effort = 
           max_tokens: MAX_TOKENS,
           betas: [FALLBACK_BETA],
           fallbacks: 'default',
-          output_config: { effort, format: { type: 'json_schema', schema: AI_OUTPUT_SCHEMA } },
+          output_config: { effort, format: { type: 'json_schema', schema } },
           system,
           messages: [{ role: 'user', content: message }],
         }).finalMessage();
@@ -134,7 +139,7 @@ export async function createAnthropicReviewer({ model = DEFAULT_MODEL, effort = 
         return { ok: false, error: errorCode(module, error), model, fallback: false, usage: usageOf(undefined) };
       }
       const fallback = (response?.usage?.iterations ?? []).some((entry) => entry?.type === 'fallback_message');
-      return { ...parseResponse(response), model: response?.model ?? model, fallback, usage: usageOf(response?.usage) };
+      return { ...parseResponse(response, validate), model: response?.model ?? model, fallback, usage: usageOf(response?.usage) };
     },
   };
 }

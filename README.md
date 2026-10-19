@@ -153,6 +153,7 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
 - Historical PR Evaluation Harness
 - PR review CLI（`bin/review.js`，見 [PR Review CLI](docs/review-cli.md)）
 - 第 2 層 AI 審查（`--ai`，`src/ai/`）：Anthropic Messages API（`@anthropic-ai/sdk`，只在啟用時載入）、structured outputs、server-side fallback、prompt cache；AI 判斷需要人工的項目成為 `kind: AI` 的 finding
+- Retro（`bin/retro.js`，見 [Retro](docs/retro.md)）：彙整一段期間的 review 報表（路由比例、單向門、FULL 原因、沒有規則的 fact、AI 結果、規範引用），`--ai` 時提出 `codingstandards.md` 增刪、`.reviewer.json` 規則（以設定驗證器檢查）與 mutation case 草案（以機械審查確認）
 - provider-neutral GitHub sink boundary
 
 ## 目前驗證基準

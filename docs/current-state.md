@@ -251,6 +251,7 @@ CI（`.github/workflows/review-reduction-safety.yml`，PHP 8.4）在 `npm run te
 - Interpreter 依層拆成語言層（`src/interpreters/core.js`）、框架 preset（`php-laravel`）與業務 preset（`payments`）；CLI 依副檔名選擇語言。
 - 路由：核心流程是機械審查 → AI 審查剩下的 → AI 審查後需要人工的才交給人工。需要 review 的檔案都交給 AI；命中單向門的（`ESCALATED`）AI 不能放行，之後一律人工確認；其他（`AI_TRACK`，包括 `FULL`）由 AI 判斷。`--fail-on-escalation`。
 - 第 2 層 AI 審查（`--ai`）：逐檔交給 Claude（structured outputs、server-side fallback、merge base 的 `codingstandards.md` 放在 cached system prompt），AI 判斷需要人工的項目成為 `kind: AI` 的 finding；AI 失敗一律交給人工；`--ai-apply` 把通過機械審查的小修正寫入 worktree；`--fail-on-human`。
+- Retro（`bin/retro.js`）：彙整 review 報表的 deterministic 指標；`--ai` 時提出規範增刪、`.reviewer.json` 規則與 mutation case 草案，規則以設定驗證器檢查、草案以機械審查確認。
 - 專案設定 `.reviewer.json`（從 merge base 讀取，只能新增攔截），見 [專案設定](project-config.md)。
 - TypeScript / JavaScript adapter：AST 等價判定（第 1 階段），以及結構比對輸出與 PHP 相同的 facts、decorator 與指示註解的 facts、scope hash（第 2、3 階段）；`node` preset（transaction、row lock、授權、middleware、token 驗證、validation、資料刪除），`.reviewer.json` 的規則也適用於 TS。
 - 二次 review 的輸入：每個 fact 的 scope hash（所屬 method 的 canonical AST hash）與 finding 指紋（`files[].findings`）。狀態機與 GitHub 整合（設計的步驟 7）尚未實作。
