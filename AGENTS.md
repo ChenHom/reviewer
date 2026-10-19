@@ -46,7 +46,7 @@ Reviewer 是 deterministic、fail-closed 的 Review Decision Engine（Node ESM�
 ## 單一來源與文件同步
 
 - CLI 選項、exit code、原因代碼 → [docs/review-cli.md](docs/review-cli.md)；其他文件只摘要並連過去。
-- 預設單向門 → `src/routing.js` 的 `DEFAULT_ONE_WAY_DOORS`；docs/review-cli.md「路由」有完整清單，[docs/project-config.md](docs/project-config.md)「單向門」列出規則產生的代碼。
+- 預設單向門 → `src/routing.js` 的 `DEFAULT_ONE_WAY_DOORS`；預設受保護路徑 → `src/config/project-config.js` 的 `DEFAULT_PROTECTED_PATHS`；docs/review-cli.md「路由」有完整清單，[docs/project-config.md](docs/project-config.md)「單向門」列出規則產生的代碼。
 - 驗證數字 → README「目前驗證基準」；其他文件連過去，不複製數字。
 - 沒有測試檢查文件與程式是否一致，要手動同步：旗標變更 → `bin/*.js` 的 `USAGE` 與 docs/review-cli.md（retro 為 [docs/retro.md](docs/retro.md)）；新增原因代碼 → docs/review-cli.md「原因代碼」，要顯示說明時加到 `src/review/reasons.js`；`.reviewer.json` schema → docs/project-config.md；新增 fact 或 interpreter → README「已實作」；功能面的變化 → docs/features.md。
 

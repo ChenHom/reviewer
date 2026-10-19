@@ -265,7 +265,7 @@ diff、檔案內容與 `codingstandards.md` 都來自 PR。它們放在 `<diff>`
 |---|---|
 | `POLICY_CONFIG_INVALID` | merge base 的 `.reviewer.json` 無效。每個檔案都是 `FULL`，錯誤細節見 JSON 報表的 `config.errors` |
 | `POLICY_FILE_CHANGED` | PR 修改了 `.reviewer.json` 或 `codingstandards.md`（單向門） |
-| `PROTECTED_PATH` | 檔案符合 `rules.protectedPaths`（單向門）。原本不需要 review 的檔案變成 `TARGETED` |
+| `PROTECTED_PATH` | 檔案符合預設受保護路徑（`.github/workflows/**`、`.github/actions/**`）或 `rules.protectedPaths`（單向門）。原本不需要 review 的檔案變成 `TARGETED` |
 | `SENSITIVE_OPERAND_CHANGED` / `PROTECTED_CALL_REMOVED` / `PROTECTED_ARGUMENT_CHANGED` / `SIDE_EFFECT_CALL_ADDED` | 專案規則命中（單向門），見 [專案設定](project-config.md) |
 
 ### `ANALYZER_ERROR:<訊息>`（`FULL`）

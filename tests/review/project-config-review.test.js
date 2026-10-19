@@ -95,6 +95,32 @@ test('專案設定從 merge base 讀取：敏感運算元、受保護路徑與�
   assert.match(formatReview(report), /PROTECTED_PATH（單向門）/);
 });
 
+test('沒有設定時 CI workflow 與本地 action 仍是受保護路徑：AI 不能放行', async () => {
+  const { repo, base, head } = await repository({
+    '.github/workflows/ci.yml': 'on: push\n',
+    '.github/actions/setup/action.yml': 'runs:\n  using: composite\n',
+    '.github/ISSUE_TEMPLATE/bug.yml': 'name: bug\n',
+  }, {
+    '.github/workflows/ci.yml': 'on: [push, pull_request]\n',
+    '.github/actions/setup/action.yml': 'runs:\n  using: composite\n  steps: []\n',
+    '.github/ISSUE_TEMPLATE/bug.yml': 'name: bug report\n',
+  });
+
+  const report = await reviewRange({ repo, base, head });
+  const byPath = Object.fromEntries(report.files.map((file) => [file.path, file]));
+  assert.equal(report.config.status, 'absent');
+
+  for (const path of ['.github/workflows/ci.yml', '.github/actions/setup/action.yml']) {
+    assert.deepEqual(byPath[path].reasons, ['UNSUPPORTED_FILE_TYPE', 'PROTECTED_PATH'], path);
+    assert.equal(byPath[path].track, 'ESCALATED', path);
+    assert.deepEqual(byPath[path].findings.map(({ blocker }) => blocker), ['PROTECTED_PATH'], path);
+  }
+
+  // .github 底下其他檔案不在預設範圍，照常交給 AI。
+  assert.deepEqual(byPath['.github/ISSUE_TEMPLATE/bug.yml'].reasons, ['UNSUPPORTED_FILE_TYPE']);
+  assert.equal(byPath['.github/ISSUE_TEMPLATE/bug.yml'].track, 'AI_TRACK');
+});
+
 test('設定無效時每個檔案都是 FULL + POLICY_CONFIG_INVALID', async () => {
   const { repo, base, head } = await repository({
     '.reviewer.json': JSON.stringify({ version: 1, rules: { ignoreFacts: ['X'] } }),

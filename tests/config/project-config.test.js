@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { globToRegExp, stringMatcher } from '../../src/config/matchers.js';
-import { POLICY_FILES, createProjectPolicy, parseProjectConfig } from '../../src/config/project-config.js';
+import { DEFAULT_PROTECTED_PATHS, POLICY_FILES, createProjectPolicy, parseProjectConfig } from '../../src/config/project-config.js';
 import { canonicalInterpreterSet } from '../../src/facts/interpreter.js';
 import { PHP_LARAVEL_DOMAIN_INTERPRETERS } from '../../src/interpreters/php-laravel-domain.js';
 import { DEFAULT_ONE_WAY_DOORS } from '../../src/routing.js';
@@ -101,6 +101,14 @@ test('沒有設定時 policy 為預設值', () => {
   assert.deepEqual(policy.oneWayDoors, DEFAULT_ONE_WAY_DOORS);
   assert.equal(policy.isProtectedPath('database/migrations/x.php'), false);
   assert.deepEqual(POLICY_FILES, ['.reviewer.json', 'codingstandards.md']);
+
+  // CI 本身預設受保護：workflow 與 workflow 以 `uses: ./.github/actions/...` 呼叫的本地 action。
+  assert.deepEqual(DEFAULT_PROTECTED_PATHS, ['.github/workflows/**', '.github/actions/**']);
+  assert.equal(policy.isProtectedPath('.github/workflows/ci.yml'), true);
+  assert.equal(policy.isProtectedPath('.github/workflows/nested/deploy.yaml'), true);
+  assert.equal(policy.isProtectedPath('.github/actions/setup/action.yml'), true);
+  assert.equal(policy.isProtectedPath('.github/ISSUE_TEMPLATE/bug.yml'), false);
+  assert.equal(policy.isProtectedPath('docs/.github/workflows/ci.yml'), false);
 });
 
 test('設定的 preset、規則、單向門與路徑都反映在 policy', () => {
@@ -117,6 +125,7 @@ test('設定的 preset、規則、單向門與路徑都反映在 policy', () => 
   assert.ok(DEFAULT_ONE_WAY_DOORS.every((door) => policy.oneWayDoors.includes(door)), '不能移除預設單向門');
   assert.equal(policy.isProtectedPath('config/payment.php'), true);
   assert.equal(policy.isProtectedPath('config/app.php'), false);
+  assert.equal(policy.isProtectedPath('.github/workflows/ci.yml'), true, '專案的 protectedPaths 不能取代預設受保護路徑');
 
   // 只有 protectedPaths 時不加入規則引擎
   const pathsOnly = createProjectPolicy(parseProjectConfig('{"version":1,"rules":{"protectedPaths":["a/**"]}}'));

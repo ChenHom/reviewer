@@ -65,6 +65,7 @@ node bin/review.js --repo /path/to/project --base origin/master --ai --fail-on-h
 - `.reviewer.json`（schema version 1）選擇 preset，並加入業務相關規則：`sensitiveOperands`、`protectedCalls`、`protectedArguments`、`sideEffectCalls`、`protectedPaths`、`oneWayDoors`。`codingstandards.md` 是給 AI 審查層讀的軟性規範。
 - 兩者都從 merge base 讀取，PR 修改它們不影響這次 review，修改本身是單向門 `POLICY_FILE_CHANGED`。
 - 設定只能新增攔截。檔案無效時每個變更檔案都是 `FULL` 加 `POLICY_CONFIG_INVALID`（也是單向門）。
+- CI 本身（`.github/workflows/**`、`.github/actions/**`）不論有沒有設定都是受保護路徑：任何變更（包括排版）都產生 `PROTECTED_PATH` 並成為 `ESCALATED`，AI 不能放行，也不能以 `--ai-apply` 修改。這只是判斷訊號：GitHub 對 `pull_request` 執行的是 PR 版本的 workflow，要防止 PR 直接拿掉 Reviewer 那一步，需要 branch protection 把它設為 required check。
 - 格式與範例見 [專案設定](project-config.md)。
 
 ## AI 審查（`--ai`、`--ai-apply`）
