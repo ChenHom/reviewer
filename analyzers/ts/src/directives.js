@@ -19,10 +19,12 @@ const DIRECTIVE = new RegExp([
 ].join('|'));
 
 const JS_FILE = /\.(?:[mc]?js|jsx)$/i;
-/** JS 檔中 TypeScript（`checkJs` / `// @ts-check`）會讀取的 JSDoc 型別標籤。TS 檔不使用 JSDoc 型別。 */
+/** JS 檔中 TypeScript（`checkJs` / `// @ts-check`）會讀取的 JSDoc 標籤。TS 檔不使用 JSDoc 型別。 */
 const JSDOC_TYPE_TAGS = new Set([
   'type', 'param', 'arg', 'argument', 'returns', 'return', 'typedef', 'template', 'satisfies', 'implements', 'extends',
   'augments', 'enum', 'callback', 'property', 'prop', 'this', 'overload', 'import', 'readonly', 'private', 'protected', 'public',
+  // 沒有型別運算式、但 TypeScript 會依此檢查或推論的標籤。
+  'override', 'constructor', 'class', 'abstract', 'deprecated',
 ]);
 const NAMED_JSDOC_TAGS = new Set(['param', 'arg', 'argument', 'property', 'prop', 'template', 'typedef', 'callback']);
 

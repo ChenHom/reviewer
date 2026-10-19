@@ -26,6 +26,9 @@ final class CallExtractor
     /** @var list<array<string, mixed>> */
     private array $calls = [];
 
+    /** @var array<string, int> subject + 錨點鏈 + 錨點 → 已出現次數（同一錨點的 closure 依出現順序編號） */
+    private array $occurrences = [];
+
     /** @var array<int, int> token position → significant token index */
     private array $significantIndex = [];
 
@@ -62,7 +65,7 @@ final class CallExtractor
         Canonicalizer $hasher,
     ): array {
         $extractor = new self($source, $path, $tokens, $hasher);
-        $extractor->walkList($statements, null, null);
+        $extractor->walkList($statements, null, null, '');
 
         $calls = $extractor->calls;
         usort($calls, static fn (array $left, array $right): int => $left['startByte'] <=> $right['startByte']);
@@ -73,25 +76,39 @@ final class CallExtractor
     /**
      * @param array<mixed> $nodes
      */
-    private function walkList(array $nodes, ?string $class, ?string $function): void
+    private function walkList(array $nodes, ?string $class, ?string $function, string $chain): void
     {
         foreach ($nodes as $node) {
             if ($node instanceof Node) {
-                $this->walk($node, $class, $function);
+                $this->walk($node, $class, $function, $chain);
             } elseif (is_array($node)) {
-                $this->walkList($node, $class, $function);
+                $this->walkList($node, $class, $function, $chain);
             }
         }
     }
 
-    private function walk(Node $node, ?string $class, ?string $function): void
+    /**
+     * `$chain` 是 call 所在的 closure 錨點鏈：同一個 subject 內的 call 再依所在的 closure 分組，
+     * call 從一個 closure 移到另一個（例如驗簽從一條路由移到另一條）時兩邊的計數會不同。
+     *
+     * @param string|null $closureAnchor 這個 node 是 call 的 closure 參數時的錨點（所屬 call 與參數位置）。
+     */
+    private function walk(Node $node, ?string $class, ?string $function, string $chain, ?string $closureAnchor = null): void
     {
         if ($node instanceof Stmt\ClassLike) {
             // 匿名 class 沒有名稱；method subject 只保留 method name。
             $class = $node->name?->toString();
             $function = null;
+            $chain = '';
         } elseif ($node instanceof Stmt\ClassMethod || $node instanceof Stmt\Function_) {
             $function = $node->name->toString();
+            $chain = '';
+        } elseif ($node instanceof Expr\Closure || $node instanceof Expr\ArrowFunction) {
+            $anchor = $closureAnchor ?? 'closure';
+            $counter = $this->subject($class, $function) . "\x1f" . $chain . "\x1f" . $anchor;
+            $occurrence = $this->occurrences[$counter] ?? 0;
+            $this->occurrences[$counter] = $occurrence + 1;
+            $chain .= '>' . $anchor . '#' . $occurrence;
         }
 
         if (
@@ -100,17 +117,60 @@ final class CallExtractor
                 || $node instanceof Expr\StaticCall)
             && $node->name instanceof Identifier
         ) {
-            $this->describeCall($node, $class, $function);
+            $this->describeCall($node, $class, $function, $chain);
         }
 
+        $isCall = $node instanceof Expr\MethodCall || $node instanceof Expr\NullsafeMethodCall
+            || $node instanceof Expr\StaticCall || $node instanceof Expr\FuncCall || $node instanceof Expr\New_;
         foreach ($node->getSubNodeNames() as $name) {
             $child = $node->$name;
-            if ($child instanceof Node) {
-                $this->walk($child, $class, $function);
+            if ($isCall && $name === 'args' && is_array($child)) {
+                $base = $this->anchorBase($node);
+                foreach ($child as $index => $arg) {
+                    if ($arg instanceof Arg && ($arg->value instanceof Expr\Closure || $arg->value instanceof Expr\ArrowFunction)) {
+                        $this->walk($arg->value, $class, $function, $chain, $base . '#' . $index);
+                    } elseif ($arg instanceof Node) {
+                        $this->walk($arg, $class, $function, $chain);
+                    }
+                }
+            } elseif ($child instanceof Node) {
+                $this->walk($child, $class, $function, $chain);
             } elseif (is_array($child)) {
-                $this->walkList($child, $class, $function);
+                $this->walkList($child, $class, $function, $chain);
             }
         }
+    }
+
+    /**
+     * closure 參數的錨點：所屬 call 與它的常數參數（`Route::post('/admin', fn …)` → `Route::post('/admin',_)`）。
+     */
+    private function anchorBase(Expr\MethodCall|Expr\NullsafeMethodCall|Expr\StaticCall|Expr\FuncCall|Expr\New_ $call): string
+    {
+        $methodName = ($call instanceof Expr\MethodCall || $call instanceof Expr\NullsafeMethodCall || $call instanceof Expr\StaticCall)
+            && $call->name instanceof Identifier ? $call->name->toString() : '?';
+        $name = match (true) {
+            $call instanceof Expr\MethodCall, $call instanceof Expr\NullsafeMethodCall
+                => ($this->receiverText($call->var)[2] ?? '') . '->' . $methodName,
+            $call instanceof Expr\StaticCall => ($call->class instanceof Name ? $call->class->toString() : '?') . '::' . $methodName,
+            $call instanceof Expr\FuncCall => $call->name instanceof Name ? $call->name->toString() : '?',
+            default => 'new ' . ($call->class instanceof Name ? $call->class->toString() : '?'),
+        };
+        $constants = [];
+        foreach ($call->args as $arg) {
+            if (!$arg instanceof Arg) {
+                $constants[] = '_';
+                continue;
+            }
+            $value = $arg->value;
+            $constants[] = ($arg->name !== null ? $arg->name->toString() . ':' : '') . match (true) {
+                $value instanceof Node\Scalar\String_ => var_export($value->value, true),
+                $value instanceof Node\Scalar\Int_, $value instanceof Node\Scalar\Float_ => (string) $value->value,
+                $value instanceof Expr\ConstFetch => strtolower($value->name->toString()),
+                default => '_',
+            };
+        }
+
+        return $name . '(' . implode(',', $constants) . ')';
     }
 
     /**
@@ -120,6 +180,7 @@ final class CallExtractor
         Expr\MethodCall|Expr\NullsafeMethodCall|Expr\StaticCall $node,
         ?string $class,
         ?string $function,
+        string $chain,
     ): void {
         $methodName = $node->name->toString();
         $isStatic = $node instanceof Expr\StaticCall;
@@ -170,6 +231,8 @@ final class CallExtractor
             // 配對用 key：receiver 中可改名的區域變數換成 canonical 名稱。
             'calleeKey' => $calleeKey,
             'subject' => $this->subject($class, $function),
+            // 配對用分組：subject + 所在的 closure 錨點鏈。
+            'slot' => $this->subject($class, $function) . "\x1f" . $chain,
             'startByte' => $this->tokens[$startPosition]->pos,
             'endByte' => $callEnd,
             'statementEndByte' => $statementEnd,

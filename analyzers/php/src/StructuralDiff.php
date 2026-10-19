@@ -63,7 +63,7 @@ final class StructuralDiff
         foreach ($callFacts as $fact) {
             $key = self::budgetKey(
                 $fact['kind'],
-                $fact['subject'],
+                $fact['slot'],
                 $fact['calleeKey'],
                 $fact['properties']['argument'] ?? null,
             );
@@ -101,7 +101,7 @@ final class StructuralDiff
 
     private function consume(string $kind, array $call, ?string $argument = null): bool
     {
-        $key = self::budgetKey($kind, $call['subject'], $call['calleeKey'], $argument);
+        $key = self::budgetKey($kind, $call['slot'], $call['calleeKey'], $argument);
         if (($this->budget[$key] ?? 0) < 1) {
             return false;
         }
@@ -117,8 +117,8 @@ final class StructuralDiff
      */
     private function consumeReplacement(array $beforeCall, array $afterCall): bool
     {
-        $removed = self::budgetKey('CALL_REMOVED', $beforeCall['subject'], $beforeCall['calleeKey'], null);
-        $added = self::budgetKey('CALL_ADDED', $afterCall['subject'], $afterCall['calleeKey'], null);
+        $removed = self::budgetKey('CALL_REMOVED', $beforeCall['slot'], $beforeCall['calleeKey'], null);
+        $added = self::budgetKey('CALL_ADDED', $afterCall['slot'], $afterCall['calleeKey'], null);
         if (($this->budget[$removed] ?? 0) < 1 || ($this->budget[$added] ?? 0) < 1) {
             return false;
         }

@@ -549,7 +549,8 @@ export class StructuralDiff {
 
   /**
    * 參數數量改變：一邊的參數是另一邊的子序列（純新增或純移除），且增減的參數不含 callback 時，
-   * 以 CALL_ARGUMENT_REMOVED / CALL_ARGUMENT_ADDED 解釋。
+   * 以 CALL_ARGUMENT_REMOVED / CALL_ARGUMENT_ADDED 解釋。增減的參數含 callback（callback 內可能有任意邏輯）時
+   * 仍輸出這些 fact，讓規則可以判斷（例如路由移除 inline 的認證 middleware），但不視為已解釋。
    *
    * @param {ts.Node[]} beforeArgs - before 的參數。
    * @param {ts.Node[]} afterArgs - after 的參數。
@@ -563,7 +564,6 @@ export class StructuralDiff {
     const removed = beforeArgs.length > afterArgs.length;
     const matched = new Set(pairs.map((pair) => pair[removed ? 0 : 1]));
     const changed = (removed ? beforeArgs : afterArgs).map((arg, index) => [arg, index]).filter(([, index]) => !matched.has(index));
-    if (changed.some(([arg]) => containsCallback(arg))) return false;
     for (const [arg, index] of changed) {
       this.addFact(removed ? 'CALL_ARGUMENT_REMOVED' : 'CALL_ARGUMENT_ADDED', arg, {
         callee,
@@ -572,7 +572,7 @@ export class StructuralDiff {
         changeSide: removed ? 'before' : 'after',
       });
     }
-    return true;
+    return !changed.some(([arg]) => containsCallback(arg));
   }
 
   /**

@@ -85,8 +85,20 @@ test('middleware：路由的 middleware 參數被移除或換掉、app.use / add
     [fn("fastify.get('/x', { preHandler: auth.verify }, h);"), fn("fastify.get('/x', { preHandler: noop() }, h);")],
     [fn("router.post('/refund', requireAuth, refund);"), fn("router.post('/refund', refund, requireAuth);")],
     [fn('app.use(helmet(), rateLimit);'), fn('app.use(rateLimit, helmet());')],
+    // inline callback middleware：callback 本身不比對內容，但被移除的參數仍要產生 fact。
+    [fn("router.post('/refund', (req, res, next) => { if (!req.user) return res.sendStatus(401); next(); }, refund);"), fn("router.post('/refund', refund);")],
+    [fn("router.post('/refund', function (req, res, next) { next(); }, (req, res) => res.send(1));"), fn("router.post('/refund', (req, res) => res.send(1));")],
   ];
   for (const [before, after] of cases) assert.ok(review(before, after).blockers.includes('MIDDLEWARE_GUARD_REMOVED'), after);
+
+  // 移除 callback 參數時檔案仍是 PARTIAL（callback 的內容沒有被解釋）。
+  const inline = analyze({
+    path: 'src/a.ts',
+    beforeSource: fn("router.post('/refund', (req, res, next) => next(), refund);"),
+    afterSource: fn("router.post('/refund', refund);"),
+  });
+  assert.equal(inline.complete, false);
+  assert.deepEqual(inline.facts.map(({ kind, properties }) => `${kind}:${properties.callee.text}`).sort(), ['CALL_ARGUMENT_REMOVED:router.post', 'CALL_REMOVED:next']);
 
   // 路徑字串改變、新增 middleware、HTTP client（axios / api）的參數不是路由 middleware。
   assert.deepEqual(review(fn("router.post('/a', auth, h);"), fn("router.post('/b', auth, h);")).blockers, []);

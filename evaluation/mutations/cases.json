@@ -340,6 +340,22 @@
     ]
   },
   {
+    "id": "MUT-021",
+    "classification": "critical",
+    "fixture": "verify-moved-between-routes",
+    "path": "routes/api.php",
+    "description": "Payment signature verification moves from the notify route closure into the status route closure; the notify route no longer verifies callbacks.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_REMOVED",
+      "CALL_ADDED"
+    ],
+    "expectedReasons": [
+      "SIGNATURE_VERIFICATION_REMOVED"
+    ]
+  },
+  {
     "id": "MUT-TS-001",
     "classification": "critical",
     "fixture": "typescript/transaction-unwrapped",

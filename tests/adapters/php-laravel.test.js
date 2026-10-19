@@ -300,7 +300,7 @@ function wrap(body) {
   return `<?php\n\nclass InlineService\n{\n    public function run($q, $a = 1, $b = 2)\n    {\n${body}\n    }\n}\n`;
 }
 
-test('closure 內的巢狀 call 會被抽出，unwrap transaction 只留下 CALL_REMOVED', async () => {
+test('closure 內的巢狀 call 會被抽出，unwrap transaction 時呼叫移出 closure 也會被報告', async () => {
   const result = await inlineAnalyze(
     wrap('        \\DB::transaction(function () use ($q) {\n            $q->save();\n        });'),
     wrap('        $q->save();'),
@@ -308,9 +308,34 @@ test('closure 內的巢狀 call 會被抽出，unwrap transaction 只留下 CALL
 
   assert.deepEqual(validateAdapterResult(result), { valid: true, errors: [] });
   assert.equal(result.complete, false);
+  // closure 中的呼叫以 closure 為單位配對：移到 closure 外（不再在交易中）是 CALL_REMOVED + CALL_ADDED。
   assert.deepEqual(
     result.facts.map(({ kind, properties }) => [kind, properties.callee?.text]),
-    [['CALL_REMOVED', '\\DB::transaction']],
+    [['CALL_ADDED', '$q->save'], ['CALL_REMOVED', '\\DB::transaction'], ['CALL_REMOVED', '$q->save']],
+  );
+});
+
+test('route closure 各自配對呼叫：呼叫從一個 closure 移到另一個時產生 CALL_REMOVED / CALL_ADDED', async () => {
+  const routes = (admin, health = '') => wrap(`${health}        Route::get('/admin', function ($r) use ($q) {\n${admin}            return 1;\n        });\n        Route::get('/public', function ($r) use ($q) {\n${admin ? '' : '            $q->verifySignature($r);\n'}            return 2;\n        });`);
+  const verify = '            $q->verifySignature($r);\n';
+  const moved = await inlineAnalyze(routes(verify), routes(''));
+  assert.deepEqual(validateAdapterResult(moved), { valid: true, errors: [] });
+  assert.deepEqual(
+    moved.facts.map(({ kind, properties }) => `${kind}:${properties.callee?.text}`).sort(),
+    ['CALL_ADDED:$q->verifySignature', 'CALL_REMOVED:$q->verifySignature'],
+  );
+
+  // 前面新增另一條路由（錨點不同）不會讓既有 closure 中的呼叫被當成移除。
+  const health = "        Route::get('/health', function () {\n            return 0;\n        });\n";
+  const added = await inlineAnalyze(routes(verify), routes(verify, health));
+  assert.ok(!added.facts.some((fact) => fact.kind === 'CALL_REMOVED'), JSON.stringify(added.facts.map(({ kind }) => kind)));
+
+  // 同一個錨點的 closure 依出現順序區分（兩個 `Route::get('/x', …)` 不會合併）。
+  const twice = (first, second) => wrap(`        Route::get('/x', function ($r) use ($q) {\n${first}            return 1;\n        });\n        Route::get('/x', function ($r) use ($q) {\n${second}            return 2;\n        });`);
+  const swapped = await inlineAnalyze(twice(verify, ''), twice('', verify));
+  assert.deepEqual(
+    swapped.facts.map(({ kind, properties }) => `${kind}:${properties.callee?.text}`).sort(),
+    ['CALL_ADDED:$q->verifySignature', 'CALL_REMOVED:$q->verifySignature'],
   );
 });
 

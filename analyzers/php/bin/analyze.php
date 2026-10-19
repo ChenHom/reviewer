@@ -259,7 +259,7 @@ respond([
     'diagnostics' => $complete ? [] : [$reasonCode],
     'facts' => sortedFacts(ScopeHashes::annotate(array_map(
         static function (array $fact): array {
-            unset($fact['calleeKey']);
+            unset($fact['calleeKey'], $fact['slot']);
             return $fact;
         },
         $analysis['facts'],

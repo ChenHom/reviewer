@@ -69,6 +69,9 @@ const cases = [
   ['jsdoc type reformatted in js', 'a.js', `/**\n * @param {{\n *   a: number,\n *   b: string | null\n * }} opts - 選項\n */\n${fn('return opts;', 'opts')}`, `/** @param {{ a: number, b: string|null }} opts - 選項 */\n${fn('return opts;', 'opts')}`, null],
   ['jsdoc template parameters changed in js', 'a.js', `/**\n * @template T, U\n * @param {T} a\n * @param {U} b\n */\n${fn('return a;', 'a, b')}`, `/**\n * @template T, V\n * @param {T} a\n * @param {U} b\n */\n${fn('return a;', 'a, b')}`, ['DIRECTIVE_COMMENT_CHANGED', 'DIRECTIVE_COMMENT_CHANGED']],
   ['jsdoc template spacing in js', 'a.js', `/** @template T,U */\n${fn('return x;')}`, `/** @template T, U */\n${fn('return x;')}`, null],
+  // 沒有型別運算式、但 TypeScript 會依此檢查或推論的標籤。
+  ['jsdoc override added in js', 'a.js', 'export class B extends A {\n  m() {}\n}\n', 'export class B extends A {\n  /** @override */\n  m() {}\n}\n', ['DIRECTIVE_COMMENT_CHANGED']],
+  ['jsdoc constructor removed in js', 'a.js', `/** @constructor */\n${fn('return x;')}`, fn('return x;'), ['DIRECTIVE_COMMENT_CHANGED']],
   ['jsdoc type changed in ts', 'a.ts', `/** @type {number} */\nexport let total = 0;\n`, `/** @type {string} */\nexport let total = 0;\n`, null],
   ['directive unchanged with repeated tokens', 'a.ts', fn('foo(1);\n// @ts-ignore\nfoo(2);'), fn('foo(1);\n  // @ts-ignore\n  foo(2);'), null],
   ['only decorator removed', 'a.ts', 'export class A {\n  @Transactional()\n  m() {}\n}\n', 'export class A {\n  m() {}\n}\n', ['ANNOTATION_REMOVED']],

@@ -111,7 +111,7 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
 - Generic facts：
   - `CALL_ARGUMENT_CHANGED`（named argument；位置參數只在無法被更細 fact 解釋時以位置數字輸出、顯示為 `#index`，且不視為已解釋）
   - `CALL_ARGUMENT_REMOVED` / `CALL_ARGUMENT_ADDED`（參數純移除或純新增：一邊的參數是另一邊的子序列，且增減的參數不含 closure；`argument` 為位置數字或具名參數名稱。同時改了其他參數時維持未解釋）
-  - `CALL_REMOVED` / `CALL_ADDED`（含 closure 內的巢狀 call 與鏈式 call，如 `->lockForUpdate`；receiver 保留完整名稱，如 `$this->adminDB->transaction`）；同一位置換成另一個 method（`->first()` → `->firstOrFail()`）由這兩個 fact 一起解釋
+  - `CALL_REMOVED` / `CALL_ADDED`（含 closure 內的巢狀 call 與鏈式 call，如 `->lockForUpdate`；receiver 保留完整名稱，如 `$this->adminDB->transaction`）；closure 內的呼叫依 closure 各自配對（錨點為傳給哪個呼叫的第幾個參數與該呼叫的常數參數，例如 `Route::get('/admin', …)`），呼叫移到另一個 closure 或移出 closure 時產生這兩個 fact；同一位置換成另一個 method（`->first()` → `->firstOrFail()`）由這兩個 fact 一起解釋
   - fact schema v2：`callee` 與 `container` 是語言中立的結構化欄位，interpreter 只比對結構，不解析 PHP 語法字串。`callee` 為 `{ text, name, receiver, kind, optional }`，例如 `$this->adminDB->transaction` → `name: 'transaction'`、`receiver: ['this', 'adminDB']`、`kind: 'method'`；`\Illuminate\Support\Facades\Gate::authorize` → `receiver: ['Illuminate', 'Support', 'Facades', 'Gate']`、`kind: 'static'`；鏈式 call 的 `receiver` 為 `null`。`container` 為 `{ type, keys, text, … }`，例如 `Route::group#0[middleware]` → `type: 'argument'`、`callee`（`Route::group`）、`argument: 0`、`keys: ['middleware']`。`text` 是原本的文字格式，只供顯示（定義見 `src/facts/structured.js`）
   - `BINARY_OPERATOR_CHANGED`（左右運算元不變，只有運算子改變；帶 container，如 `$g->charge#0`）
   - `GUARD_REMOVED` / `GUARD_ADDED`（body 只有 throw / return / exit 的 if）
@@ -162,15 +162,15 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
 Mutation corpus：
 
 ```
-Total cases                       46（critical 38、safe 8；TS 22 個）
+Total cases                       47（critical 39、safe 8；TS 22 個）
 Critical Recall               100.0%
 False Negative Rate             0.0%
 Critical Direct Fact Coverage  97.4%
-Critical Escalation Rate       78.9%
+Critical Escalation Rate       79.5%
 Safe Reduction Rate           100.0%
-Partial Coverage Rate          14.0%
+Partial Coverage Rate          14.9%
 Analysis Failure Rate           0.0%
-Full Review Fallback Rate      14.0%
+Full Review Fallback Rate      14.9%
 ```
 
 Real-repo evaluation（[說明](evaluation/real-repo/README.md)；兩個真實 PHP 金流專案與一個 Laravel 11 專案、3,093 個檔案，seed 42、rate 0.3，共 12,283 筆：3,093 unchanged、3,648 safe、5,542 risky）。`npm run eval:real-repo -- evaluate --repo <label>=<path> ...` 的摘要輸出：
