@@ -126,7 +126,7 @@ export function applyEdits(source, edits) {
 
 /**
  * 套用修正到 worktree。只用於 `AI_TRACK` 檔案；worktree 的檔案必須與 head 相同，
- * 修正後的內容交給機械審查，命中單向門時不套用。
+ * 修正後的內容交給機械審查，命中單向門或無法完整分析（`FULL`）時不套用。
  *
  * @param {object} context - `{ repo, headSha, checkFix }`。
  * @param {object} file - file result。
@@ -158,6 +158,10 @@ async function applyFix({ repo, headSha, checkFix }, file, fix) {
     return { applied: false, error: 'AI_FIX_CHECK_FAILED' };
   }
   if (check.track === TRACK.ESCALATED) return { applied: false, error: 'AI_FIX_HITS_ONE_WAY_DOOR' };
+  // 支援的語言必須完整分析修正後的內容：無法解析（例如修正造成語法錯誤）、analyzer 失敗或有無法解釋的
+  // 變更（FULL）時不套用。不支援的檔案類型沒有 analyzer，無法檢查，照樣套用。
+  const unchecked = check.reasons.length === 1 && check.reasons[0] === 'UNSUPPORTED_FILE_TYPE';
+  if (check.fallback === 'FULL' && !unchecked) return { applied: false, error: 'AI_FIX_UNVERIFIED' };
   await writeFile(target, edited.source);
   return { applied: true };
 }

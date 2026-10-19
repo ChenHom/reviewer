@@ -130,3 +130,18 @@ test('AI finding：依路由與 AI 狀態產生，綁定整個檔案的內容', 
   ]);
   assert.notEqual(twice[0].id, twice[1].id);
 });
+
+test('設定把帶參數的代碼列為單向門時，finding 與路由一樣以基本代碼比對', () => {
+  const file = {
+    path: 'a.js',
+    track: 'ESCALATED',
+    contentHash: 'git:abc',
+    reasons: ['FACT_UNHANDLED:ts-1', 'ANALYZER_ERROR:spawn php ENOENT'],
+    facts: [{ kind: 'CALL_ADDED', subject: 'f', side: 'head', startLine: 1, endLine: 1, description: '新增呼叫 x', blockers: ['FACT_UNHANDLED:ts-1'], anchor: { callee: null }, scopeHash: 'ts:1' }],
+  };
+  const findings = findingsFor(file, { oneWayDoors: [...DEFAULT_ONE_WAY_DOORS, 'FACT_UNHANDLED', 'ANALYZER_ERROR'] });
+  assert.deepEqual(findings.map(({ kind, blocker, anchor }) => [kind, blocker, anchor]), [
+    ['CALL_ADDED', 'FACT_UNHANDLED:ts-1', { callee: null }],
+    ['FILE', 'ANALYZER_ERROR:spawn php ENOENT', 'ANALYZER_ERROR:spawn php ENOENT'],
+  ]);
+});

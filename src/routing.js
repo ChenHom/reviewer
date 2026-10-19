@@ -54,7 +54,7 @@ export const DEFAULT_ONE_WAY_DOORS = Object.freeze([
  * @param {string} reason - 原因代碼。
  * @returns {string} 基本代碼。
  */
-function baseCode(reason) {
+export function baseCode(reason) {
   return String(reason).split(':')[0];
 }
 

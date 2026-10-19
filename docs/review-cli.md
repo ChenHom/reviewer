@@ -232,8 +232,8 @@ AI 判斷需要人工的項目成為 `kind: "AI"` 的 finding（見「Findings�
 
 - 執行前 worktree 必須正好是 `--head` 而且沒有未 commit 的追蹤檔案變更，否則在呼叫 AI 之前以 `AI_APPLY_WORKTREE_MISMATCH` 結束。
 - 修正是「把 `oldText` 換成 `newText`」的清單；每個 `oldText` 必須在 head 內容中恰好出現一次。
-- 修正後的內容先交給同一套機械審查（同樣的 adapter、interpreters 與專案設定）：命中單向門時不套用（`AI_FIX_HITS_ONE_WAY_DOOR`）。不支援的檔案類型無法檢查，照樣套用。
-- 不套用的其他原因（`ai.fix.error`）：`AI_FIX_EMPTY`、`AI_FIX_EDIT_EMPTY`、`AI_FIX_EDIT_NOT_FOUND`、`AI_FIX_EDIT_NOT_UNIQUE`、`AI_FIX_NO_CHANGE`、`AI_FIX_HAS_HIGH_CONCERN`（同時有 `high` 疑慮）、`AI_FIX_FILE_DELETED`、`AI_FIX_FILE_UNSUPPORTED`（symlink、binary 等）、`AI_FIX_WORKTREE_MISMATCH`、`AI_FIX_CHECK_FAILED`、`AI_FIX_NOT_ALLOWED_ON_ESCALATED`。
+- 修正後的內容先交給同一套機械審查（同樣的 adapter、interpreters 與專案設定）：命中單向門時不套用（`AI_FIX_HITS_ONE_WAY_DOOR`）；支援的語言無法完整分析時（修正造成語法錯誤、analyzer 失敗或有無法解釋的變更，也就是 `FULL`）也不套用（`AI_FIX_UNVERIFIED`）。不支援的檔案類型沒有 analyzer，無法檢查，照樣套用。
+- 不套用的其他原因（`ai.fix.error`）：`AI_FIX_EMPTY`、`AI_FIX_EDIT_EMPTY`、`AI_FIX_EDIT_NOT_FOUND`、`AI_FIX_EDIT_NOT_UNIQUE`、`AI_FIX_NO_CHANGE`、`AI_FIX_HAS_HIGH_CONCERN`（同時有 `high` 疑慮）、`AI_FIX_FILE_DELETED`、`AI_FIX_FILE_UNSUPPORTED`（symlink、binary 等）、`AI_FIX_WORKTREE_MISMATCH`、`AI_FIX_CHECK_FAILED`、`AI_FIX_UNVERIFIED`、`AI_FIX_NOT_ALLOWED_ON_ESCALATED`。
 
 ### Prompt injection
 

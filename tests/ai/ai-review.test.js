@@ -236,16 +236,24 @@ test('--ai-apply：AI_TRACK 的修正通過機械審查才寫入 worktree；命�
     'src/limit.js': 'export const limit = (x) => x < 10;\n',
     'src/orders.ts': 'export async function cancel(prisma: any, id: string) {\n  await prisma.order.update({ where: { id } });\n}\n',
     'src/other.js': 'export const other = (x) => x < 1;\n',
+    'src/broken.js': 'export const broken = (x) => x < 1;\n',
+    'docs/notes.txt': 'helo\n',
   }, {
     'src/limit.js': 'export const limit = (x) => x <= 10;\n',
     'src/orders.ts': 'export async function cancel(prisma: any, id: string) {\n  await prisma.order.update({ where: { id }, data: {} });\n}\n',
     'src/other.js': 'export const other = (x) => x <= 1;\n',
+    'src/broken.js': 'export const broken = (x) => x <= 1;\n',
+    'docs/notes.txt': 'helo world\n',
   });
   const fix = (oldText, newText) => output({ verdict: 'FIX', summary: '修正', fix: { description: '修正', edits: [{ oldText, newText }] } });
   const { reviewer } = fakeReviewer({
     'src/limit.js': fix('x <= 10', 'x < 10'),
     'src/orders.ts': fix('data: {} });', 'data: {} });\n  await prisma.orderItem.deleteMany({ where: { orderId: id } });'),
     'src/other.js': fix('x <= 2', 'x < 2'),
+    // 修正造成語法錯誤：機械審查無法分析修正後的內容，不套用。
+    'src/broken.js': fix('x <= 1;', 'x <= ;'),
+    // 不支援的檔案類型沒有 analyzer，照樣套用。
+    'docs/notes.txt': fix('helo', 'hello'),
   });
   const report = await reviewRange({ repo, base, head: 'HEAD', ai: { reviewer, apply: true } });
   const byPath = Object.fromEntries(report.files.map((file) => [file.path, file]));
@@ -259,9 +267,14 @@ test('--ai-apply：AI_TRACK 的修正通過機械審查才寫入 worktree；命�
   assert.equal(byPath['src/orders.ts'].ai.fix.error, 'AI_FIX_HITS_ONE_WAY_DOOR');
   assert.doesNotMatch(await readFile(join(repo, 'src/orders.ts'), 'utf8'), /deleteMany/);
   assert.equal(byPath['src/other.js'].ai.fix.error, 'AI_FIX_EDIT_NOT_FOUND');
+  assert.equal(byPath['src/broken.js'].ai.status, 'NEEDS_HUMAN');
+  assert.equal(byPath['src/broken.js'].ai.fix.error, 'AI_FIX_UNVERIFIED');
+  assert.equal(await readFile(join(repo, 'src/broken.js'), 'utf8'), 'export const broken = (x) => x <= 1;\n');
+  assert.equal(byPath['docs/notes.txt'].ai.status, 'FIXED');
+  assert.equal(await readFile(join(repo, 'docs/notes.txt'), 'utf8'), 'hello world\n');
   assert.equal(report.ai.apply, true);
-  assert.deepEqual(report.human, { required: true, files: 2, findings: 2, pendingFixes: 1 });
-  assert.match(formatReview(report), /AI 已修正（尚未 commit；commit 後會重新 review）（1）：\n {2}TARGETED src\/limit\.js/);
+  assert.deepEqual(report.human, { required: true, files: 3, findings: 3, pendingFixes: 2 });
+  assert.match(formatReview(report), /AI 已修正（尚未 commit；commit 後會重新 review）（2）：\n {2}FULL {5}docs\/notes\.txt[\s\S]*TARGETED src\/limit\.js/);
 
   // worktree 已被修改：再次執行 --ai-apply 會在呼叫 AI 之前拒絕。
   await assert.rejects(reviewRange({ repo, base, head: 'HEAD', ai: { reviewer, apply: true } }), /AI_APPLY_WORKTREE_MISMATCH/);

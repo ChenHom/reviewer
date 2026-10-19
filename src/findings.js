@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { canonicalizeJsonValue } from './facts/contracts.js';
 import { structuredCallee, structuredContainer } from './facts/structured.js';
-import { TRACK } from './routing.js';
+import { TRACK, baseCode } from './routing.js';
 
 /**
  * 二次 review 的追蹤單位：必須人工確認的項目（finding）。
@@ -122,7 +122,8 @@ export function findingsFor(file, { oneWayDoors }) {
 
   for (const fact of file.facts ?? []) {
     for (const blocker of fact.blockers ?? []) {
-      if (!doors.has(blocker)) continue;
+      // 與路由相同，以基本代碼比對（設定可以把 `FACT_UNHANDLED` 等帶參數的代碼列為單向門）。
+      if (!doors.has(baseCode(blocker))) continue;
       drafts.push({
         subject: fact.subject ?? file.path,
         kind: fact.kind,
@@ -136,7 +137,7 @@ export function findingsFor(file, { oneWayDoors }) {
   }
 
   const factBlockers = new Set((file.facts ?? []).flatMap((fact) => fact.blockers ?? []));
-  const fileReasons = (file.reasons ?? []).filter((reason) => doors.has(reason) && !factBlockers.has(reason));
+  const fileReasons = (file.reasons ?? []).filter((reason) => doors.has(baseCode(reason)) && !factBlockers.has(reason));
   for (const reason of fileReasons) {
     drafts.push({
       subject: file.path,

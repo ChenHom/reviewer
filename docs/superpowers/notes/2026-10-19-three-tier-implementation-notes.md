@@ -161,6 +161,8 @@
 3. **AI 回答 PASS 卻附上修正時被放行**（P1，確認為真）：schema 允許這種組合，原本記為 `PASS`、修正被丟掉，文字報表的「通過」段落也不顯示修正，`--fail-on-human` 會通過。修正：PASS + 非空的 `fix.edits` 照 FIX 處理（有 `--ai-apply` 且通過檢查時套用，否則交給人工並附上修正建議）。
 4. **ESLint 的其他 inline 設定沒有追蹤**（P2，確認為真）：只新增 `/* eslint no-eval: "off" */` 或 `/* global foo */` 時 AST 相同，檔案為 `AUTO_PASS`，但 CI 的 lint 結果會改變。修正：block comment 開頭為 `eslint`、`eslint-env`、`global(s)`、`exported` 時視為指示註解（一般文字提到 eslint 不算）；順便加入同類的 `biome-ignore`、`oxlint-disable` / `enable`、`deno-lint-ignore`。
 5. **CI 偶發失敗的根本原因**（`tests/evaluation/real-repo-cli.test.js` 的「prepareBaseline 從 git ref 建立可執行的 snapshot」，`ERR_STREAM_PREMATURE_CLOSE`）：`prepareBaseline()` 以 `stream.pipeline(gitArchive.stdout, tar.stdin)` 轉接。tar 讀完 archive 就成功結束，Node 隨即 destroy tar 的 stdin；若這時 git 那端的 EOF 還沒送到 Node，pipeline 會把成功的解壓縮誤判為 premature close。本機以 8 個並行重現 200 次中 4 次（git 與 tar 都 exit 0）。這段程式碼在 master 上就有，這個 PR 讓 test suite 的負載變高而更容易觸發。修正：tar 直接以 `git archive` 的 stdout 作為 stdin（OS 層的 pipe，不經過 Node 的 stream），父行程關閉自己的讀取端（tar 提早失敗時 git 會收到 EPIPE，不會卡住）；同樣的壓力測試 400 次 0 失敗。步驟 5 第 10 點記錄的不穩定（同一個檔案）也可能是同一類時序問題，之後若再出現請另外追查。
+6. **AI 的修正造成語法錯誤時仍被套用**（P1，確認為真）：修正後的內容無法解析時，機械審查的結果是 `FULL`（`COV-TS-001:TS_PARSE_ERROR`）而不是單向門，原本只擋 `ESCALATED`，壞掉的內容被寫入 worktree 並記為 `FIXED`。修正：支援的語言必須完整分析修正後的內容（不是 `FULL`）才套用，否則為 `AI_FIX_UNVERIFIED`；不支援的檔案類型沒有 analyzer，維持照樣套用。代價是 analyzer 無法解釋的合理修正也不會自動套用（變成建議，交給人工）。
+7. **帶參數的單向門代碼沒有 finding**（P2，確認為真）：路由以基本代碼比對（`FACT_UNHANDLED:ts-1` → `FACT_UNHANDLED`），finding 卻以完整字串比對；專案把 `FACT_UNHANDLED`、`ANALYZER_ERROR` 等列為單向門時，檔案是 `ESCALATED` 但沒有任何 finding。修正：`src/routing.js` 匯出 `baseCode()`，finding 以同樣的規則比對。
 
 ## 跨步驟的注意事項
 
