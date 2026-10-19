@@ -127,6 +127,19 @@ test('retro 指標：路由比例、單向門、FULL 原因、沒有規則的 fa
   assert.doesNotMatch(markdown, /## 建議/);
 });
 
+test('沒有觸發的單向門包含 protectedArguments 自訂的 blocker；觸發的代碼不被截斷', () => {
+  const config = parseProjectConfig(JSON.stringify({ version: 1, rules: { protectedArguments: [{ argument: 'amount', blocker: 'AMOUNT_CHANGED' }, { argument: 'key', blocker: 'KEY_CHANGED' }] } }));
+  const triggered = file('a.php', 'ESCALATED', { reasons: ['KEY_CHANGED'], oneWayDoors: ['KEY_CHANGED'] });
+  const metrics = computeRetroMetrics([report('d4', [triggered])], { config });
+  assert.ok(metrics.neverTriggered.includes('AMOUNT_CHANGED'));
+  assert.ok(!metrics.neverTriggered.includes('KEY_CHANGED'));
+  assert.deepEqual(metrics.oneWayDoors, [{ code: 'KEY_CHANGED', count: 1 }]);
+
+  const many = Array.from({ length: 30 }, (_, index) => `CODE_${index}`);
+  const wide = computeRetroMetrics([report('e5', [file('b.php', 'ESCALATED', { oneWayDoors: many })])]);
+  assert.equal(wide.oneWayDoors.length, 30);
+});
+
 test('沒有 AI、規範與留言時的指標與報告', () => {
   const metrics = computeRetroMetrics([report('c3', [file('a.php', 'AUTO_PASS')])]);
   assert.equal(metrics.ai, null);

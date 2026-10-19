@@ -167,6 +167,8 @@
 9. **呼叫在匿名 callback 之間移動時沒有 fact**（P1，確認為真）：call 的配對以 subject + callee 分組，同一個具名 function 內的所有匿名 callback 共用一組。`jwt.verify` 從 `/admin` 的 handler 移到 `/public` 的 handler 時兩邊各一次，沒有 `CALL_REMOVED`，結構比對也無法解釋 → `FULL` / `AI_TRACK`，沒有 `SIGNATURE_VERIFICATION_REMOVED`。修正：分組再加上匿名 callback 的錨點（傳給哪個呼叫的第幾個參數、該呼叫的常數參數，例如路由路徑；錨點相同時依出現順序編號）。在前面新增錨點不同的 callback（例如另一條路由）不影響既有的分組；改變路由路徑或測試名稱等常數參數會讓其中的呼叫被當成移除 + 新增（寧可多報）。新增 MUT-TS-018。TS adapter 版本 `0.4.0`。
    - **PHP analyzer 有同樣的限制**（closure 內的呼叫以所屬 method 配對），這次沒有修改；記為之後的工作。
 10. **JS 檔中帶型別的 JSDoc 沒有追蹤**（P2，確認為真）：開啟 checkJs / `// @ts-check` 時，`/** @type {number} */` 改成 `{string}` 會改變型別檢查結果，但註解不在 AST 中 → `AUTO_PASS`。這與 TS 的型別註記一律不視為等價的原則不一致。修正：JS 檔中帶型別標籤（`@type`、`@param`、`@returns`、`@typedef`、`@template` 等）的 JSDoc 列入指示註解；比較的 key 只含標籤、型別與參數名稱，只改說明文字不算變更。TS 檔不使用 JSDoc 型別，不列入。
+11. **JSDoc 型別中引號內的空白被壓縮**（P2，確認為真）：比較前先把整段註解的空白壓成一個，`{"a  b"}` 與 `{"a b"}`（不同的字串型別）變成相同。修正：以原始註解文字擷取型別；引號外的空白與多行 JSDoc 每行開頭的 `*` 略過（只在兩個 identifier 之間保留一個空白，所以多行與單行的寫法相同），引號內原樣保留。
+12. **retro 的單向門集合缺少 `protectedArguments` 的自訂 blocker**（P2，確認為真）：「沒有觸發的單向門」只用預設值加 `rules.oneWayDoors`，自訂 blocker 從未觸發時不會列出，觸發次數表也可能被截斷。修正：改用與 review 相同的 `createProjectPolicy().oneWayDoors`，觸發次數表不截斷。
 
 ## 跨步驟的注意事項
 

@@ -43,7 +43,7 @@ exit code：0 完成；2 錯誤（stderr 印出 `error: <訊息>`）。retro 不
 | 段落 | 內容 | 用途 |
 |---|---|---|
 | 路由 | 檔案與 PR 的 `AUTO_PASS` / `AI_TRACK` / `ESCALATED` 比例；`TARGETED` / `FULL` 數量 | 審查負擔的趨勢 |
-| 單向門 | 觸發次數最多的單向門；這段期間**沒有觸發**的單向門（預設清單加上 `.reviewer.json` 的 `oneWayDoors`） | 長期沒有觸發的專案規則可以考慮精簡 |
+| 單向門 | 每個單向門的觸發次數；這段期間**沒有觸發**的單向門（與 review 相同的集合：預設清單、`.reviewer.json` 的 `oneWayDoors` 與 `protectedArguments` 自訂的 `blocker`） | 長期沒有觸發的專案規則可以考慮精簡 |
 | FULL 的原因 | 機械審查無法解釋的原因（`COV-*`、`UNSUPPORTED_FILE_TYPE`、`ANALYZER_ERROR` 等）的次數 | 強化 analyzer 的優先順序 |
 | FACT_UNHANDLED | 沒有任何 domain 規則的 fact 種類、次數與例子 | 新 interpreter、preset 或 `.reviewer.json` 規則的候選 |
 | AI 審查 | 交給 AI 的檔案數、各狀態、失敗原因、`AI_TRACK` 中 AI 放行（含修正）的比例、由備援模型回答的數量、token 用量 | AI 層的效果與成本 |

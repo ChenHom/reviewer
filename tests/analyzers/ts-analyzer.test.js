@@ -65,6 +65,8 @@ const cases = [
   ['jsdoc param type changed in js', 'a.js', `/**\n * @param {number} x - 數量\n */\n${fn('return x;')}`, `/**\n * @param {string} x - 數量\n */\n${fn('return x;')}`, ['DIRECTIVE_COMMENT_CHANGED', 'DIRECTIVE_COMMENT_CHANGED']],
   ['jsdoc type added in js', 'a.js', fn('return x;'), `/** @returns {Promise<{ id: string }>} */\n${fn('return x;')}`, ['DIRECTIVE_COMMENT_CHANGED']],
   ['jsdoc description only in js', 'a.js', `/**\n * @param {number} x - 數量\n */\n${fn('return x;')}`, `/**\n * 計算。\n * @param {number} x - 商品數量\n */\n${fn('return x;')}`, null],
+  ['jsdoc string type whitespace in js', 'a.js', `/** @type {"a  b"} */\nexport let label = 'a  b';\n`, `/** @type {"a b"} */\nexport let label = 'a  b';\n`, ['DIRECTIVE_COMMENT_CHANGED', 'DIRECTIVE_COMMENT_CHANGED']],
+  ['jsdoc type reformatted in js', 'a.js', `/**\n * @param {{\n *   a: number,\n *   b: string | null\n * }} opts - 選項\n */\n${fn('return opts;', 'opts')}`, `/** @param {{ a: number, b: string|null }} opts - 選項 */\n${fn('return opts;', 'opts')}`, null],
   ['jsdoc type changed in ts', 'a.ts', `/** @type {number} */\nexport let total = 0;\n`, `/** @type {string} */\nexport let total = 0;\n`, null],
   ['directive unchanged with repeated tokens', 'a.ts', fn('foo(1);\n// @ts-ignore\nfoo(2);'), fn('foo(1);\n  // @ts-ignore\n  foo(2);'), null],
   ['only decorator removed', 'a.ts', 'export class A {\n  @Transactional()\n  m() {}\n}\n', 'export class A {\n  m() {}\n}\n', ['ANNOTATION_REMOVED']],

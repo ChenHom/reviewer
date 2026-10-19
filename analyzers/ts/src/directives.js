@@ -27,9 +27,75 @@ const JSDOC_TYPE_TAGS = new Set([
 const NAMED_JSDOC_TAGS = new Set(['param', 'arg', 'argument', 'property', 'prop', 'template', 'typedef', 'callback']);
 
 /**
+ * JSDoc 型別運算式的開頭 `{` 對應的結尾位置（引號中的括號不算）；沒有結尾時為最後一個字元。
+ *
+ * @param {string} text - 以 `{` 開頭的文字。
+ * @returns {number} 結尾 `}` 的 index。
+ */
+function typeEnd(text) {
+  let depth = 0;
+  let quote = null;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (quote) {
+      if (character === '\\') index += 1;
+      else if (character === quote) quote = null;
+      continue;
+    }
+    if (character === '"' || character === "'" || character === '`') quote = character;
+    else if (character === '{') depth += 1;
+    else if (character === '}' && --depth === 0) return index;
+  }
+  return text.length - 1;
+}
+
+/**
+ * 正規化 JSDoc 型別運算式：引號外的空白（含多行 JSDoc 每行開頭的 `*`）只在兩個 identifier 之間保留一個，
+ * 引號內原樣保留（`{"a  b"}` 與 `{"a b"}` 是不同的字串型別）。
+ *
+ * @param {string} type - 型別運算式（含大括號）。
+ * @returns {string} 正規化後的型別。
+ */
+function normalizeType(type) {
+  let result = '';
+  let quote = null;
+  for (let index = 0; index < type.length; index += 1) {
+    const character = type[index];
+    if (quote) {
+      result += character;
+      if (character === '\\' && index + 1 < type.length) result += type[++index];
+      else if (character === quote) quote = null;
+      continue;
+    }
+    if (character === '"' || character === "'" || character === '`') quote = character;
+    if (/\s/.test(character)) {
+      // 空白與換行後的 `*`（JSDoc 每行開頭）一起略過；只有兩個 identifier 之間（`keyof T`）需要保留一個空白。
+      let end = index;
+      let newline = false;
+      while (end < type.length) {
+        if (/\s/.test(type[end])) {
+          newline ||= type[end] === '\n';
+          end += 1;
+        } else if (newline && type[end] === '*' && type[end + 1] !== '/') {
+          newline = false;
+          end += 1;
+        } else {
+          break;
+        }
+      }
+      index = end - 1;
+      if (/[\w$]$/.test(result) && /^[\w$]/.test(type[end] ?? '')) result += ' ';
+      continue;
+    }
+    result += character;
+  }
+  return result;
+}
+
+/**
  * JSDoc 中帶型別的標籤（`@param {number} x - 說明` → `@param{number} x`）；說明文字不列入，所以只改說明不算變更。
  *
- * @param {string} comment - 正規化後的註解。
+ * @param {string} comment - 原始註解文字（型別中引號內的空白有意義，不能先壓縮）。
  * @returns {string|null} 標籤摘要；不是 JSDoc 或沒有型別標籤時為 null。
  */
 export function jsdocTypes(comment) {
@@ -41,20 +107,12 @@ export function jsdocTypes(comment) {
     let rest = comment.slice(pattern.lastIndex).trimStart();
     let type = '';
     if (rest.startsWith('{')) {
-      let depth = 0;
-      let end = rest.length - 1;
-      for (let index = 0; index < rest.length; index += 1) {
-        if (rest[index] === '{') depth += 1;
-        if (rest[index] === '}') depth -= 1;
-        if (depth === 0) {
-          end = index;
-          break;
-        }
-      }
-      type = rest.slice(0, end + 1);
+      const end = typeEnd(rest);
+      type = normalizeType(rest.slice(0, end + 1));
       rest = rest.slice(end + 1);
+      pattern.lastIndex = comment.length - rest.length;
     }
-    const name = NAMED_JSDOC_TAGS.has(match[1]) ? ` ${/^\s*(\[[^\]]*\]|[\w$.]+)/.exec(rest)?.[1] ?? ''}` : '';
+    const name = NAMED_JSDOC_TAGS.has(match[1]) ? ` ${/^[\s*]*(\[[^\]]*\]|[\w$.]+)/.exec(rest)?.[1] ?? ''}` : '';
     tags.push(`@${match[1]}${type}${name}`);
   }
   return tags.length > 0 ? tags.join(';') : null;
@@ -108,8 +166,9 @@ export function directiveComments(sourceFile) {
     for (const range of ranges) {
       if (seen.has(range.pos)) continue;
       seen.add(range.pos);
-      const comment = text.slice(range.pos, range.end).replace(/\s+/g, ' ').trim();
-      const types = javascript ? jsdocTypes(comment) : null;
+      const raw = text.slice(range.pos, range.end);
+      const comment = raw.replace(/\s+/g, ' ').trim();
+      const types = javascript ? jsdocTypes(raw) : null;
       if (!DIRECTIVE.test(comment) && types === null) continue;
       const content = DIRECTIVE.test(comment) ? comment : `/** ${types} */`;
       directives.push({ key: `${content}@${tokenText}#${occurrence}`, comment, token: tokenText, node: token, pos: range.pos, end: range.end });

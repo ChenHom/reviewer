@@ -8,7 +8,7 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { DEFAULT_ONE_WAY_DOORS } from '../routing.js';
+import { createProjectPolicy } from '../config/project-config.js';
 
 const TOP = 10;
 
@@ -139,7 +139,8 @@ export function computeRetroMetrics(reports, { standards = null, config = null, 
   const count = (predicate) => files.filter(predicate).length;
   const ratio = (value, total) => (total === 0 ? null : value / total);
 
-  const doors = new Set([...DEFAULT_ONE_WAY_DOORS, ...(config?.config?.rules?.oneWayDoors ?? [])]);
+  // 與 review 相同的單向門集合：預設值、`rules.oneWayDoors` 與 `protectedArguments` 自訂的 blocker。
+  const doors = new Set(createProjectPolicy(config?.valid ? config : null).oneWayDoors);
   const triggered = files.flatMap((file) => file.oneWayDoors ?? []);
   const unhandled = files.flatMap((file) => (file.facts ?? [])
     .filter((fact) => (fact.blockers ?? []).some((code) => code.startsWith('FACT_UNHANDLED')))
@@ -202,7 +203,7 @@ export function computeRetroMetrics(reports, { standards = null, config = null, 
       full: count((file) => file.fallback === 'FULL'),
       targeted: count((file) => file.fallback === 'TARGETED'),
     },
-    oneWayDoors: top(triggered, doors.size),
+    oneWayDoors: top(triggered, Infinity),
     neverTriggered: [...doors].filter((code) => !triggered.includes(code)).sort(),
     fullReasons: top(needsReview.filter((file) => file.fallback === 'FULL').flatMap((file) => file.reasons.filter((reason) => !reason.startsWith('FACT_UNHANDLED')).map(reasonKey))),
     unhandledFactKinds: unhandledKinds,
