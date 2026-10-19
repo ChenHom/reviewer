@@ -135,6 +135,12 @@ test('沒有觸發的單向門包含 protectedArguments 自訂的 blocker；觸�
   assert.ok(!metrics.neverTriggered.includes('KEY_CHANGED'));
   assert.deepEqual(metrics.oneWayDoors, [{ code: 'KEY_CHANGED', count: 1 }]);
 
+  // 設定的帶參數代碼：檔案中是完整的原因（`FACT_UNHANDLED:ts-1`），以基本代碼彙總。
+  const parameterized = parseProjectConfig(JSON.stringify({ version: 1, rules: { oneWayDoors: ['FACT_UNHANDLED'] } }));
+  const fired = computeRetroMetrics([report('f6', [file('c.ts', 'ESCALATED', { oneWayDoors: ['FACT_UNHANDLED:ts-1', 'FACT_UNHANDLED:ts-2'] })])], { config: parameterized });
+  assert.deepEqual(fired.oneWayDoors, [{ code: 'FACT_UNHANDLED', count: 2 }]);
+  assert.ok(!fired.neverTriggered.includes('FACT_UNHANDLED'));
+
   const many = Array.from({ length: 30 }, (_, index) => `CODE_${index}`);
   const wide = computeRetroMetrics([report('e5', [file('b.php', 'ESCALATED', { oneWayDoors: many })])]);
   assert.equal(wide.oneWayDoors.length, 30);

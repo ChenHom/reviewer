@@ -9,6 +9,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { createProjectPolicy } from '../config/project-config.js';
+import { baseCode } from '../routing.js';
 
 const TOP = 10;
 
@@ -141,7 +142,8 @@ export function computeRetroMetrics(reports, { standards = null, config = null, 
 
   // 與 review 相同的單向門集合：預設值、`rules.oneWayDoors` 與 `protectedArguments` 自訂的 blocker。
   const doors = new Set(createProjectPolicy(config?.valid ? config : null).oneWayDoors);
-  const triggered = files.flatMap((file) => file.oneWayDoors ?? []);
+  // 與路由相同，以基本代碼彙總（設定的 `FACT_UNHANDLED` 對應到 `FACT_UNHANDLED:ts-1` 等）。
+  const triggered = files.flatMap((file) => (file.oneWayDoors ?? []).map(baseCode));
   const unhandled = files.flatMap((file) => (file.facts ?? [])
     .filter((fact) => (fact.blockers ?? []).some((code) => code.startsWith('FACT_UNHANDLED')))
     .map((fact) => ({ kind: fact.kind, description: fact.description, path: file.path })));

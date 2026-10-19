@@ -112,7 +112,14 @@ export function jsdocTypes(comment) {
       rest = rest.slice(end + 1);
       pattern.lastIndex = comment.length - rest.length;
     }
-    const name = NAMED_JSDOC_TAGS.has(match[1]) ? ` ${/^[\s*]*(\[[^\]]*\]|[\w$.]+)/.exec(rest)?.[1] ?? ''}` : '';
+    let name = '';
+    if (match[1] === 'template') {
+      // `@template T, U`：所有型別參數都要列入（含 `[T=string]` 這種有預設值的寫法）。
+      const parameter = String.raw`(?:\[[^\]]*\]|[\w$]+)`;
+      name = ` ${new RegExp(String.raw`^[\s*]*(${parameter}(?:\s*,\s*${parameter})*)`).exec(rest)?.[1].replace(/\s+/g, '') ?? ''}`;
+    } else if (NAMED_JSDOC_TAGS.has(match[1])) {
+      name = ` ${/^[\s*]*(\[[^\]]*\]|[\w$.]+)/.exec(rest)?.[1] ?? ''}`;
+    }
     tags.push(`@${match[1]}${type}${name}`);
   }
   return tags.length > 0 ? tags.join(';') : null;

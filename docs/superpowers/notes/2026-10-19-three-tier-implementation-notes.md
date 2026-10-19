@@ -169,6 +169,8 @@
 10. **JS 檔中帶型別的 JSDoc 沒有追蹤**（P2，確認為真）：開啟 checkJs / `// @ts-check` 時，`/** @type {number} */` 改成 `{string}` 會改變型別檢查結果，但註解不在 AST 中 → `AUTO_PASS`。這與 TS 的型別註記一律不視為等價的原則不一致。修正：JS 檔中帶型別標籤（`@type`、`@param`、`@returns`、`@typedef`、`@template` 等）的 JSDoc 列入指示註解；比較的 key 只含標籤、型別與參數名稱，只改說明文字不算變更。TS 檔不使用 JSDoc 型別，不列入。
 11. **JSDoc 型別中引號內的空白被壓縮**（P2，確認為真）：比較前先把整段註解的空白壓成一個，`{"a  b"}` 與 `{"a b"}`（不同的字串型別）變成相同。修正：以原始註解文字擷取型別；引號外的空白與多行 JSDoc 每行開頭的 `*` 略過（只在兩個 identifier 之間保留一個空白，所以多行與單行的寫法相同），引號內原樣保留。
 12. **retro 的單向門集合缺少 `protectedArguments` 的自訂 blocker**（P2，確認為真）：「沒有觸發的單向門」只用預設值加 `rules.oneWayDoors`，自訂 blocker 從未觸發時不會列出，觸發次數表也可能被截斷。修正：改用與 review 相同的 `createProjectPolicy().oneWayDoors`，觸發次數表不截斷。
+13. **`@template T, U` 只記錄第一個型別參數**（P2，確認為真）：改成 `@template T, V` 時 key 相同。修正：`@template` 列入所有以逗號分隔的參數（含 `[T=string]`），逗號前後的空白不算。
+14. **retro 沒有以基本代碼彙總單向門**（P2，確認為真）：設定把 `FACT_UNHANDLED` 列為單向門時，檔案的 `oneWayDoors` 是 `FACT_UNHANDLED:ts-1` 等完整原因，retro 以完整字串比對，把有觸發的門列為沒有觸發、次數也被拆開。修正：以 `baseCode()` 彙總（與路由、finding 相同）。
 
 ## 跨步驟的注意事項
 
