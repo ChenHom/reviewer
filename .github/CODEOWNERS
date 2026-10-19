@@ -1,0 +1,3 @@
+# 所有路徑的 code owner；PR 會自動請 owner review。
+# 目前不是合併條件（branch protection 沒有要求 code owner approve），加入其他 collaborator 後再開啟。
+* @ChenHom
