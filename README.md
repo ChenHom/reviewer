@@ -49,12 +49,15 @@ Authoritative Candidate / Summary / Check
 
 目前的 executable Adapter：PHP/Laravel 與 TypeScript / JavaScript（兩者都是 AST 比對與 semantic facts）。
 
+上圖是 library pipeline（`src/runner.js`）的完整流程。`bin/review.js` 逐檔執行到決策與三層路由為止，只輸出報表，不發布 Summary / Check（見「目前能力邊界」的未實作範圍）。
+
 ## Review 一個 PR
 
-需要 Node.js（CI 使用 24）、`git`、PATH 上的 `php`（PHP CLI ≥ 8.3，CI 使用 8.4）與 Composer 2；完整前置需求見 [Review CLI](docs/review-cli.md#前置需求)。這是執行 analyzer 的 PHP 版本，與被分析專案的目標版本無關：被分析的程式碼以最新語法或 PHP 7.4 語法解析，判為等價前只檢查 PHP 7 與 PHP 8 的解讀，PHP 5 的語意不在檢查範圍；最新語法與 PHP 7.4 語法都無法同時解析 before / after 兩個版本時為 `FULL`（`COV-PHP-001:PHP_PARSE_ERROR`），見「已實作」。
+需要 Node.js（CI 使用 24；開發用的 lint 需要 Node `^22.13.0 || >=24`）、`git`、PATH 上的 `php`（PHP CLI ≥ 8.3，CI 使用 8.4）與 Composer 2；完整前置需求見 [Review CLI](docs/review-cli.md#前置需求)。這是執行 analyzer 的 PHP 版本，與被分析專案的目標版本無關：被分析的程式碼以最新語法或 PHP 7.4 語法解析，判為等價前只檢查 PHP 7 與 PHP 8 的解讀，PHP 5 的語意不在檢查範圍；最新語法與 PHP 7.4 語法都無法同時解析 before / after 兩個版本時為 `FULL`（`COV-PHP-001:PHP_PARSE_ERROR`），見「已實作」。
 
 ```bash
-npm run analyzer:install   # 第一次需要安裝 PHP analyzer 依賴（執行 composer install）
+npm ci                     # lint、coverage（c8）與 --ai 的 @anthropic-ai/sdk 需要；只執行 review CLI 且不用 --ai 時可略過
+npm run analyzer:install   # 第一次需要：同時安裝 PHP analyzer（composer install）與 TS analyzer（npm ci --prefix analyzers/ts）的依賴
 
 node bin/review.js --repo /path/to/project --base origin/master --head HEAD
 ```
@@ -93,7 +96,7 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
 - 只有支援的語言（PHP，以及 TypeScript / JavaScript）的修改與 rename 會送進 analyzer；新增、刪除、不支援的檔案、binary、symlink、submodule 一律 `FULL`。TypeScript / JavaScript 與 PHP 相同：AST 等價時不需要 review，可被 fact 解釋的變更為 `TARGETED`，其餘為 `FULL`（`COV-TS-001:*`），預設啟用 `node` preset，見 [PR Review CLI「檔案分類」](docs/review-cli.md#檔案分類)。rename 與檔案權限變更即使內容等價也要求 review（`FILE_RENAMED`、`FILE_MODE_CHANGED`）。
 - PR 層級的決策只有在**所有**檔案都不需 review 時才是 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
 - 路由（三層審查）：核心流程是**機械審查 → AI 審查剩下的 → AI 審查後需要人處理、確認的才交給人工**。上面的報表是機械審查的結果：不需要 review 的檔案到此結束；其餘交給 AI 審查。命中單向門的檔案（例如 `TRANSACTION_BOUNDARY_REMOVED`、`AUTHORIZATION_GUARD_REMOVED`）列在「AI 審查後必須人工確認」（`ESCALATED`），AI 不能放行；其他檔案（包括 `FULL`）由 AI 判斷是否需要人工（`AI_TRACK`）。路由不改變上面的決策。專案可以用 `.reviewer.json` 加入業務相關的單向門，例如把 `amount` 列為敏感運算元後，上例的 `FreezeService.php` 會變成必須人工確認（見 [專案設定](docs/project-config.md)）。
-- AI 審查（第 2 層）：加上 `--ai`（需要 `npm ci` 與 `ANTHROPIC_API_KEY`）時，`AI_TRACK` 與 `ESCALATED` 檔案逐一交給 Claude（預設 `claude-opus-5-5`，依 merge base 的 `codingstandards.md` 審查，預設啟用 server-side fallback）。報表改為「需要人工確認」「AI 已修正」「AI 審查通過」三段；`AI_TRACK` 檔案由 AI 放行或交給人工，單向門 AI 不能放行，AI 失敗一律交給人工。`--fail-on-human` 在仍需要人工時讓 CI 失敗；`--ai-apply` 把 AI 的小修正寫入 worktree（不 commit，修正若命中單向門則不套用）。見 [PR Review CLI「AI 審查」](docs/review-cli.md#ai-審查第-2-層--ai)。
+- AI 審查（第 2 層）：加上 `--ai`（需要 `npm ci` 與 `ANTHROPIC_API_KEY`）時，`AI_TRACK` 與 `ESCALATED` 檔案逐一交給 Claude（預設 `claude-opus-5-5`，依 merge base 的 `codingstandards.md` 審查，預設啟用 server-side fallback）。報表改為「需要人工確認」「AI 已修正」「AI 審查通過」三段；`AI_TRACK` 檔案由 AI 放行或交給人工，單向門 AI 不能放行，AI 失敗一律交給人工。`--fail-on-human` 在仍需要人工時讓 CI 失敗；`--ai-apply` 把 AI 的小修正寫入 worktree（不 commit；修正若命中單向門或支援的語言無法完整分析則不套用，不支援的檔案類型無法檢查，照樣套用）。見 [PR Review CLI「AI 審查」](docs/review-cli.md#ai-審查第-2-層--ai)。
 
 選項（例如 `--json` 報表、讓 CI 在需要 review 時失敗的 `--fail-on-review`、只在命中單向門時失敗的 `--fail-on-escalation`、AI 審查後仍需要人工時失敗的 `--fail-on-human`）、exit code、所有原因代碼、JSON 報表格式與限制見 [PR Review CLI](docs/review-cli.md)。
 
@@ -148,14 +151,16 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
   - Token / 簽章驗證（`jwt.verify`、`jwtService.verifyAsync`、jose `jwtVerify`、`crypto.timingSafeEqual`、Stripe `webhooks.constructEvent` 與名稱像簽章驗證的 method 被移除 → `SIGNATURE_VERIFICATION_REMOVED`）
   - Validation（zod / joi / yup schema、class-validator decorator、`ValidationPipe`、`useGlobalPipes` / `@UsePipes`、`safeParse` 等、Fastify 路由的 `schema` → `VALIDATION_RULE_CHANGED`）
   - 資料刪除（新增 `deleteMany`、`dropTable`、`findByIdAndDelete`、S3 `deleteObject`、knex `.del()`、DB / repository / model 上的 `delete` / `remove` / `destroy` / `clear`、Sequelize `User.destroy`、`fs.rm` / `unlink` / `rimraf` → `DATA_DELETION_ADDED`；`map.delete`、`socket.destroy` 等不算）
-- persisted authority / stale analysis protection
+- persisted authority / stale analysis protection（`src/publication.js`、`src/storage/`：memory 與 SQLite 兩種 authority store，以 CAS 保存 head 與 authoritative candidate；`bin/review.js` 不使用 authority store）
 - Summary / candidate digest binding
 - Mutation Evaluation Harness
 - Historical PR Evaluation Harness
 - PR review CLI（`bin/review.js`，見 [PR Review CLI](docs/review-cli.md)）
-- 第 2 層 AI 審查（`--ai`，`src/ai/`）：Anthropic Messages API（`@anthropic-ai/sdk`，只在啟用時載入）、structured outputs、server-side fallback、prompt cache；AI 判斷需要人工的項目成為 `kind: AI` 的 finding
-- Retro（`bin/retro.js`，見 [Retro](docs/retro.md)）：彙整一段期間的 review 報表（路由比例、單向門、FULL 原因、沒有規則的 fact、AI 結果、規範引用），`--ai` 時提出 `codingstandards.md` 增刪、`.reviewer.json` 規則（以設定驗證器檢查）與 mutation case 草案（以機械審查確認）
-- provider-neutral GitHub sink boundary
+- 三層審查路由（`src/routing.js`）：機械審查之後每個檔案分為 `AUTO_PASS` / `AI_TRACK` / `ESCALATED`（命中單向門），預設單向門清單為 `DEFAULT_ONE_WAY_DOORS`；路由不改變 `decision`，也不會讓需要 review 的檔案變成不需要。必須人工確認的項目另有穩定的 finding id 與 scope hash（`src/findings.js`）
+- 專案設定（`.reviewer.json`、`codingstandards.md`，見 [專案設定](docs/project-config.md)）：兩者都從 merge base 讀取，修改它們本身是單向門（`POLICY_FILE_CHANGED`）；設定只能新增攔截（preset、規則、單向門），設定無效時每個檔案為 `FULL` 加 `POLICY_CONFIG_INVALID`
+- 第 2 層 AI 審查（`--ai`，`src/ai/`）：Anthropic Messages API（`@anthropic-ai/sdk`，只在啟用時載入）、structured outputs、server-side fallback、prompt cache；AI 判斷需要人工的項目成為 `kind: AI` 的 finding；AI 不能放行單向門，也不改變 `decision`。測試只用假的 client，實作時沒有 API 憑證，未對真實 API 做過 smoke test（見「目前能力邊界」）
+- Retro（`bin/retro.js`，見 [Retro](docs/retro.md)）：彙整一段期間的 review 報表（路由比例、單向門、FULL 原因、沒有規則的 fact、AI 結果、規範引用），`--ai` 時提出 `codingstandards.md` 增刪、`.reviewer.json` 規則（以設定驗證器檢查）與 mutation case 草案（以機械審查確認）；建議都只是草案，retro 不修改任何檔案，AI 建議同樣只以假的 client 測試
+- provider-neutral GitHub sink boundary（`src/integrations/github/`：注入 transport 的 `upsertSummary` / `upsertCheck` port 與 payload 驗證；沒有真實的 GitHub transport，`bin/review.js` 不使用，見「目前能力邊界」的未實作範圍）
 
 ## 目前驗證基準
 
@@ -201,30 +206,47 @@ Historical 數字目前來自明確標示的 controlled fixture pilot，只驗�
 
 ## 文件
 
+- [功能總覽](docs/features.md)：第一次接觸時一頁看懂目前能做什麼、不能做什麼
+- [AGENTS.md](AGENTS.md)：給 coding agent 的工作守則（環境、指令、慣例、不要隨意改動的東西）
 - [PR Review CLI：用法、merge base、選項、exit code、原因代碼與 JSON 報表](docs/review-cli.md)
+- [專案設定：`.reviewer.json`](docs/project-config.md)
+- [Retro：彙整 review 報表並提出改進草案](docs/retro.md)
+- [三層審查架構設計](docs/superpowers/specs/2026-10-18-three-tier-review-design.md)與[實作紀錄](docs/superpowers/notes/2026-10-19-three-tier-implementation-notes.md)（設計 §8 的步驟 7「GitHub 整合」尚未實作，其他步驟已完成）
+- [Review Reduction Next Phase 任務與已知偏差](docs/tasks/2026-08-12-review-reduction-next-phase.md)（狀態以檔案內為準）
 - [目前能力與四階段實作整理](docs/current-state.md)
 - [Safety MVP / Review Decision Engine 架構](docs/safety-mvp-architecture.md)
+- [Safety MVP 測試策略](docs/testing/safety-mvp-test-strategy.md)
+- [Safety MVP 操作與失敗處理](docs/operations/safety-mvp-next-phase.md)
 - [與 Agent Work Harness 的合作方式](docs/integrations/agent-work-harness.md)
 - [Real-repo Evaluation：在真實 PHP 專案上產生 mutation 並驗證 gate](evaluation/real-repo/README.md)
 
-### 歷史任務紀錄
+### 歷史設計、計畫與任務紀錄
 
-以下是各 PR 合入當時的設計紀錄，之後可能已變更；目前能力以本文件的「已實作」與「目前驗證基準」為準。
+以下是各階段合入當時的設計、計畫與任務紀錄，之後可能已變更；目前能力以本文件的「已實作」與「目前驗證基準」為準。
+
+2026-10-06（PR-A～PR-D）：
 
 - [PR-A：Semantic Fact Ingress](docs/tasks/2026-10-06-semantic-fact-ingress.md)
 - [PR-B：PHP/Laravel Adapter](docs/tasks/2026-10-06-php-laravel-adapter.md)（`token_get_all` 初版；analyzer 已改用 nikic/php-parser AST，需 Composer 依賴）
 - [PR-C：Mutation Evaluation](docs/tasks/2026-10-06-mutation-evaluation.md)（初始 corpus 與 baseline；SAFE-002 現已可被 reduce，MUT-004 現已有直接 fact `BINARY_OPERATOR_CHANGED`）
 - [PR-D：Historical PR Evaluation](docs/tasks/2026-10-06-historical-pr-evaluation.md)
 
+2026-08（Safety MVP 與 Next Phase）：
+
+- Safety MVP：[計畫](docs/superpowers/plans/2026-08-12-review-reduction-safety-mvp.md)、[任務](docs/tasks/2026-08-12-safety-mvp.md)
+- Test Hardening：[計畫](docs/superpowers/plans/2026-08-12-safety-mvp-test-hardening.md)
+- Next Phase：[設計](docs/superpowers/specs/2026-08-12-review-reduction-next-phase-design.md)、[計畫](docs/superpowers/plans/2026-08-12-review-reduction-next-phase.md)（任務檔仍在更新，見上方）
+
 ## Release gate
 
-執行 analyzer 需要 PATH 上的 `php`（PHP CLI ≥ 8.3，`analyzers/php/composer.json` 的要求；CI 使用 8.4）與 Composer 2。PHP analyzer 依賴 Composer 套件，第一次執行前先安裝：
+執行 analyzer 需要 PATH 上的 `php`（PHP CLI ≥ 8.3，`analyzers/php/composer.json` 的要求；CI 使用 8.4）與 Composer 2。release gate 另外需要根目錄的 `npm ci`（ESLint、c8 與測試用的 dev 依賴；`npm ci` 會觸發 `prepare`，安裝內容為 `npm run lint` 的 pre-commit hook）。analyzer 依賴要另外安裝，第一次執行前先：
 
 ```bash
-npm run analyzer:install
+npm ci
+npm run analyzer:install   # composer install --working-dir=analyzers/php，再 npm ci --prefix analyzers/ts
 ```
 
-缺少依賴時 analyzer 會以 `PHP_ANALYZER_DEPENDENCY_MISSING` fail-closed。PHP 版本不足時 `composer install` 會因 platform requirement 失敗；已安裝的依賴也會在執行時被 Composer 的 platform check 擋下，此時（以及找不到 `php` 時）`bin/review.js` 不會以錯誤結束（exit code 仍為 0，`--fail-on-review` 時為 1），而是把每個送進 analyzer 的 PHP 檔以 `ANALYZER_ERROR` 列為 `FULL`（見 [PR Review CLI](docs/review-cli.md#前置需求)）。
+缺少依賴時 PHP analyzer 會以 `PHP_ANALYZER_DEPENDENCY_MISSING` fail-closed，TS analyzer 則是 `COV-TS-001:TS_ANALYZER_DEPENDENCY_MISSING`（每個送進該 analyzer 的檔案為 `FULL`）。PHP 版本不足時 `composer install` 會因 platform requirement 失敗；已安裝的依賴也會在執行時被 Composer 的 platform check 擋下，此時（以及找不到 `php` 時）`bin/review.js` 不會以錯誤結束（exit code 仍為 0，`--fail-on-review` 時為 1），而是把每個送進 analyzer 的 PHP 檔以 `ANALYZER_ERROR` 列為 `FULL`（見 [PR Review CLI](docs/review-cli.md#前置需求)）。
 
 ```bash
 npm run test:all
@@ -235,13 +257,15 @@ npm run test:all
 包含：
 
 - lint（ESLint，只檢查 JS）
-- safety tests
-- E2E
-- coverage
+- safety tests（`node --test`）
+- E2E（`tests/e2e/*.test.js`）
+- coverage（c8，`src/**/*.js`：lines / statements / functions ≥ 90%、branches ≥ 85%）
 - mutation evaluation
 - historical evaluation
 
-CI（`.github/workflows/review-reduction-safety.yml`，Node.js 24、PHP 8.4）在 `npm ci` 之後先執行 `composer install --working-dir=analyzers/php`，再對 `analyzers/php/bin`、`analyzers/php/src` 與 `evaluation` 下的每個 `.php` 檔執行 `php -l`，最後執行 `npm run test:all`。`php -l` 不在 `test:all` 內，修改 PHP 檔時本機可用同一行指令檢查：
+Real-repo evaluation（`npm run eval:real-repo`）不在其中，見「目前驗證基準」。
+
+CI（`.github/workflows/review-reduction-safety.yml`，Node.js 24、PHP 8.4）在 `npm ci` 之後先執行 `composer install --working-dir=analyzers/php`，再執行 `npm ci --prefix analyzers/ts --no-audit --no-fund`，然後對 `analyzers/php/bin`、`analyzers/php/src` 與 `evaluation` 下的每個 `.php` 檔執行 `php -l`，最後執行 `npm run test:all`。`php -l` 不在 `test:all` 內，修改 PHP 檔時本機可用同一行指令檢查：
 
 ```bash
 find analyzers/php/bin analyzers/php/src evaluation -name '*.php' -print0 | xargs -0 -n1 php -l
@@ -290,6 +314,11 @@ blocker → factId → provenance
 的完整 region-level selection contract，因此目前不應宣稱能安全縮減到「某檔只有哪幾行需要看」。`TARGETED` 列出的位置只是 review 的起點，整個檔案仍需 review。
 
 判定 AST 等價時刻意接受、不視為行為差異的情況：排版變更讓例外訊息、backtrace 與匿名 class 名稱中的行號改變；一致改名的 closure `use` 變數與 `static` 變數名稱（可透過 reflection 讀到）；舊版 PHP 不支援的新語法（請以目標 PHP 版本的 `php -l` 檢查）；PHP 5 的語意（只檢查 PHP 7 與 PHP 8 的解讀）。詳見 [Real-repo Evaluation](evaluation/real-repo/README.md)。
+
+尚未實作的範圍：
+
+- 三層架構設計 §8 的步驟 7（GitHub 整合）：狀態留言、ack 指令、置頂儀表板、Check、PR 自我宣告的風險（`Merge-Risk`）。`bin/review.js` 只讀 git 物件，輸出到 stdout 與 `--out`，不留言、不建立 check；`src/integrations/github/` 只有 port 與 payload 驗證，沒有真實的 transport。因此 retro 需要 GitHub 狀態的指標（豁免率、REOPENED 次數等）列為不可用。
+- AI 層（`--ai`、`--ai-apply`）與 retro 的 AI 建議（`bin/retro.js --ai`）只以假的 client 測試，實作時沒有 API 憑證，未對真實 API 做過 smoke test。AI 的輸出不是 deterministic，「目前驗證基準」的數字都只來自機械審查，不含 AI 層。
 
 後續優先方向：
 
