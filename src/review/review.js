@@ -7,11 +7,13 @@ import { createPhpLaravelAdapter } from '../adapters/php-laravel/adapter.js';
 import { createTypeScriptAdapter } from '../adapters/typescript/adapter.js';
 import { interpretSemanticFacts } from '../facts/interpreter.js';
 import { displayArgument, displayText } from '../facts/structured.js';
+import { needsHuman, runAiReview, summarizeHuman } from '../ai/review.js';
 import { factAnchor, findingsFor } from '../findings.js';
 import { createAuthorityState } from '../publication.js';
-import { routeFile, summarizeTracks } from '../routing.js';
+import { TRACK, routeFile, summarizeTracks } from '../routing.js';
 import { runAdapterPipeline } from '../runner.js';
-import { diffEntries, diffHunks, mergeBase, readBlob, readTreeFile, repositoryRoot, resolveCommit } from './git.js';
+import { diffEntries, diffHunks, mergeBase, readBlob, readTreeFile, repositoryRoot, resolveCommit, worktreeState } from './git.js';
+import { reasonWithHint } from './reasons.js';
 
 export const NOT_SELECTED = 'NOT_SELECTED_FOR_HUMAN_REVIEW';
 export const HUMAN_REVIEW = 'HUMAN_REVIEW_REQUIRED';
@@ -394,9 +396,10 @@ export function summarizeFiles(files) {
  * @param {number} [options.concurrency=4] - 同時執行的 analyzer 數。
  * @param {number} [options.timeoutMs=30000] - 單一檔案的 analyzer deadline。
  * @param {object} [options.adapterOptions={}] - 各語言 adapter 的選項，以語言 id 為 key（例如 `{ php: { phpBinary } }`）。
+ * @param {object|null} [options.ai=null] - 第 2 層（AI）審查：`{ reviewer, apply, concurrency, maxInputChars, maxFiles }`（見 `runAiReview()`）；null 時不執行。
  * @returns {Promise<object>} review report。
  */
-export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs = 30_000, adapterOptions = {} }) {
+export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs = 30_000, adapterOptions = {}, ai = null }) {
   const [root, baseSha, headSha] = await Promise.all([
     repositoryRoot(repo),
     resolveCommit(repo, base),
@@ -425,10 +428,31 @@ export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs
       runnerVersion: '1',
     },
   };
+  // --ai-apply 會改寫 worktree：worktree 必須正好是 head 且沒有未 commit 的變更。
+  if (ai?.apply) {
+    const state = await worktreeState(root);
+    if (state.head !== headSha || !state.clean) throw new Error(`AI_APPLY_WORKTREE_MISMATCH:worktree 必須是乾淨的 ${headSha.slice(0, 12)}`);
+  }
   const reviewed = await mapWithConcurrency(entries, concurrency, (entry) => reviewEntry(context, entry));
   const routingOptions = { oneWayDoors: policy.oneWayDoors };
   const routed = reviewed.map((file) => ({ ...file, ...routeFile(file, routingOptions) }));
-  const files = routed.map((file) => ({ ...file, findings: findingsFor(file, { oneWayDoors: policy.oneWayDoors }) }));
+  let files = routed.map((file) => ({ ...file, findings: findingsFor(file, { oneWayDoors: policy.oneWayDoors }) }));
+
+  let aiSummary = null;
+  if (ai) {
+    const result = await runAiReview(files, {
+      ...ai,
+      repo: root,
+      mergeBase: forkPoint,
+      headSha,
+      describeReason: reasonWithHint,
+      checkFix: (path, beforeSource, afterSource) => checkFix(context, routingOptions, path, beforeSource, afterSource),
+    });
+    files = result.files;
+    aiSummary = result.summary;
+  } else {
+    files = files.map((file) => ({ ...file, needsHuman: needsHuman(file) }));
+  }
 
   return {
     repository: basename(root),
@@ -438,6 +462,33 @@ export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs
     config: { path: config.path, commit: config.commit, status: config.status, errors: config.errors, digest: config.digest },
     decision: summarizeFiles(files),
     routing: summarizeTracks(files),
+    ai: aiSummary,
+    human: summarizeHuman(files),
     files,
   };
+}
+
+/**
+ * AI 修正後的內容再交給機械審查（與 PR 的檔案相同的 adapter、interpreters 與專案設定），回傳路由。
+ * 不支援的檔案類型無法檢查，視為 `AI_TRACK`。
+ *
+ * @param {object} context - analysis context。
+ * @param {object} routingOptions - 路由設定。
+ * @param {string} path - 檔案路徑。
+ * @param {string} beforeSource - head 內容。
+ * @param {string} afterSource - 修正後內容。
+ * @returns {Promise<{track: string}>} 路由。
+ */
+async function checkFix(context, routingOptions, path, beforeSource, afterSource) {
+  const language = languageFor(path, context.languages);
+  if (!language) return { track: TRACK.AI_TRACK, oneWayDoors: [] };
+  const analysis = await analyzeFile({ ...context, ...language }, path, beforeSource, afterSource);
+  const selected = analysis.decision.status === NOT_SELECTED;
+  const file = applyProjectPolicy({
+    path,
+    decision: selected ? NOT_SELECTED : HUMAN_REVIEW,
+    fallback: selected ? null : (analysis.decision.fallback ?? 'FULL'),
+    reasons: analysis.decision.reasons ?? [],
+  }, context.project);
+  return routeFile(file, routingOptions);
 }

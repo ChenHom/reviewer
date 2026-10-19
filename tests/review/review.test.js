@@ -320,9 +320,11 @@ test('resolveCommit 拒絕不存在或像選項的 ref', async () => {
 });
 
 test('bin/review.js：文字、JSON、--out、--fail-on-review 與錯誤處理', async () => {
+  // AI 審查不能在測試中呼叫真的 API：確保子行程沒有 API key。
+  const env = { ...process.env, ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '' };
   const cli = async (args) => {
     try {
-      const { stdout, stderr } = await run(process.execPath, [CLI, ...args]);
+      const { stdout, stderr } = await run(process.execPath, [CLI, ...args], { env });
       return { code: 0, stdout, stderr };
     } catch (error) {
       return { code: error.code, stdout: error.stdout, stderr: error.stderr };
@@ -355,4 +357,23 @@ test('bin/review.js：文字、JSON、--out、--fail-on-review 與錯誤處理',
   const badConcurrency = await cli(['--repo', repo, '--base', base, '--concurrency', '0']);
   assert.equal(badConcurrency.code, 2);
   assert.match(badConcurrency.stderr, /OPTION_INVALID:--concurrency/);
+
+  // 沒有 AI 審查時 AI_TRACK 也需要人工；只有排版變更時不需要。
+  assert.equal((await cli(['--repo', repo, '--base', base, '--head', head, '--fail-on-human'])).code, 1);
+  assert.equal((await cli(['--repo', repo, '--base', base, '--head', formatOnly, '--fail-on-human'])).code, 0);
+  const human = JSON.parse((await cli(['--repo', repo, '--base', base, '--head', formatOnly, '--json'])).stdout);
+  assert.equal(human.ai, null);
+  assert.deepEqual(human.human, { required: false, files: 0, findings: 0, pendingFixes: 0 });
+
+  // AI 選項：沒有 API key 時在分析之前失敗；AI 子選項需要 --ai；effort 必須合法。
+  const noKey = await cli(['--repo', repo, '--base', base, '--ai']);
+  assert.equal(noKey.code, 2);
+  assert.match(noKey.stderr, /AI_NOT_CONFIGURED/);
+  const needsAi = await cli(['--repo', repo, '--base', base, '--ai-apply']);
+  assert.equal(needsAi.code, 2);
+  assert.match(needsAi.stderr, /OPTION_REQUIRES_AI:--ai-apply/);
+  const badEffort = await cli(['--repo', repo, '--base', base, '--ai', '--ai-effort', 'extreme']);
+  assert.equal(badEffort.code, 2);
+  assert.match(badEffort.stderr, /AI_EFFORT_INVALID:extreme/);
+  assert.match(help.stdout, /--ai-apply/);
 });

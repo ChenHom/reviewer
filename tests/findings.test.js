@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { factAnchor, findingsFor } from '../src/findings.js';
+import { aiFindingsFor, factAnchor, findingsFor } from '../src/findings.js';
 import { DEFAULT_ONE_WAY_DOORS } from '../src/routing.js';
 
 const options = { oneWayDoors: DEFAULT_ONE_WAY_DOORS };
@@ -108,4 +108,25 @@ test('factAnchor 只取不隨位置改變的內容', () => {
     before: 'null', after: '[]',
   });
   assert.deepEqual(factAnchor({ kind: 'CALL_ADDED', properties: {} }), { callee: null });
+});
+
+test('AI finding：依路由與 AI 狀態產生，綁定整個檔案的內容', () => {
+  const file = (track, ai) => ({ path: 'a.js', track, contentHash: 'git:abc', ai });
+  const concern = (severity, title = '問題') => ({ title, detail: '說明', severity, side: 'head', startLine: 0, endLine: 0, standard: '' });
+  assert.deepEqual(aiFindingsFor({ path: 'a.js', track: 'AI_TRACK' }), []);
+  assert.deepEqual(aiFindingsFor(file('AUTO_PASS', { status: 'NEEDS_HUMAN', concerns: [] })), []);
+  assert.deepEqual(aiFindingsFor(file('AI_TRACK', { status: 'PASS', concerns: [concern('medium')] })), []);
+  assert.deepEqual(aiFindingsFor(file('ESCALATED', { status: 'FAILED', error: 'AI_REFUSED', concerns: [] })), []);
+  assert.deepEqual(aiFindingsFor(file('ESCALATED', { status: 'PASS', concerns: [concern('low')] })), []);
+
+  const [needsHuman] = aiFindingsFor(file('AI_TRACK', { status: 'NEEDS_HUMAN', summary: '需要確認', concerns: [concern('low')] }));
+  assert.deepEqual({ ...needsHuman, id: undefined }, {
+    id: undefined, path: 'a.js', subject: 'a.js', kind: 'AI', scopeHash: 'git:abc', blocker: 'AI_NEEDS_HUMAN', anchor: 'AI_NEEDS_HUMAN', location: null, description: '需要確認', ordinal: 0,
+  });
+  const twice = aiFindingsFor(file('ESCALATED', { status: 'PASS', concerns: [concern('medium'), concern('high')] }));
+  assert.deepEqual(twice.map(({ blocker, anchor, ordinal, location }) => [blocker, anchor, ordinal, location]), [
+    ['AI_CONCERN', '問題', 0, null],
+    ['AI_CONCERN', '問題', 1, null],
+  ]);
+  assert.notEqual(twice[0].id, twice[1].id);
 });

@@ -92,9 +92,10 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
 - 每個 fact 都會讓檔案需要 review。PHP 檔只有在沒有任何 fact、AST 等價（排版、註解、一致的區域變數改名等，見「已實作」），而且不是 rename 或權限變更時，才會列在「不需要 review」，例如上例只加了註解、改了區域變數名稱的 `FreezeObserver.php`。
 - 只有支援的語言（PHP，以及 TypeScript / JavaScript）的修改與 rename 會送進 analyzer；新增、刪除、不支援的檔案、binary、symlink、submodule 一律 `FULL`。TypeScript / JavaScript 與 PHP 相同：AST 等價時不需要 review，可被 fact 解釋的變更為 `TARGETED`，其餘為 `FULL`（`COV-TS-001:*`），預設啟用 `node` preset，見 [PR Review CLI「檔案分類」](docs/review-cli.md#檔案分類)。rename 與檔案權限變更即使內容等價也要求 review（`FILE_RENAMED`、`FILE_MODE_CHANGED`）。
 - PR 層級的決策只有在**所有**檔案都不需 review 時才是 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
-- 路由（三層審查）：核心流程是**機械審查 → AI 審查剩下的 → AI 審查後需要人處理、確認的才交給人工**。上面的報表是機械審查的結果：不需要 review 的檔案到此結束；其餘交給 AI 審查。命中單向門的檔案（例如 `TRANSACTION_BOUNDARY_REMOVED`、`AUTHORIZATION_GUARD_REMOVED`）列在「AI 審查後必須人工確認」（`ESCALATED`），AI 不能放行；其他檔案（包括 `FULL`）由 AI 判斷是否需要人工（`AI_TRACK`）。路由不改變上面的決策。專案可以用 `.reviewer.json` 加入業務相關的單向門，例如把 `amount` 列為敏感運算元後，上例的 `FreezeService.php` 會變成必須人工確認（見 [專案設定](docs/project-config.md)）。AI 審查層尚未實作。
+- 路由（三層審查）：核心流程是**機械審查 → AI 審查剩下的 → AI 審查後需要人處理、確認的才交給人工**。上面的報表是機械審查的結果：不需要 review 的檔案到此結束；其餘交給 AI 審查。命中單向門的檔案（例如 `TRANSACTION_BOUNDARY_REMOVED`、`AUTHORIZATION_GUARD_REMOVED`）列在「AI 審查後必須人工確認」（`ESCALATED`），AI 不能放行；其他檔案（包括 `FULL`）由 AI 判斷是否需要人工（`AI_TRACK`）。路由不改變上面的決策。專案可以用 `.reviewer.json` 加入業務相關的單向門，例如把 `amount` 列為敏感運算元後，上例的 `FreezeService.php` 會變成必須人工確認（見 [專案設定](docs/project-config.md)）。
+- AI 審查（第 2 層）：加上 `--ai`（需要 `npm ci` 與 `ANTHROPIC_API_KEY`）時，`AI_TRACK` 與 `ESCALATED` 檔案逐一交給 Claude（預設 `claude-opus-5-5`，依 merge base 的 `codingstandards.md` 審查，預設啟用 server-side fallback）。報表改為「需要人工確認」「AI 已修正」「AI 審查通過」三段；`AI_TRACK` 檔案由 AI 放行或交給人工，單向門 AI 不能放行，AI 失敗一律交給人工。`--fail-on-human` 在仍需要人工時讓 CI 失敗；`--ai-apply` 把 AI 的小修正寫入 worktree（不 commit，修正若命中單向門則不套用）。見 [PR Review CLI「AI 審查」](docs/review-cli.md#ai-審查第-2-層--ai)。
 
-選項（例如 `--json` 報表、讓 CI 在需要 review 時失敗的 `--fail-on-review`、只在命中單向門時失敗的 `--fail-on-escalation`）、exit code、所有原因代碼、JSON 報表格式與限制見 [PR Review CLI](docs/review-cli.md)。
+選項（例如 `--json` 報表、讓 CI 在需要 review 時失敗的 `--fail-on-review`、只在命中單向門時失敗的 `--fail-on-escalation`、AI 審查後仍需要人工時失敗的 `--fail-on-human`）、exit code、所有原因代碼、JSON 報表格式與限制見 [PR Review CLI](docs/review-cli.md)。
 
 ## 已實作
 
@@ -151,6 +152,7 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
 - Mutation Evaluation Harness
 - Historical PR Evaluation Harness
 - PR review CLI（`bin/review.js`，見 [PR Review CLI](docs/review-cli.md)）
+- 第 2 層 AI 審查（`--ai`，`src/ai/`）：Anthropic Messages API（`@anthropic-ai/sdk`，只在啟用時載入）、structured outputs、server-side fallback、prompt cache；AI 判斷需要人工的項目成為 `kind: AI` 的 finding
 - provider-neutral GitHub sink boundary
 
 ## 目前驗證基準

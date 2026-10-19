@@ -1,25 +1,8 @@
 import { TRACK } from '../routing.js';
+import { REASON_HINTS } from './reasons.js';
 import { NOT_SELECTED } from './review.js';
 
 const MAX_LISTED = 8;
-
-const REASON_HINTS = Object.freeze({
-  FILE_ADDED: '新增的檔案',
-  FILE_DELETED: '刪除的檔案',
-  FILE_RENAMED: '檔案改名或搬移（autoload 路徑可能改變）',
-  FILE_MODE_CHANGED: '檔案權限改變',
-  UNSUPPORTED_FILE_TYPE: '不支援的檔案類型，未分析',
-  BINARY_FILE: 'binary 檔案，未分析',
-  SYMLINK_CHANGED: 'symlink 變更',
-  SUBMODULE_CHANGED: 'submodule 變更',
-  'COV-PHP-001:UNRECOGNIZED_PHP_CHANGE': '有無法自動解釋的變更，請看整個檔案',
-  'COV-PHP-001:PHP_GRAMMAR_DIVERGENCE': 'PHP 7 與 PHP 8 的解讀不同，請看整個檔案',
-  'COV-PHP-001:PHP_PARSE_ERROR': '無法解析，請看整個檔案',
-  'COV-PHP-001:PHP_FILE_DELETION_UNSUPPORTED': '檔案被清空',
-  'COV-TS-001:UNRECOGNIZED_TS_CHANGE': '有無法自動解釋的變更，請看整個檔案',
-  'COV-TS-001:TS_PARSE_ERROR': '無法解析，請看整個檔案',
-  'COV-TS-001:TS_FILE_DELETION_UNSUPPORTED': '檔案被清空',
-});
 
 /**
  * 原因代碼加上中文提示（若有）；單向門標示「單向門」。
@@ -118,6 +101,29 @@ export function formatReview(report) {
     return lines.join('\n');
   }
 
+  if (report.ai) {
+    lines.push(...aiLines(report, needsReview));
+  } else {
+    lines.push(...trackLines(report, needsReview));
+  }
+
+  if (reduced.length > 0) {
+    lines.push('', `不需要 review（${reduced.length}）：`);
+    lines.push(...reduced.map((file) => `  ${file.path}`));
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * 沒有 AI 審查時依路由分組的段落。
+ *
+ * @param {object} report - review report。
+ * @param {object[]} needsReview - 需要 review 的檔案。
+ * @returns {string[]} 文字行。
+ */
+function trackLines(report, needsReview) {
+  const lines = [];
   // 有路由時依路由分組；沒有路由資訊（或不認得的 track）的檔案歸入必須人工確認。
   const sections = report.routing
     ? [
@@ -130,11 +136,80 @@ export function formatReview(report) {
     lines.push('', heading);
     for (const file of ordered(files)) lines.push(...fileLines(file));
   }
+  return lines;
+}
 
-  if (reduced.length > 0) {
-    lines.push('', `不需要 review（${reduced.length}）：`);
-    lines.push(...reduced.map((file) => `  ${file.path}`));
+const AI_STATUS_TEXT = Object.freeze({
+  PASS: '未發現問題',
+  NEEDS_HUMAN: '需要人工',
+  FIXED: '已修正（尚未 commit）',
+  FAILED: '審查失敗',
+});
+
+/**
+ * 單一檔案的 AI 審查結果。
+ *
+ * @param {object} file - 帶 `ai` 的 file result。
+ * @returns {string[]} 文字行。
+ */
+function aiFileLines(file) {
+  const { ai } = file;
+  if (!ai) return [];
+  const status = AI_STATUS_TEXT[ai.status] ?? ai.status;
+  const detail = ai.status === 'FAILED' ? ai.error : snippetLine(ai.summary);
+  const lines = [`           AI：${status}${detail ? ` — ${detail}` : ''}${ai.fallback ? `（由備援模型 ${ai.model} 回答）` : ''}`];
+  for (const concern of (ai.concerns ?? []).slice(0, MAX_LISTED)) {
+    const where = concern.startLine > 0 ? `（${concern.side}:L${concern.startLine}${concern.endLine === concern.startLine ? '' : `-${concern.endLine}`}）` : '';
+    lines.push(`           ! [${concern.severity}] ${snippetLine(concern.title)}${where}`);
   }
+  if ((ai.concerns ?? []).length > MAX_LISTED) lines.push(`           ! …另有 ${ai.concerns.length - MAX_LISTED} 項（見 --json）`);
+  if (ai.fix && !ai.fix.applied) {
+    lines.push(`           修正建議：${snippetLine(ai.fix.description)}${ai.fix.error ? `（未套用：${ai.fix.error}）` : '（未套用）'}`);
+  }
+  return lines;
+}
 
-  return lines.join('\n');
+/**
+ * 壓成一行並截斷。
+ *
+ * @param {unknown} value - 文字。
+ * @returns {string} 單行文字。
+ */
+function snippetLine(value) {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  return text.length > 120 ? `${text.slice(0, 119)}…` : text;
+}
+
+/**
+ * AI 審查後的段落：需要人工確認、AI 已修正、AI 審查通過。
+ *
+ * @param {object} report - review report。
+ * @param {object[]} needsReview - 需要 review 的檔案。
+ * @returns {string[]} 文字行。
+ */
+function aiLines(report, needsReview) {
+  const { ai, human } = report;
+  const lines = [
+    `AI 審查：${ai.model}（effort ${ai.effort}）${ai.reviewed} 個檔案：未發現問題 ${ai.pass}、需要人工 ${ai.needsHuman}、已修正 ${ai.fixed}、失敗 ${ai.failed}；${ai.standards.present ? `依 ${ai.standards.path}` : `沒有 ${ai.standards.path}`}`,
+    `人工：${human.required ? `需要確認 ${human.files} 個檔案（${human.findings} 項）` : '不需要'}`,
+  ];
+  const groups = [
+    ['需要人工確認：', needsReview.filter((file) => file.needsHuman)],
+    ['AI 已修正（尚未 commit；commit 後會重新 review）：', needsReview.filter((file) => !file.needsHuman && file.ai?.status === 'FIXED')],
+  ];
+  for (const [heading, files] of groups) {
+    if (files.length === 0) continue;
+    lines.push('', `${heading.slice(0, -1)}（${files.length}）：`);
+    for (const file of ordered(files)) {
+      const marker = file.track === TRACK.AI_TRACK ? '' : '（單向門）';
+      const [first, ...rest] = fileLines(file);
+      lines.push(`${first}${marker}`, ...rest, ...aiFileLines(file));
+    }
+  }
+  const passed = needsReview.filter((file) => !file.needsHuman && file.ai?.status === 'PASS');
+  if (passed.length > 0) {
+    lines.push('', `AI 審查通過（${passed.length}）：`);
+    lines.push(...passed.map((file) => `  ${file.path}${file.ai.summary ? ` — ${snippetLine(file.ai.summary)}` : ''}`));
+  }
+  return lines;
 }

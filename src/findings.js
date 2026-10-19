@@ -10,8 +10,8 @@ import { TRACK } from './routing.js';
  * - 每個帶單向門 blocker 的 fact，每個 blocker 一個 finding；
  * - 檔案層級的單向門原因（`PROTECTED_PATH`、`POLICY_FILE_CHANGED`、`POLICY_CONFIG_INVALID`）各一個 finding。
  *
- * 只有路由為 `ESCALATED` 的檔案有 finding。其他需要 review 的變更（含機械審查無法解釋的部分）
- * 由 AI 審查；AI 判斷需要人工的項目之後由 AI 層加入（尚未實作）。
+ * 只有路由為 `ESCALATED` 的檔案有機械審查的 finding。其他需要 review 的變更（含機械審查無法解釋的部分）
+ * 由 AI 審查；AI 判斷需要人工的項目由 `aiFindingsFor()` 加入。
  *
  * finding id = sha256(path, subject, kind, blocker, anchor, ordinal)，不含行號與 byte offset，
  * 所以在上方插入程式碼不會讓 finding 變成新的。`anchor` 是 fact 中不隨位置改變的內容；
@@ -149,16 +149,67 @@ export function findingsFor(file, { oneWayDoors }) {
     });
   }
 
+  return numbered(file.path, drafts);
+}
+
+/**
+ * finding drafts 加上 `ordinal` 與 id。
+ *
+ * @param {string} path - 檔案路徑。
+ * @param {object[]} drafts - drafts。
+ * @returns {object[]} findings。
+ */
+function numbered(path, drafts) {
   const seen = new Map();
   return drafts.map((draft) => {
-    const group = digest([file.path, draft.subject, draft.kind, draft.blocker, draft.anchor]);
+    const group = digest([path, draft.subject, draft.kind, draft.blocker, draft.anchor]);
     const ordinal = seen.get(group) ?? 0;
     seen.set(group, ordinal + 1);
     return {
-      id: digest([file.path, draft.subject, draft.kind, draft.blocker, draft.anchor, ordinal]),
-      path: file.path,
+      id: digest([path, draft.subject, draft.kind, draft.blocker, draft.anchor, ordinal]),
+      path,
       ...draft,
       ordinal,
     };
   });
+}
+
+/**
+ * AI 審查後必須人工確認的項目（`kind: AI`）：
+ *
+ * - AI 判斷需要人工（含單向門檔案上 AI 提出的疑慮）：每個 high / medium 的 concern 一個 finding
+ *   （`AI_CONCERN`）；沒有這類 concern 時一個 `AI_NEEDS_HUMAN`。
+ * - AI 審查失敗的 `AI_TRACK` 檔案：一個 `AI_REVIEW_FAILED`（單向門檔案本來就要人工確認）。
+ * - AI 的修正沒有套用（未啟用 `--ai-apply`、或套用失敗）時同 AI 判斷需要人工。
+ *
+ * AI 的輸出不是 deterministic 的，同一個問題在兩次審查中的標題可能不同，所以 AI finding 的 id 不保證穩定；
+ * `scopeHash` 一律綁定整個檔案的內容（`contentHash`）。
+ *
+ * @param {object} file - 已帶 `ai` 的 file result。
+ * @returns {object[]} AI findings。
+ */
+export function aiFindingsFor(file) {
+  const { ai } = file;
+  if (!ai || file.track === TRACK.AUTO_PASS) return [];
+  const base = { subject: file.path, kind: 'AI', scopeHash: file.contentHash };
+  if (ai.status === 'FAILED') {
+    return file.track === TRACK.AI_TRACK
+      ? numbered(file.path, [{ ...base, blocker: 'AI_REVIEW_FAILED', anchor: ai.error, location: null, description: ai.error }])
+      : [];
+  }
+  const concerns = (ai.concerns ?? []).filter((concern) => concern.severity !== 'low');
+  // AI_TRACK：只有 AI 判斷需要人工時才有 finding。ESCALATED：AI 提出的疑慮一併交給人工。
+  if (file.track === TRACK.AI_TRACK && ai.status !== 'NEEDS_HUMAN') return [];
+  if (concerns.length === 0) {
+    return file.track === TRACK.AI_TRACK
+      ? numbered(file.path, [{ ...base, blocker: 'AI_NEEDS_HUMAN', anchor: 'AI_NEEDS_HUMAN', location: null, description: ai.summary }])
+      : [];
+  }
+  return numbered(file.path, concerns.map((concern) => ({
+    ...base,
+    blocker: 'AI_CONCERN',
+    anchor: compact(concern.title),
+    location: concern.startLine > 0 ? { side: concern.side, startLine: concern.startLine, endLine: concern.endLine } : null,
+    description: `${concern.title}：${concern.detail}`,
+  })));
 }

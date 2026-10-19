@@ -10,19 +10,20 @@
 - `src/review/git.js`：解析 ref、merge base、`git diff`、讀取 blob。
 - `src/review/review.js`：逐檔決策（`classifyEntry` / `reviewEntry`）、PR 層級彙整（`summarizeFiles`）、`reviewRange()`。
 - `src/review/format.js`：文字輸出。
+- `src/ai/`：第 2 層 AI 審查（`client.js` 呼叫 Anthropic API、`prompt.js`、`schema.js`、`review.js` 的 `runAiReview()`），見「AI 審查」。
 - 測試：`tests/review/review.test.js`。
 
 ## 做什麼、不做什麼
 
 - 決策單位是**檔案**（file-level review scope reduction）。每個檔案只會是 `NOT_SELECTED_FOR_HUMAN_REVIEW`，或是 `HUMAN_REVIEW_REQUIRED` 加上 `TARGETED` / `FULL` 其中之一。
-- 只有 `.php` 檔的修改與 rename 會送進 PHP analyzer（binary 除外）；其他變更一律 `FULL`。
+- 只有 PHP 與 TypeScript / JavaScript 檔的修改與 rename 會送進 analyzer（binary 除外）；其他變更一律 `FULL`。
 - 輸出中的行號（「變更位置」與 fact 位置）是 review 的**起點**，不是 review 範圍。blocker 尚未建立 `blocker → factId → provenance` 的 region-level contract（見 [README「目前能力邊界」](../README.md#目前能力邊界)），所以不能解讀成「只有標示的行需要看」：需要 review 的檔案都要看整個檔案。
-- CLI 只讀取 git 物件，結果輸出到 stdout（與 `--out` 指定的檔案），不會發布到 GitHub（不留言、不建立 check）。
+- CLI 只讀取 git 物件，結果輸出到 stdout（與 `--out` 指定的檔案），不會發布到 GitHub（不留言、不建立 check）。`--ai` 會把需要 review 的檔案的 diff 與內容送到 Anthropic API；`--ai-apply` 會改寫 worktree 中的檔案（不 commit）。
 
 ## 前置需求
 
 - `git`，在 PATH 上。
-- Node.js。CLI 用到 `os.availableParallelism`，至少需要 Node 18.14；`package.json` 沒有宣告 `engines`，只有 CI 使用的 Node 24 經過測試。CLI 只用 Node 內建模組與本 repo 的 `src/`，執行時不需要 `npm install`（`npm ci` 是給 lint 與測試用的）。
+- Node.js。CLI 用到 `os.availableParallelism`，至少需要 Node 18.14；`package.json` 沒有宣告 `engines`，只有 CI 使用的 Node 24 經過測試。CLI 只用 Node 內建模組與本 repo 的 `src/`，執行時不需要 `npm install`（`npm ci` 是給 lint 與測試用的）；只有 `--ai` 需要 `npm ci` 安裝的 `@anthropic-ai/sdk` 與環境變數 `ANTHROPIC_API_KEY`（見「AI 審查」）。
 - PHP CLI 8.3 以上，以 `php` 的名稱放在 PATH 上（`analyzers/php/composer.json` 要求 `php >= 8.3`；CI 使用 PHP 8.4）。
 - Composer 2，用來安裝 analyzer 依賴（[nikic/php-parser](https://github.com/nikic/PHP-Parser) 5.9.0，版本鎖定在 `analyzers/php/composer.lock`）：
 
@@ -65,13 +66,20 @@ node bin/review.js --repo /path/to/project --base origin/master --head HEAD
 | `--out <file>` | 無 | 另外把 JSON 報表寫到檔案。不論有沒有 `--json` 都是同一份 JSON；上層目錄不存在時會自動建立 |
 | `--fail-on-review` | 關 | PR 層級決策為 `HUMAN_REVIEW_REQUIRED` 時 exit code 為 1 |
 | `--fail-on-escalation` | 關 | PR 層級路由為 `ESCALATED`（有檔案命中單向門，AI 審查後必須人工確認，見「路由」）時 exit code 為 1 |
+| `--fail-on-human` | 關 | 有任何檔案需要人工（`human.required`），或有尚未 commit 的 AI 修正（`human.pendingFixes > 0`）時 exit code 為 1。沒有 `--ai` 時 `AI_TRACK` 檔案也算需要人工（沒有人看過） |
+| `--ai` | 關 | 把 `AI_TRACK` 與 `ESCALATED` 檔案交給 AI 審查，見「AI 審查」 |
+| `--ai-model <id>` | `claude-opus-5-5` | AI 審查的模型 |
+| `--ai-effort <level>` | `high` | `low`、`medium`、`high`、`xhigh` 或 `max`；其他值以 `AI_EFFORT_INVALID` 結束 |
+| `--ai-apply` | 關 | 把 AI 對 `AI_TRACK` 檔案的修正寫入 worktree（不 commit），見「AI 審查」 |
+| `--ai-concurrency <n>` | `4` | 同時進行的 AI 請求數；整數 1–32 |
+| `--ai-max-files <n>` | `50` | 最多交給 AI 的檔案數；整數 1–10000。超過的檔案為 AI 失敗（需要人工） |
 | `--concurrency <n>` | CPU 數與 8 取小者 | 同時執行的 analyzer process 數；整數 1–64。不影響結果與輸出順序 |
 | `--timeout-ms <n>` | `30000` | 單一檔案的 analyzer deadline（毫秒）；整數 1–2147483647。逾時的 analyzer 會被終止，該檔案為 `FULL`，原因 `ANALYZER_ERROR:PHP_ANALYZER_ABORTED` |
 | `--help`、`-h` | | 印出用法並以 0 結束（忽略其他參數） |
 
 - ref 以 `git rev-parse --verify <ref>^{commit}` 解析：branch、remote branch、tag、commit SHA、`HEAD~1` 都可以。
 - 以 `-` 開頭的 ref 一律被拒絕（`GIT_REF_INVALID`）。選項值本身以 `-` 開頭時必須寫成 `--base=-x`，`--base -x` 會先被參數解析拒絕。
-- `--concurrency` / `--timeout-ms` 不是範圍內的整數時以 `OPTION_INVALID` 結束。
+- `--concurrency` / `--timeout-ms` / `--ai-concurrency` / `--ai-max-files` 不是範圍內的整數時以 `OPTION_INVALID` 結束。`--ai-*` 沒有搭配 `--ai` 時以 `OPTION_REQUIRES_AI` 結束。
 
 ## 比較範圍：merge base
 
@@ -171,11 +179,70 @@ TypeScript / JavaScript：analyzer（`analyzers/ts`，TypeScript compiler API）
 | `AI_TRACK` | 需要 review，但沒有任何原因屬於單向門。包括 `FULL`（無法解釋的變更、analyzer 失敗、沒有分析的檔案） | 交給 AI 審查，由 AI 判斷是否需要人工 |
 | `ESCALATED` | 任一原因屬於單向門；或 `decision` 不是這兩種已知的值 | 一樣先交給 AI 審查，但 AI 不能放行，之後一律交給人工確認 |
 
-AI 審查層尚未實作（見 [三層審查架構設計](superpowers/specs/2026-10-18-three-tier-review-design.md) §6）。
+AI 審查以 `--ai` 啟用，見「AI 審查」。沒有 `--ai` 時沒有人看過 `AI_TRACK` 檔案，`human.required` 把它們也算成需要人工。
 
 單向門（做了就難以回頭的變更）的預設清單：`TRANSACTION_BOUNDARY_REMOVED`、`TRANSACTION_ROLLBACK_REMOVED`、`ROW_LOCK_REMOVED`、`AUTHORIZATION_GUARD_REMOVED`、`AUTHORIZATION_ABILITY_CHANGED`、`MIDDLEWARE_GUARD_REMOVED`、`SIGNATURE_VERIFICATION_REMOVED`、`GUARD_CLAUSE_REMOVED`、`PROTECTED_CALL_REMOVED`、`PAYMENT_IDEMPOTENCY_IDENTITY_CHANGED`、`PROTECTED_ARGUMENT_CHANGED`、`SENSITIVE_OPERAND_CHANGED`、`MASS_ASSIGNMENT_CHANGED`、`SERIALIZED_ATTRIBUTES_CHANGED`、`SIDE_EFFECT_CALL_ADDED`、`DATA_DELETION_ADDED`、`PROTECTED_PATH`、`POLICY_FILE_CHANGED`、`POLICY_CONFIG_INVALID`。其中幾個代碼由專案設定的規則產生（見 [專案設定](project-config.md)）。
 
 PR 層級的 `routing.track` 取所有檔案中最嚴格的一個（`ESCALATED` > `AI_TRACK` > `AUTO_PASS`）；沒有任何檔案變更時為 `AUTO_PASS`。
+
+## AI 審查（第 2 層，`--ai`）
+
+機械審查之後，`--ai` 把 `AI_TRACK` 與 `ESCALATED` 的檔案逐一交給 Claude 審查（`src/ai/`）。`AUTO_PASS` 檔案不送。需要：
+
+- 在 Reviewer 目錄執行過 `npm ci`（安裝 `@anthropic-ai/sdk`，只在 `--ai` 時才載入；沒有安裝時以 `AI_SDK_MISSING` 結束）。
+- 環境變數 `ANTHROPIC_API_KEY`（沒有時在分析之前以 `AI_NOT_CONFIGURED` 結束）。
+
+### 送給 AI 的內容
+
+每個檔案一個請求：
+
+- system：固定的審查規則，以及 merge base 的 `codingstandards.md`（PR 修改它不影響這次審查；修改本身是 `POLICY_FILE_CHANGED` 單向門）。這部分每個檔案都相同，標記 prompt cache，第二個檔案起以 cache 讀取。
+- user：機械審查的結果（路由、`fallback`、原因與說明、命中的單向門、每個 fact 的位置、描述與原因代碼）、`git diff -U5`，以及 `FULL` 檔案的 head 完整內容（帶行號）。
+- 單一檔案的輸入上限是 200,000 字元：diff 超過時**不截斷**，該檔案的 AI 結果為失敗（`AI_INPUT_TOO_LARGE`）；diff 放得下、完整內容放不下時只送 diff，並明確告訴 AI 沒有完整內容。binary 不送（`AI_INPUT_BINARY`）。
+- 檔案數超過 `--ai-max-files`（預設 50）時，其餘檔案不送（`AI_FILE_LIMIT_EXCEEDED`）。
+
+### 模型與 API
+
+- 模型預設 `claude-opus-5-5`，`--ai-effort` 預設 `high`（模型的 thinking 一律開啟，以 effort 控制深度）。
+- 以 structured outputs（`output_config.format` 的 JSON schema，`src/ai/schema.js`）取得固定格式的結果，收到後再逐欄驗證。
+- **預設啟用 server-side fallback**（`fallbacks: "default"`，beta header `server-side-fallback-2026-07-01`）：主要模型拒絕回答時，API 在同一個請求中改由 Anthropic 建議的備援模型回答。由備援模型回答的檔案在報表中標示 `ai.fallback: true` 與實際的 `ai.model`，文字輸出加註「由備援模型 … 回答」。整條鏈仍拒絕時為 `AI_REFUSED`。這個參數在 Amazon Bedrock、Vertex AI、Microsoft Foundry 不可用；目前只支援 Claude API。
+- 以 streaming 取得完整回應（避免大檔案逾時）；SDK 的預設重試（2 次）之後仍失敗的請求為該檔案的 AI 失敗。
+
+### AI 的結論
+
+AI 對每個檔案回答 `PASS`（沒有問題）、`NEEDS_HUMAN`（需要人工）或 `FIX`（提出小修正），附摘要、疑慮（`high` / `medium` / `low`、位置、引用的規範）與（單向門檔案的）流程圖。
+
+| 路由 | AI 回答 | `ai.status` | 需要人工（`needsHuman`） |
+|---|---|---|---|
+| `AI_TRACK` | `PASS`，沒有 `high` 疑慮 | `PASS` | 否 |
+| `AI_TRACK` | `PASS` 但有 `high` 疑慮、`NEEDS_HUMAN` | `NEEDS_HUMAN` | 是 |
+| `AI_TRACK` | `FIX`，有 `--ai-apply` 且修正通過檢查 | `FIXED` | 否（但有尚未 commit 的修正，見下） |
+| `AI_TRACK` | `FIX`，沒有 `--ai-apply` 或修正沒有通過檢查 | `NEEDS_HUMAN`（修正變成建議） | 是 |
+| `ESCALATED` | 任何回答 | AI 的意見（`FIX` 一律不套用，視為 `NEEDS_HUMAN`） | **是**：AI 不能放行單向門 |
+| 任何 | AI 失敗 | `FAILED` | 是 |
+
+AI 失敗的原因（`ai.error`）：`AI_INPUT_BINARY`、`AI_INPUT_TOO_LARGE`、`AI_FILE_LIMIT_EXCEEDED`、`AI_REFUSED[:<category>]`、`AI_OUTPUT_TRUNCATED`（輸出超過 32,000 token）、`AI_OUTPUT_EMPTY`、`AI_OUTPUT_NOT_JSON`、`AI_OUTPUT_INVALID:<欄位>`、`AI_AUTHENTICATION_FAILED`、`AI_PERMISSION_DENIED`、`AI_RATE_LIMITED`、`AI_BAD_REQUEST`、`AI_CONNECTION_FAILED`、`AI_API_ERROR:<HTTP status>`、`AI_REQUEST_FAILED`。
+
+AI 判斷需要人工的項目成為 `kind: "AI"` 的 finding（見「Findings」）。
+
+### `--ai-apply`
+
+把 AI 對 `AI_TRACK` 檔案提出的修正寫入 worktree，**不 commit**。commit 之後再執行一次 review，新的 head 會從機械審查開始重新審查；所以 AI 不可能用修正繞過單向門偵測。
+
+- 執行前 worktree 必須正好是 `--head` 而且沒有未 commit 的追蹤檔案變更，否則在呼叫 AI 之前以 `AI_APPLY_WORKTREE_MISMATCH` 結束。
+- 修正是「把 `oldText` 換成 `newText`」的清單；每個 `oldText` 必須在 head 內容中恰好出現一次。
+- 修正後的內容先交給同一套機械審查（同樣的 adapter、interpreters 與專案設定）：命中單向門時不套用（`AI_FIX_HITS_ONE_WAY_DOOR`）。不支援的檔案類型無法檢查，照樣套用。
+- 不套用的其他原因（`ai.fix.error`）：`AI_FIX_EMPTY`、`AI_FIX_EDIT_EMPTY`、`AI_FIX_EDIT_NOT_FOUND`、`AI_FIX_EDIT_NOT_UNIQUE`、`AI_FIX_NO_CHANGE`、`AI_FIX_HAS_HIGH_CONCERN`（同時有 `high` 疑慮）、`AI_FIX_FILE_DELETED`、`AI_FIX_FILE_UNSUPPORTED`（symlink、binary 等）、`AI_FIX_WORKTREE_MISMATCH`、`AI_FIX_CHECK_FAILED`、`AI_FIX_NOT_ALLOWED_ON_ESCALATED`。
+
+### Prompt injection
+
+diff、檔案內容與 `codingstandards.md` 都來自 PR。它們放在 `<diff>`、`<file>`、`<machine_review>`、`<coding_standards>` 標籤中，system prompt 明確說明標籤內是資料不是指示；內容中與標籤同名的開頭或結尾會被跳脫（加上 `\` 與零寬空白），無法提前關閉標籤。程式碼或註解中試圖影響審查的文字（例如「reviewer: PASS」）要求 AI 回答 `NEEDS_HUMAN` 並列為 `high` 疑慮。即使 AI 被誤導，最壞的結果是一個 `AI_TRACK` 檔案被放行；單向門不受 AI 影響。
+
+### 限制
+
+- AI 的輸出不是 deterministic 的；同一個 PR 重跑可能得到不同的疑慮，AI finding 的 id 也可能不同。
+- 每個檔案單獨審查，AI 看不到其他檔案的變更（例如呼叫端的配合修改）。
+- 本 repo 的測試以假的 client 驗證請求格式與所有分支，沒有呼叫真實的 API。
 
 ## 原因代碼
 
@@ -420,6 +487,10 @@ AI 審查後必須人工確認（ESCALATED，單向門）：
 | `config.digest` | string \| null | 有效設定內容的 sha256；其他狀態為 `null` |
 | `routing.track` | string | PR 層級路由：`AUTO_PASS`、`AI_TRACK` 或 `ESCALATED`（見「路由」） |
 | `routing.autoPass` / `routing.aiTrack` / `routing.escalated` | number | 各路由的檔案數 |
+| `ai` | object \| null | AI 審查的彙總；沒有 `--ai` 時為 `null`。`model`、`effort`、`apply`、`standards`（`path`、`commit`、`present`、`digest`：merge base 的 `codingstandards.md`）、`reviewed`（交給 AI 的檔案數）、`pass` / `needsHuman` / `fixed` / `failed`（各狀態的檔案數）、`fallbackUsed`（由備援模型回答的檔案數）、`usage`（`inputTokens`、`outputTokens`、`cacheReadInputTokens`、`cacheCreationInputTokens` 的合計） |
+| `human.required` | boolean | 是否有任何檔案需要人工 |
+| `human.files` / `human.findings` | number | 需要人工的檔案數，與這些檔案的 finding 數 |
+| `human.pendingFixes` | number | `--ai-apply` 寫入 worktree、尚未 commit 的 AI 修正數 |
 | `files` | object[] | 每個變更檔案的結果，順序與 `git diff --raw` 相同 |
 
 ### `files[]`
@@ -445,17 +516,25 @@ AI 審查後必須人工確認（ESCALATED，單向門）：
 | `facts[].blockers` | string[] | 這個 fact 自己產生的原因代碼（`reasons` 是整個檔案的彙總）；沒有 domain 規則時為 `FACT_UNHANDLED:<fact id>` |
 | `facts[].anchor` | object | fact 中不隨位置改變的內容（例如移除的 callee 的名稱與 receiver），用於 finding id |
 | `facts[].scopeHash` | string \| null | head 版本中所屬 method / function 的 canonical AST hash（`php:<hash>`）；排版、註解與一致的區域變數改名不會改變它。不在 method / function 內、或 head 中已沒有該 method 時為整個檔案的 canonical hash；沒有輸出 scope 的 analyzer 為 `null` |
-| `findings` | object[] | 需要人工處理的項目（只有 `track` 為 `ESCALATED` 的檔案才有，其他為 `[]`），見「Findings」 |
+| `findings` | object[] | 需要人工處理的項目：`ESCALATED` 檔案的單向門，以及 AI 判斷需要人工的項目，見「Findings」 |
+| `needsHuman` | boolean | 這個檔案是否需要人工：`ESCALATED` 一律是；`AI_TRACK` 在 AI 判斷需要人工、AI 失敗或沒有 `--ai` 時是 |
+| `ai` | object | 只有交給 AI 的檔案才有：`status`（`PASS`、`NEEDS_HUMAN`、`FIXED`、`FAILED`）、`error`（失敗原因，否則為 `null`）、`summary`、`concerns[]`（`title`、`detail`、`severity`、`side`、`startLine`、`endLine`（0 為檔案層級）、`standard`）、`fix`（`description`、`edits[]`、`applied`、`error`；沒有提出修正時為 `null`）、`flowchart`（Mermaid，沒有時為空字串）、`model`、`fallback` |
 | `changedLines` | object[] | 只有 `decision` 為 `HUMAN_REVIEW_REQUIRED` 的檔案才有這個欄位。`git diff -U0` 的 hunk：`{ side, startLine, endLine }`，有新內容的 hunk 為 `head` 的行號，純刪除的 hunk 為 `base` 的行號。修改與 rename 以外的檔案（新增、刪除、`type-changed`）為 `[]`；沒有文字 hunk 的變更（binary、只改權限、內容不變的 rename）也是 `[]` |
 
 ### Findings
 
-`files[].findings` 是必須人工確認的項目，也是二次 review 的追蹤單位（`src/findings.js`），之後的 GitHub 整合以它記錄「看過了」或「修好了」。目前只有機械審查的單向門（AI 審查層加入的「需要人工」項目尚未實作）：
+`files[].findings` 是必須人工確認的項目，也是二次 review 的追蹤單位（`src/findings.js`），之後的 GitHub 整合以它記錄「看過了」或「修好了」。機械審查的單向門：
 
 - 每個帶單向門原因的 fact，每個原因一個 finding（`kind` 為 fact 種類）；
 - 檔案層級的單向門原因（`PROTECTED_PATH`、`POLICY_FILE_CHANGED`、`POLICY_CONFIG_INVALID`）各一個（`kind: "FILE"`）。
 
-`FULL` 本身不是人工項目：無法解釋的部分交給 AI 審查。
+`FULL` 本身不是人工項目：無法解釋的部分交給 AI 審查。AI 審查（`--ai`）另外加入 `kind: "AI"` 的 finding：
+
+- `AI_TRACK` 檔案 AI 判斷需要人工：每個 `high` / `medium` 疑慮一個（`blocker: "AI_CONCERN"`，`anchor` 為疑慮標題，`location` 為疑慮的位置）；沒有這類疑慮時一個 `AI_NEEDS_HUMAN`。
+- `ESCALATED` 檔案上 AI 提出的 `high` / `medium` 疑慮也各一個 `AI_CONCERN`，與單向門一起交給人工。
+- AI 審查失敗的 `AI_TRACK` 檔案：一個 `AI_REVIEW_FAILED`（`anchor` 為失敗原因）。
+
+AI finding 的 `scopeHash` 一律是整個檔案的 `contentHash`；AI 的輸出不是 deterministic 的，id 不保證在重跑時相同。
 
 | 欄位 | 型別 | 說明 |
 |---|---|---|
@@ -650,8 +729,8 @@ TypeScript / JavaScript 的 finding 與 PHP 相同，由 fact 產生（`scopeHas
 
 | exit code | 意義 |
 |---|---|
-| 0 | 完成。沒有 `--fail-on-review` / `--fail-on-escalation` 時，即使有檔案需要 review 也是 0；有 `--fail-on-review` 時表示 PR 層級為 `NOT_SELECTED_FOR_HUMAN_REVIEW`（包括 `NO_CHANGES`）；有 `--fail-on-escalation` 時表示 PR 層級路由不是 `ESCALATED` |
-| 1 | 有 `--fail-on-review` 且 PR 層級為 `HUMAN_REVIEW_REQUIRED`，或有 `--fail-on-escalation` 且 PR 層級路由為 `ESCALATED` |
+| 0 | 完成。沒有 `--fail-on-*` 時，即使有檔案需要 review 也是 0；有 `--fail-on-review` 時表示 PR 層級為 `NOT_SELECTED_FOR_HUMAN_REVIEW`（包括 `NO_CHANGES`）；有 `--fail-on-escalation` 時表示 PR 層級路由不是 `ESCALATED`；有 `--fail-on-human` 時表示沒有檔案需要人工、也沒有尚未 commit 的 AI 修正 |
+| 1 | 有 `--fail-on-review` 且 PR 層級為 `HUMAN_REVIEW_REQUIRED`、有 `--fail-on-escalation` 且 PR 層級路由為 `ESCALATED`，或有 `--fail-on-human` 且需要人工 / 有尚未 commit 的 AI 修正 |
 | 2 | 錯誤。stderr 印出 `error: <訊息>`，不輸出報表 |
 
 exit code 2 的錯誤：
@@ -659,7 +738,12 @@ exit code 2 的錯誤：
 | 訊息 | 原因 |
 |---|---|
 | `OPTION_MISSING:--base` | 沒有 `--base`，或值為空字串 |
-| `OPTION_INVALID:--<選項> <值>` | `--concurrency` 不是 1–64 的整數，或 `--timeout-ms` 不是 1–2147483647 的整數 |
+| `OPTION_INVALID:--<選項> <值>` | `--concurrency` 不是 1–64 的整數、`--timeout-ms` 不是 1–2147483647 的整數、`--ai-concurrency` 不是 1–32 的整數，或 `--ai-max-files` 不是 1–10000 的整數 |
+| `OPTION_REQUIRES_AI:--<選項>` | `--ai-model`、`--ai-effort`、`--ai-apply`、`--ai-concurrency`、`--ai-max-files` 沒有搭配 `--ai` |
+| `AI_EFFORT_INVALID:<值>` | `--ai-effort` 不是 `low`、`medium`、`high`、`xhigh`、`max` |
+| `AI_NOT_CONFIGURED:…` | 有 `--ai` 但沒有設定 `ANTHROPIC_API_KEY` |
+| `AI_SDK_MISSING:…` | 有 `--ai` 但沒有安裝 `@anthropic-ai/sdk`（在 Reviewer 目錄執行 `npm ci`） |
+| `AI_APPLY_WORKTREE_MISMATCH:…` | 有 `--ai-apply`，但 worktree 不是 `--head` 或有未 commit 的追蹤檔案變更 |
 | `GIT_REF_INVALID:<ref>` | ref 為空（例如 `--head ''`）或以 `-` 開頭（例如 `--base=-x`）。不存在的 ref 是 `GIT_FAILED` |
 | `GIT_FAILED:git <子指令>: <git 的訊息>` | git 指令失敗，例如 ref 不存在（`fatal: Needed a single revision`，包括 shallow clone 沒有 fetch base）、`--repo` 不存在或不是 git repository、PATH 上沒有 `git`（`spawn git ENOENT`） |
 | `GIT_NO_MERGE_BASE:<base SHA>..<head SHA>` | base 與 head 沒有共同祖先：不相關的歷史，或 shallow clone 沒有抓到 merge base |
@@ -668,7 +752,7 @@ exit code 2 的錯誤：
 
 `GIT_DIFF_UNPARSABLE:<header>`（`git diff --raw` 的輸出無法解析）是防禦性檢查，正常執行不會出現；出現時也是 exit code 2。
 
-analyzer 的問題（找不到 `php`、沒有安裝依賴、逾時）**不是** exit code 2，而是讓檔案變成 `FULL`（見「前置需求」與「原因代碼」）。
+analyzer 的問題（找不到 `php`、沒有安裝依賴、逾時）**不是** exit code 2，而是讓檔案變成 `FULL`（見「前置需求」與「原因代碼」）。同樣地，個別檔案的 AI 失敗（API 錯誤、拒絕、輸出格式錯誤）不是 exit code 2，而是讓該檔案需要人工。
 
 ## 在 CI 中使用
 
@@ -702,6 +786,8 @@ exit "$status"   # 0：不需要 Human Review；1：需要（清單見 review/re
 ```
 
 - `--fail-on-review` 的 exit code 1 表示「需要 Human Review」，不是 CLI 失敗；CLI 失敗是 2。
+- 加上 AI 審查：把 `--fail-on-review` 換成 `--ai --fail-on-human`，並以 CI secret 提供 `ANTHROPIC_API_KEY`。exit code 1 表示 AI 審查之後仍需要人工（`ESCALATED`、AI 判斷需要人工或 AI 失敗），清單是 `review/report.json` 中 `needsHuman` 為 `true` 的檔案與它們的 `findings`。AI 失敗只會讓檔案需要人工，CI 不需要另外檢查。
+- 只有 `--fail-on-escalation`、沒有 `--ai` 時，`AI_TRACK` 檔案沒有任何人或 AI 審查；這種組合只適合在另有人工 review 流程時使用。
 - GitHub Actions 的 `run:` 預設以 `bash -e` 執行（指定 `shell: bash` 時是 `bash -eo pipefail`），CLI 一以非 0 結束，step 就會中止。如果在 node 指令之後才另起一行寫 `status=$?`，那一行、exit code 2 的判斷與 analyzer 檢查都不會執行，「analyzer 無法執行」會被當成一般的 exit code 1（需要 review）。
 - `--out` 讓 stdout 保留給人看的文字報表，同時留下 JSON 供後續步驟使用。
 - `ANALYZER_ERROR:PHP_ANALYZER_ABORTED`（逾時）也會被上面的檢查擋下；大型檔案多時可以調高 `--timeout-ms`。
@@ -711,7 +797,7 @@ exit "$status"   # 0：不需要 Human Review；1：需要（清單見 review/re
 ## 限制
 
 - 決策是 file-level：`TARGETED` 的位置只是起點，仍需 review 整個檔案。
-- 只分析 PHP（`.php`）。新增、刪除、非 PHP、binary、symlink、submodule、type change 一律 `FULL`，不會分析內容。
+- 只分析 PHP 與 TypeScript / JavaScript。新增、刪除、其他語言、binary、symlink、submodule、type change 一律 `FULL`，不會分析內容（有 `--ai` 時交給 AI 審查）。
 - 只比較 commit，不看 working tree。
 - 需要 base 與 head 的共同歷史；shallow clone 可能缺少 base（`GIT_FAILED`）或找不到 merge base（`GIT_NO_MERGE_BASE`）。
 - 不檢查目標 PHP 版本是否支援新語法（例如在 PHP 7 專案中使用參數 trailing comma），請以目標版本的 `php -l` 檢查。

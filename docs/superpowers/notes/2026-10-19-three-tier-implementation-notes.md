@@ -115,6 +115,27 @@
 13. **Laravel 的一般 `->delete()` 不算資料刪除**（可能是 soft delete），`DB::table('x')->delete()` 這種鏈也偵測不到（鏈的中段沒有 receiver），交給 AI。
 14. **real-repo evaluation 仍沒有 TS 版本**（步驟 5 的第 8 點）。
 
+## 步驟 9a：第 2 層 AI 審查
+
+**做了什麼**：`src/ai/`（`client.js`：Anthropic Messages API；`prompt.js`：system / user prompt 與標籤跳脫；`schema.js`：structured outputs 的 JSON schema 與驗證；`review.js`：`runAiReview()`、套用修正、`needsHuman` / `summarizeHuman`）。`reviewRange()` 新增 `ai` 選項；報表新增 `ai`、`human`、`files[].ai`、`files[].needsHuman`；`src/findings.js` 新增 `aiFindingsFor()`（`kind: AI`）。CLI 新增 `--ai`、`--ai-model`、`--ai-effort`、`--ai-apply`、`--ai-concurrency`、`--ai-max-files`、`--fail-on-human`；文字報表在 AI 審查後改為「需要人工確認」「AI 已修正」「AI 審查通過」三段。
+
+**問題與處理**：
+
+1. **環境中沒有 API 憑證**：無法對真實 API 做 smoke test。以假的 client 驗證請求格式（model、`betas`、`fallbacks: "default"`、`output_config` 的 effort 與 JSON schema、system 的 prompt cache）與所有分支；參數名稱與型別對照 `@anthropic-ai/sdk` 0.131.0 的型別定義。建議第一次使用時先手動執行 `ANTHROPIC_API_KEY=… node bin/review.js --base <ref> --ai` 確認。
+2. **runtime 依賴**：設計 §3.5 寫「Reviewer 主套件維持沒有 runtime dependency」。AI 層需要官方 SDK（`@anthropic-ai/sdk`，鎖定 0.131.0），處理方式是只在 `--ai` 時動態載入：機械審查仍不需要 `npm install`，沒有安裝時 `--ai` 以 `AI_SDK_MISSING` 結束。
+3. **每個檔案一個請求**，而不是整個 PR 一個請求：失敗互不影響、可以並行、單一請求的大小可控；共同的 system prompt（審查規則 + `codingstandards.md`）以 prompt cache 重用。代價是 AI 看不到其他檔案的變更（記為限制）。
+4. **「已修正」的語意**：設計建議 `AI_TRACK` 預設直接 commit，但「AI 是否直接 commit」仍是待決事項。處理：`--ai-apply` 只寫入 worktree、不 commit；`FIXED` 的檔案不算需要人工，但列在 `human.pendingFixes`，`--fail-on-human` 在 commit 並重新 review 之前會失敗。要不要讓 CI 自動 commit，留到步驟 7（GitHub 整合）與使用者決定。
+5. **修正的格式用「唯一字串替換」而不是 unified diff**：模型產生的 hunk header 常有誤差；`oldText` 必須在 head 中恰好出現一次，可以精確驗證。修正後的內容再交給同一套機械審查，命中單向門時不套用，所以 AI 的修正不會在 worktree 中偷偷加入單向門。
+6. **單向門檔案的 FIX 一律不套用**，變成建議；AI 在單向門檔案上的意見（含 PASS）不影響「需要人工」。
+7. **一致性規則**：AI 回答 PASS 但同時列出 `high` 疑慮時視為 NEEDS_HUMAN；FIX 同時有 `high` 疑慮時不套用。
+8. **AI finding 的 id 不穩定**：AI 的輸出不是 deterministic 的，同一個問題的標題在重跑時可能不同。`scopeHash` 一律綁定 `contentHash`（檔案任何改變都讓豁免失效）。步驟 7 的狀態機需要對 `kind: AI` 的 finding 另外處理（例如不以 id 比對，而是「檔案內容未變時沿用上次的人工確認」）。
+9. **輸入上限**：單一檔案 200,000 字元。diff 超過時不截斷，直接視為 AI 失敗；完整內容放不下時只送 diff 並明確告知 AI。binary 不送。超過 `--ai-max-files` 的檔案也視為失敗。
+10. **Prompt injection**：PR 的內容放在標籤中並跳脫同名標籤；system prompt 要求把試圖影響審查的文字列為 `high` 疑慮並回答 NEEDS_HUMAN。即使被誤導，最壞的結果是一個 `AI_TRACK` 檔案被放行，單向門不受影響。
+11. **設定錯誤與執行失敗分開處理**：沒有 API key、沒有安裝 SDK、effort 無效、`--ai-apply` 的 worktree 不符 → exit code 2（在分析與呼叫 API 之前）；個別檔案的 API 錯誤、拒絕、輸出截斷或格式錯誤 → 該檔案 `FAILED`，需要人工。
+12. **模型與參數**：模型預設 `claude-opus-5-5`，effort 預設 `high`（明確設定；這個模型 thinking 一律開啟，不傳 `thinking`）；`max_tokens` 32,000 並以 streaming 取得完整回應。預設啟用 server-side fallback（`fallbacks: "default"`），由備援模型回答的檔案在報表中標示；這個參數只在 Claude API 可用。
+13. **輸出語言固定為繁體中文**（寫在 system prompt），目前不能設定。
+14. **沒有 `--ai` 時**，`human.required` 把 `AI_TRACK` 也算進去（沒有人看過）。因此 `--fail-on-human` 不加 `--ai` 時等同 `--fail-on-review`。
+
 ## 跨步驟的注意事項
 
 1. **real-repo evaluation 的 `compare`**：`--baseline-ref` 指向 fact schema v2 之前的 commit 時，每筆有 fact 的結果在 `facts` 欄位都會不同（`callee` / `container` 的形狀改變，且多了 `properties.scope`）。這是預期的；比較時請看 `decision`、`fallback`、`reasons` 與 gate。`evaluation/real-repo/run.js` 以 baseline snapshot 自己的 `PHP_LARAVEL_DOMAIN_INTERPRETERS` 執行，所以保留了這個相容入口。
