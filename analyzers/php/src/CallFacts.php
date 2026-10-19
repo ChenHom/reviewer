@@ -5,11 +5,39 @@ declare(strict_types=1);
 namespace Reviewer\PhpAnalyzer;
 
 /**
- * 依 subject + callee 分組配對 before / after calls，輸出 generic call facts：
- * CALL_REMOVED、CALL_ADDED，以及 named argument 的 CALL_ARGUMENT_CHANGED。
+ * 依 slot（subject + 所在的 closure，見 CallExtractor）+ callee 分組配對 before / after calls，
+ * 輸出 generic call facts：CALL_REMOVED、CALL_ADDED，以及 named argument 的 CALL_ARGUMENT_CHANGED。
  */
 final class CallFacts
 {
+    /**
+     * 每筆 call 加上配對用的 `slot`：subject 加上所在 closure 的錨點鏈中、兩側都存在的最長前綴。
+     *
+     * 只有兩側都存在的 closure 才分開配對。closure 只存在於一側時（新增或移除 `DB::transaction(function () { … })`
+     * 這類包裝、路由路徑等錨點改變），其中的 call 與外層一起配對：解開包裝時原本在裡面的 call 不會被當成
+     * 移除 + 新增，結果與不分 closure 配對時相同。
+     *
+     * @param array{calls: list<array<string, mixed>>, closures: array<string, true>} $before CallExtractor::extract() 的結果。
+     * @param array{calls: list<array<string, mixed>>, closures: array<string, true>} $after
+     * @return array{0: list<array<string, mixed>>, 1: list<array<string, mixed>>} 加上 `slot` 的 before / after calls。
+     */
+    public static function assignSlots(array $before, array $after): array
+    {
+        $slotted = static function (array $calls, array $otherClosures): array {
+            return array_map(static function (array $call) use ($otherClosures): array {
+                $chain = $call['chain'];
+                while ($chain !== [] && !isset($otherClosures[CallExtractor::closureKey($call['subject'], $chain)])) {
+                    array_pop($chain);
+                }
+                $call['slot'] = CallExtractor::closureKey($call['subject'], $chain);
+
+                return $call;
+            }, $calls);
+        };
+
+        return [$slotted($before['calls'], $after['closures']), $slotted($after['calls'], $before['closures'])];
+    }
+
     /**
      * @param list<array<string, mixed>> $beforeCalls
      * @param list<array<string, mixed>> $afterCalls
@@ -72,7 +100,7 @@ final class CallFacts
     {
         $groups = [];
         foreach ($calls as $call) {
-            $groups[$call['subject'] . '|' . $call['calleeKey']][] = $call;
+            $groups[$call['slot'] . '|' . $call['calleeKey']][] = $call;
         }
 
         return $groups;
@@ -107,6 +135,7 @@ final class CallFacts
         return [
             // 內部配對 key（StructuralDiff budget 用），輸出前移除。
             'calleeKey' => $call['calleeKey'],
+            'slot' => $call['slot'],
             'id' => 'php-' . substr(
                 hash('sha256', implode('|', [$kind, $path, $call['subject'], $detail, $startByte, $endByte])),
                 0,

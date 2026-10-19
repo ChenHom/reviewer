@@ -117,7 +117,7 @@ Analyzer 以 [nikic/php-parser](https://github.com/nikic/PHP-Parser) 5.9.0（版
 
 目前輸出 15 種 generic facts（各 fact 的細節與結構化 `callee` / `container` 格式見 [README「已實作」](../README.md#已實作)）：
 
-- `CallExtractor` / `CallFacts`：`CALL_ARGUMENT_CHANGED`（named argument）、`CALL_REMOVED` / `CALL_ADDED`（method、nullsafe method 與 static call，含 closure 內的巢狀 call 與鏈式 call）。
+- `CallExtractor` / `CallFacts`：`CALL_ARGUMENT_CHANGED`（named argument）、`CALL_REMOVED` / `CALL_ADDED`（method、nullsafe method 與 static call，含 closure 內的巢狀 call 與鏈式 call）。call 以 subject、兩側都存在的 closure（錨點鏈）與 callee 分組配對，call 在 closure 之間移動時產生 `CALL_REMOVED` / `CALL_ADDED`。
 - `StructuralDiff`：`CALL_ARGUMENT_REMOVED` / `CALL_ARGUMENT_ADDED`、`BINARY_OPERATOR_CHANGED`、`GUARD_REMOVED` / `GUARD_ADDED`、`ARRAY_ITEM_REMOVED` / `ARRAY_ITEM_ADDED`、`LITERAL_CHANGED`、`EXPRESSION_NEGATED`、`RETURN_VALUE_CHANGED`、`CALL_ARGUMENTS_REORDERED`、`VARIABLE_CHANGED`。
 
 下列情況 analyzer 回報 `PARTIAL_PARSE`，`COV-PHP-001` 帶 reasonCode：

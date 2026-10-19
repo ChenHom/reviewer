@@ -340,6 +340,22 @@
     ]
   },
   {
+    "id": "MUT-021",
+    "classification": "critical",
+    "fixture": "verify-sign-moved-between-routes",
+    "path": "app/Providers/PaymentRouteServiceProvider.php",
+    "description": "verifySign moves from the admin refund route closure into the order status route closure in the same method; the admin route no longer verifies the signature.",
+    "expectedCurrentDecision": "HUMAN_REVIEW_REQUIRED",
+    "expectedTrack": "ESCALATED",
+    "expectedFactKinds": [
+      "CALL_REMOVED",
+      "CALL_ADDED"
+    ],
+    "expectedReasons": [
+      "SIGNATURE_VERIFICATION_REMOVED"
+    ]
+  },
+  {
     "id": "MUT-TS-001",
     "classification": "critical",
     "fixture": "typescript/transaction-unwrapped",

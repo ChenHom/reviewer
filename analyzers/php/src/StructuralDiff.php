@@ -26,7 +26,7 @@ final class StructuralDiff
     /** @var list<array{string, int}> 未解釋差異（描述, before byte offset） */
     private array $unexplained = [];
 
-    /** @var array<string, int> fact budget：kind|subject|callee(|argument) → 可消耗次數 */
+    /** @var array<string, int> fact budget：kind|slot|callee(|argument) → 可消耗次數（slot 見 CallExtractor） */
     private array $budget = [];
 
     /** 已消耗的 call fact 次數（與 $facts 一起構成「已解釋」的證據） */
@@ -63,7 +63,7 @@ final class StructuralDiff
         foreach ($callFacts as $fact) {
             $key = self::budgetKey(
                 $fact['kind'],
-                $fact['subject'],
+                $fact['slot'],
                 $fact['calleeKey'],
                 $fact['properties']['argument'] ?? null,
             );
@@ -94,14 +94,14 @@ final class StructuralDiff
         return ['facts' => $this->facts, 'unexplained' => $this->unexplained];
     }
 
-    private static function budgetKey(string $kind, string $subject, string $callee, ?string $argument): string
+    private static function budgetKey(string $kind, string $slot, string $callee, ?string $argument): string
     {
-        return implode("\x1f", [$kind, $subject, $callee, $argument ?? '']);
+        return implode("\x1f", [$kind, $slot, $callee, $argument ?? '']);
     }
 
     private function consume(string $kind, array $call, ?string $argument = null): bool
     {
-        $key = self::budgetKey($kind, $call['subject'], $call['calleeKey'], $argument);
+        $key = self::budgetKey($kind, $call['slot'], $call['calleeKey'], $argument);
         if (($this->budget[$key] ?? 0) < 1) {
             return false;
         }
@@ -117,8 +117,8 @@ final class StructuralDiff
      */
     private function consumeReplacement(array $beforeCall, array $afterCall): bool
     {
-        $removed = self::budgetKey('CALL_REMOVED', $beforeCall['subject'], $beforeCall['calleeKey'], null);
-        $added = self::budgetKey('CALL_ADDED', $afterCall['subject'], $afterCall['calleeKey'], null);
+        $removed = self::budgetKey('CALL_REMOVED', $beforeCall['slot'], $beforeCall['calleeKey'], null);
+        $added = self::budgetKey('CALL_ADDED', $afterCall['slot'], $afterCall['calleeKey'], null);
         if (($this->budget[$removed] ?? 0) < 1 || ($this->budget[$added] ?? 0) < 1) {
             return false;
         }
@@ -725,7 +725,7 @@ final class StructuralDiff
     /**
      * 編譯期即可決定的值：字面值、常數、class 常數 / enum case，以及只含這些值的陣列。
      */
-    private static function isConstant(Node $node): bool
+    public static function isConstant(Node $node): bool
     {
         if (self::isLiteral($node) || $node instanceof Expr\ConstFetch) {
             return true;

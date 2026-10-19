@@ -176,8 +176,10 @@ function analyzePair(
 ): array {
     $beforeHasher = new Canonicalizer($beforeNames);
     $afterHasher = new Canonicalizer($afterNames);
-    $beforeCalls = CallExtractor::extract($beforeAst, $beforeTokens, $beforeSource, $path, $beforeHasher);
-    $afterCalls = CallExtractor::extract($afterAst, $afterTokens, $afterSource, $path, $afterHasher);
+    [$beforeCalls, $afterCalls] = CallFacts::assignSlots(
+        CallExtractor::extract($beforeAst, $beforeTokens, $beforeSource, $path, $beforeHasher),
+        CallExtractor::extract($afterAst, $afterTokens, $afterSource, $path, $afterHasher),
+    );
     $callFacts = CallFacts::build($path, $beforeCalls, $afterCalls);
 
     $diff = (new StructuralDiff(
@@ -259,7 +261,7 @@ respond([
     'diagnostics' => $complete ? [] : [$reasonCode],
     'facts' => sortedFacts(ScopeHashes::annotate(array_map(
         static function (array $fact): array {
-            unset($fact['calleeKey']);
+            unset($fact['calleeKey'], $fact['slot']);
             return $fact;
         },
         $analysis['facts'],

@@ -314,6 +314,71 @@ test('closure 內的巢狀 call 會被抽出，unwrap transaction 只留下 CALL
   );
 });
 
+/**
+ * 同一個 method 中註冊兩條路由的 source；`admin` / `status` 是各自 closure 開頭的 statements。
+ *
+ * @param {string} admin - `/admin/refunds` closure 開頭的 statements。
+ * @param {string} status - `/status` closure 開頭的 statements。
+ * @param {string} [before] - 兩條路由前面的 statements。
+ * @returns {string} PHP source。
+ */
+function routes(admin, status, before = '') {
+  return wrap(`${before}        Route::post('/admin/refunds', function () use ($q) {\n${admin}            return $q->refundAll();\n        });\n        Route::get('/status', function () {\n${status}            return 1;\n        });`);
+}
+
+const verifySign = '            $this->verifySign($a, $b);\n';
+
+test('closure 各自配對 call：call 從一條路由的 closure 移到另一條時產生 CALL_REMOVED / CALL_ADDED', async () => {
+  // `/status` 的 closure 原本沒有任何 call：配對時仍視為兩側都存在的 closure。
+  const moved = await inlineAnalyze(routes(verifySign, ''), routes('', verifySign));
+  assert.deepEqual(validateAdapterResult(moved), { valid: true, errors: [] });
+  assert.equal(moved.complete, true);
+  assert.deepEqual(
+    moved.facts.map(({ kind, properties }) => `${kind}:${properties.callee.text}`).sort(),
+    ['CALL_ADDED:$this->verifySign', 'CALL_REMOVED:$this->verifySign'],
+  );
+
+  // 移走的是簽章驗證：domain interpreter 輸出 SIGNATURE_VERIFICATION_REMOVED（MUT-021 的 fixture）。
+  const pipeline = await runWithDomainInterpreters(
+    'verify-sign-moved-between-routes',
+    'app/Providers/PaymentRouteServiceProvider.php',
+  );
+  assert.equal(pipeline.candidate.decision.status, 'HUMAN_REVIEW_REQUIRED');
+  assert.ok(
+    pipeline.candidate.decision.reasons.includes('SIGNATURE_VERIFICATION_REMOVED'),
+    JSON.stringify(pipeline.candidate.decision.reasons),
+  );
+});
+
+test('前面新增另一條路由的 closure 不會讓既有 closure 中的 call 被當成移除', async () => {
+  const health = "        Route::get('/health', function () use ($q) {\n            return $q->ping();\n        });\n";
+  const added = await inlineAnalyze(routes(verifySign, ''), routes(verifySign, '', health));
+  assert.deepEqual(
+    added.facts.map(({ kind, properties }) => `${kind}:${properties.callee.text}`).sort(),
+    ['CALL_ADDED:$q->ping', 'CALL_ADDED:Route::get'],
+  );
+});
+
+test('只存在於一側的 closure 中的 call 與外層一起配對：改路由路徑、解開巢狀包裝不產生移除 + 新增', async () => {
+  // 錨點（路由路徑）改變：closure 兩側各只有一個，其中的 call 不算移動，只剩路徑的字面值變更。
+  const renamed = await inlineAnalyze(
+    routes(verifySign, ''),
+    routes(verifySign, '').replace("'/admin/refunds'", "'/admin/refunds/v2'"),
+  );
+  assert.equal(renamed.complete, true);
+  assert.deepEqual(renamed.facts.map(({ kind }) => kind), ['LITERAL_CHANGED']);
+
+  // 路由 closure 中的 transaction 被解開：只有 transaction 本身被移除。
+  const unwrapped = await inlineAnalyze(
+    routes('            \\DB::transaction(function () use ($q) {\n                $q->save();\n            });\n', ''),
+    routes('            $q->save();\n', ''),
+  );
+  assert.deepEqual(
+    unwrapped.facts.map(({ kind, properties }) => `${kind}:${properties.callee?.text}`),
+    ['CALL_REMOVED:\\DB::transaction'],
+  );
+});
+
 test('鏈式 call 移除會輸出 ->method callee，並由 AST 解釋為完整', async () => {
   const result = await inlineAnalyze(
     wrap('        return Model::query()->lockForUpdate()->find($q);'),

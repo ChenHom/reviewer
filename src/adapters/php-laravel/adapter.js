@@ -6,7 +6,8 @@ import { executeAnalyzer } from '../analyzer-process.js';
 export const PHP_LARAVEL_ADAPTER_DESCRIPTOR = Object.freeze({
   id: 'php-laravel-v1',
   // 0.2.0：fact schema v2（結構化 callee / container、CALL_ARGUMENT_REMOVED / ADDED）。
-  version: '0.3.0',
+  // 0.4.0：call 依所在的 closure / arrow function 配對（call 在 closure 之間移動時產生 CALL_REMOVED / CALL_ADDED）。
+  version: '0.4.0',
   languages: ['php'],
   capabilities: [
     'changed-regions',
