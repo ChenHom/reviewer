@@ -24,6 +24,8 @@ node bin/retro.js --reports reports/ \
   --out-dir retro/
 ```
 
+安裝成 `reviewer` 指令時，`node bin/review.js` 與 `node bin/retro.js` 分別換成 `reviewer review` 與 `reviewer retro`（選項相同，見 [PR Review CLI「安裝成指令」](review-cli.md#安裝成指令)）。
+
 | 選項 | 說明 |
 |---|---|
 | `--reports <path>` | 必填，可重複。`bin/review.js --out` 的 JSON 報表，或放報表的目錄（目錄中所有 `.json`，不遞迴）。無法解析或不像 review 報表的檔案在 stderr 警告後略過；一份都沒有時以 `RETRO_NO_REPORTS` 結束 |

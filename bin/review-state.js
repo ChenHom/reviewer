@@ -3,16 +3,18 @@ import { readFile, writeFile } from 'node:fs/promises';
 import process from 'node:process';
 import { parseArgs } from 'node:util';
 
+import { isEntry } from '../src/cli/entry.js';
 import { loadReports } from '../src/retro/metrics.js';
 import { stateKeys } from '../src/review-state/codec.js';
 import { ACK_PERMISSIONS, updateReviewState } from '../src/review-state/index.js';
 
-const USAGE = `用法：node bin/review-state.js --report <file> --pr <file> [options]
+const USAGE = `用法：reviewer state --report <file> --pr <file> [options]
+（在 reviewer 的 checkout 中也可以執行 node bin/review-state.js）
 
 二次 review 的狀態更新：以目前 head 的報表重算單向門與人工確認的狀態，輸出置頂儀表板、Check、
 確認指令（/reviewer ack）的回覆與行內 thread 的目標狀態。不呼叫 GitHub API，寫回 PR 由 workflow 負責。
 
-  --report <file>          目前 head 的報表（bin/review.js --out）
+  --report <file>          目前 head 的報表（reviewer review --out）
   --pr <file>              PR（GitHub REST 的 pull request JSON：number、user.login、head.sha）；
                            head.sha 與報表不同時拒絕執行（REVIEW_STATE_STALE_REPORT）
   --dashboard <file>       上一版儀表板留言：GitHub 留言的 JSON（body、user，加上 GraphQL 的 editor）。
@@ -69,10 +71,17 @@ async function readDashboard(path) {
   return text;
 }
 
-const args = process.argv.slice(2);
-if (args.includes('--help') || args.includes('-h')) {
-  process.stdout.write(`${USAGE}\n`);
-} else {
+/**
+ * 執行 `reviewer state`。
+ *
+ * @param {string[]} args - 參數（不含指令名稱）。
+ * @returns {Promise<void>} 完成；結果以 stdout、stderr 與 `process.exitCode` 表示。
+ */
+export async function run(args) {
+  if (args.includes('--help') || args.includes('-h')) {
+    process.stdout.write(`${USAGE}\n`);
+    return;
+  }
   try {
     const { values } = parseArgs({
       args,
@@ -121,3 +130,5 @@ if (args.includes('--help') || args.includes('-h')) {
     process.exitCode = 2;
   }
 }
+
+if (isEntry(import.meta.url)) await run(process.argv.slice(2));

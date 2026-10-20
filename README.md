@@ -51,15 +51,36 @@ Authoritative Candidate / Summary / Check
 
 上圖是 library pipeline（`src/runner.js`）的完整流程。`bin/review.js` 逐檔執行到決策與三層路由為止，只輸出報表，不發布 Summary / Check（見「目前能力邊界」的未實作範圍）。
 
+## 安裝成 `reviewer` 指令（在其他專案使用）
+
+```bash
+npm i -g github:ChenHom/reviewer   # 全域安裝；固定版本可加 #<tag 或 commit>
+reviewer doctor                    # 檢查 git、TS/JS 與 PHP analyzer 的依賴，缺少時印出安裝方式
+reviewer review --base origin/main # 在要 review 的專案目錄中執行（或加 --repo <path>）
+```
+
+也可以裝在專案中：`npm i -D github:ChenHom/reviewer`，以 `npx reviewer ...` 執行。
+
+- 指令：`reviewer review`、`reviewer state`、`reviewer retro` 的選項分別與 `node bin/review.js`、`node bin/review-state.js`、`node bin/retro.js` 相同；`reviewer doctor` 檢查執行環境；`reviewer --version` 顯示版本。
+- TS/JS：analyzer 的依賴（`typescript` 5.9.3）是 npm 依賴，安裝時自動裝好，與專案自己使用的 TypeScript 版本無關。
+- PHP：analyzer 的依賴（`nikic/php-parser`）**不隨套件提供**，有 PHP 檔的專案要自己安裝（需要 PATH 上的 PHP ≥ 8.3 與 Composer 2）。路徑以 `reviewer doctor` 印出的指令為準，全域安裝時通常是：
+
+  ```bash
+  composer install --working-dir="$(npm root -g)/reviewer/analyzers/php" --no-interaction
+  ```
+
+  沒有安裝時 CLI 仍可執行，但每個 PHP 檔都判為 `FULL`（`COV-PHP-001:PHP_ANALYZER_DEPENDENCY_MISSING`）。
+- 安裝時需要能連到 GitHub 與 npm registry（`typescript` 等依賴從 registry 下載）。
+
 ## Review 一個 PR
 
 需要 Node.js（CI 使用 24；開發用的 lint 需要 Node `^22.13.0 || >=24`）、`git`、PATH 上的 `php`（PHP CLI ≥ 8.3，CI 使用 8.4）與 Composer 2；完整前置需求見 [Review CLI](docs/review-cli.md#前置需求)。這是執行 analyzer 的 PHP 版本，與被分析專案的目標版本無關：被分析的程式碼以最新語法或 PHP 7.4 語法解析，判為等價前只檢查 PHP 7 與 PHP 8 的解讀，PHP 5 的語意不在檢查範圍；最新語法與 PHP 7.4 語法都無法同時解析 before / after 兩個版本時為 `FULL`（`COV-PHP-001:PHP_PARSE_ERROR`），見「已實作」。
 
 ```bash
-npm ci                     # lint、coverage（c8）與 --ai 的 @anthropic-ai/sdk 需要；只執行 review CLI 且不用 --ai 時可略過
-npm run analyzer:install   # 第一次需要：同時安裝 PHP analyzer（composer install）與 TS analyzer（npm ci --prefix analyzers/ts）的依賴
+npm ci                     # TS/JS analyzer 的 typescript、--ai 的 @anthropic-ai/sdk，以及 lint、coverage（c8）的開發依賴
+npm run analyzer:install   # 第一次需要：安裝 PHP analyzer 的依賴（composer install --working-dir=analyzers/php）
 
-node bin/review.js --repo /path/to/project --base origin/master --head HEAD
+node bin/review.js --repo /path/to/project --base origin/master --head HEAD   # 安裝成指令時為 reviewer review ...
 ```
 
 與 GitHub PR 相同，比較的是 head 相對於 `git merge-base <base> <head>` 的變更：base 分支在 head 分出後的新 commit 不會被列入。兩者沒有共同歷史，或 shallow clone 的歷史不夠深、到不了 merge base 時，以 `GIT_NO_MERGE_BASE` 結束；`actions/checkout` 預設的 `fetch-depth: 1` 連 base 都沒有抓，會在解析 ref 時就以 `GIT_FAILED` 結束（兩者的 exit code 都是 2，見 [PR Review CLI](docs/review-cli.md#比較範圍merge-base)）。每個變更檔案逐一決策，列出需要 Human Review 的檔案、原因與行號：
@@ -240,11 +261,11 @@ Historical 數字目前來自明確標示的 controlled fixture pilot，只驗�
 
 ## Release gate
 
-執行 analyzer 需要 PATH 上的 `php`（PHP CLI ≥ 8.3，`analyzers/php/composer.json` 的要求；CI 使用 8.4）與 Composer 2。release gate 另外需要根目錄的 `npm ci`（ESLint、c8 與測試用的 dev 依賴；`npm ci` 會觸發 `prepare`，安裝內容為 `npm run lint` 的 pre-commit hook）。analyzer 依賴要另外安裝，第一次執行前先：
+執行 analyzer 需要 PATH 上的 `php`（PHP CLI ≥ 8.3，`analyzers/php/composer.json` 的要求；CI 使用 8.4）與 Composer 2。release gate 另外需要根目錄的 `npm ci`（ESLint、c8 與測試用的 dev 依賴；`npm ci` 時 simple-git-hooks 的 postinstall 會安裝內容為 `npm run lint` 的 pre-commit hook）。analyzer 依賴要另外安裝，第一次執行前先：
 
 ```bash
 npm ci
-npm run analyzer:install   # composer install --working-dir=analyzers/php，再 npm ci --prefix analyzers/ts
+npm run analyzer:install   # composer install --working-dir=analyzers/php（TS analyzer 的 typescript 由 npm ci 安裝）
 ```
 
 缺少依賴時 PHP analyzer 會以 `PHP_ANALYZER_DEPENDENCY_MISSING` fail-closed，TS analyzer 則是 `COV-TS-001:TS_ANALYZER_DEPENDENCY_MISSING`（每個送進該 analyzer 的檔案為 `FULL`）。PHP 版本不足時 `composer install` 會因 platform requirement 失敗；已安裝的依賴也會在執行時被 Composer 的 platform check 擋下，此時（以及找不到 `php` 時）`bin/review.js` 不會以錯誤結束（exit code 仍為 0，`--fail-on-review` 時為 1），而是把每個送進 analyzer 的 PHP 檔以 `ANALYZER_ERROR` 列為 `FULL`（見 [PR Review CLI](docs/review-cli.md#前置需求)）。
@@ -266,7 +287,7 @@ npm run test:all
 
 Real-repo evaluation（`npm run eval:real-repo`）不在其中，見「目前驗證基準」。
 
-CI（`.github/workflows/review-reduction-safety.yml`，Node.js 24、PHP 8.4）在 `npm ci` 之後先執行 `composer install --working-dir=analyzers/php`，再執行 `npm ci --prefix analyzers/ts --no-audit --no-fund`，然後對 `analyzers/php/bin`、`analyzers/php/src` 與 `evaluation` 下的每個 `.php` 檔執行 `php -l`，最後執行 `npm run test:all`。`php -l` 不在 `test:all` 內，修改 PHP 檔時本機可用同一行指令檢查：
+CI（`.github/workflows/review-reduction-safety.yml`，Node.js 24、PHP 8.4）在 `npm ci` 之後先執行 `composer install --working-dir=analyzers/php`，然後對 `analyzers/php/bin`、`analyzers/php/src` 與 `evaluation` 下的每個 `.php` 檔執行 `php -l`，最後執行 `npm run test:all`。`php -l` 不在 `test:all` 內，修改 PHP 檔時本機可用同一行指令檢查：
 
 ```bash
 find analyzers/php/bin analyzers/php/src evaluation -name '*.php' -print0 | xargs -0 -n1 php -l

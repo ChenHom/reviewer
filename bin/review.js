@@ -6,11 +6,13 @@ import process from 'node:process';
 import { parseArgs } from 'node:util';
 
 import { DEFAULT_EFFORT, DEFAULT_MODEL, createAnthropicReviewer } from '../src/ai/client.js';
+import { isEntry } from '../src/cli/entry.js';
 import { formatReview } from '../src/review/format.js';
 import { HUMAN_REVIEW, reviewRange } from '../src/review/review.js';
 import { TRACK } from '../src/routing.js';
 
-const USAGE = `用法：node bin/review.js --base <ref> [--head HEAD] [--repo .] [options]
+const USAGE = `用法：reviewer review --base <ref> [--head HEAD] [--repo .] [options]
+（在 reviewer 的 checkout 中也可以執行 node bin/review.js）
 
 Review head 相對於 base 的變更（與 GitHub PR 相同，從兩者的 merge base 算起），
 列出需要 Human Review 的檔案與原因。
@@ -58,10 +60,17 @@ function positiveInteger(value, fallback, name, max) {
   return parsed;
 }
 
-const args = process.argv.slice(2);
-if (args.includes('--help') || args.includes('-h')) {
-  process.stdout.write(`${USAGE}\n`);
-} else {
+/**
+ * 執行 `reviewer review`。
+ *
+ * @param {string[]} args - 參數（不含指令名稱）。
+ * @returns {Promise<void>} 完成；結果以 stdout、stderr 與 `process.exitCode` 表示。
+ */
+export async function run(args) {
+  if (args.includes('--help') || args.includes('-h')) {
+    process.stdout.write(`${USAGE}\n`);
+    return;
+  }
   try {
     const { values } = parseArgs({
       args,
@@ -118,3 +127,5 @@ if (args.includes('--help') || args.includes('-h')) {
     process.exitCode = 2;
   }
 }
+
+if (isEntry(import.meta.url)) await run(process.argv.slice(2));

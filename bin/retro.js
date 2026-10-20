@@ -5,14 +5,16 @@ import process from 'node:process';
 import { parseArgs } from 'node:util';
 
 import { DEFAULT_EFFORT, DEFAULT_MODEL, createAnthropicReviewer } from '../src/ai/client.js';
+import { isEntry } from '../src/cli/entry.js';
 import { parseProjectConfig } from '../src/config/project-config.js';
 import { formatRetro } from '../src/retro/format.js';
 import { computeRetroMetrics, loadReports, parseComments } from '../src/retro/metrics.js';
 import { proposeImprovements } from '../src/retro/proposals.js';
 
-const USAGE = `用法：node bin/retro.js --reports <dir|file> [--reports ...] [options]
+const USAGE = `用法：reviewer retro --reports <dir|file> [--reports ...] [options]
+（在 reviewer 的 checkout 中也可以執行 node bin/retro.js）
 
-彙整一段期間內 bin/review.js --out 產生的 JSON 報表，找出可以強化或精簡的地方。
+彙整一段期間內 reviewer review --out 產生的 JSON 報表，找出可以強化或精簡的地方。
 
   --reports <path>      報表檔案或目錄（目錄中所有 .json，不遞迴）；可重複
   --comments <file>     人工 review 留言（JSON Lines：{"pr","path","body","author"}）
@@ -41,10 +43,17 @@ async function optionalText(path) {
   return path === undefined ? null : readFile(path, 'utf8');
 }
 
-const args = process.argv.slice(2);
-if (args.includes('--help') || args.includes('-h')) {
-  process.stdout.write(`${USAGE}\n`);
-} else {
+/**
+ * 執行 `reviewer retro`。
+ *
+ * @param {string[]} args - 參數（不含指令名稱）。
+ * @returns {Promise<void>} 完成；結果以 stdout、stderr 與 `process.exitCode` 表示。
+ */
+export async function run(args) {
+  if (args.includes('--help') || args.includes('-h')) {
+    process.stdout.write(`${USAGE}\n`);
+    return;
+  }
   try {
     const { values } = parseArgs({
       args,
@@ -113,3 +122,5 @@ if (args.includes('--help') || args.includes('-h')) {
     process.exitCode = 2;
   }
 }
+
+if (isEntry(import.meta.url)) await run(process.argv.slice(2));
