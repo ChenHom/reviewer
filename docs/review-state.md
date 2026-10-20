@@ -38,7 +38,7 @@ node bin/review-state.js --report report.json --pr pr.json --unsigned
 
 | 選項 | 說明 |
 |---|---|
-| `--report <file>` | 必填。目前 head 的報表（`bin/review.js --out`）。確認要綁定的欄位必須齊全：每個檔案的 `contentHash`、每個單向門 finding 的 `id`、`blocker`、`policyDigest`（`scopeHash` 可以是 `null`，這時以 `contentHash` 綁定）。缺少時以 `REVIEW_STATE_REPORT_INVALID:<原因>` 結束：無法判斷程式碼或規則有沒有改變 |
+| `--report <file>` | 必填。目前 head 的報表（`bin/review.js --out`）。確認要綁定的欄位必須齊全：`config.digest`（沒有 `.reviewer.json` 時為 `null`）、有 AI 審查時的 `ai.standards.digest`（沒有 `codingstandards.md` 時為 `null`），每個檔案的 `contentHash`、每個單向門 finding 的 `id`、`blocker`、`policyDigest`（`scopeHash` 可以是 `null`，這時以 `contentHash` 綁定）。缺少時以 `REVIEW_STATE_REPORT_INVALID:<原因>` 結束：無法判斷程式碼或規則有沒有改變 |
 | `--pr <file>` | 必填。PR，GitHub REST 的 pull request JSON（使用 `number`、`user.login`、`head.sha`）。`head.sha` 與報表的 head 不同時以 `REVIEW_STATE_STALE_REPORT` 結束：舊的報表晚到時不能拿來更新狀態或 Check |
 | `--dashboard <file>` | 上一版儀表板留言的內容：純文字，或含 `body` 的 JSON（GitHub comment）。第一次執行時省略 |
 | `--comments <file>` | PR 的**全部** issue comments，GitHub REST 的 JSON 陣列（使用 `id`、`body`、`user.login`、`user.id`、`user.type`、`created_at`、`updated_at`）。保存的確認每次都與它核對，缺少的留言視為已刪除 |
@@ -55,7 +55,7 @@ node bin/review-state.js --report report.json --pr pr.json --unsigned
 | `REVIEWER_STATE_KEY` | 狀態的 HMAC key。必填，除非 `--unsigned`。key 本身不會出現在留言中（留言只有 key 的 sha256 前 8 碼） |
 | `REVIEWER_STATE_PREVIOUS_KEYS` | 換 key 後仍可驗證舊狀態的 key，以換行或逗號分隔。寫出時一律使用 `REVIEWER_STATE_KEY` |
 
-exit code：0 完成；1 有待確認的項目（`--fail-on-pending`）；2 錯誤（stderr 印出 `error: <訊息>`）。錯誤代碼：`OPTION_MISSING:--report`、`OPTION_MISSING:--pr`、`OPTION_INVALID:--ack-permission=<值>`、`REVIEW_STATE_KEY_MISSING`、`REVIEW_STATE_STALE_REPORT:<報表 head>≠<PR head>`、`REVIEW_STATE_REPORT_INVALID:<原因>`（`REPORT_SHAPE_INVALID`、`FILE_PATH_MISSING`、`FILE_CONTENT_HASH_MISSING:<path>`、`FINDING_INVALID:<path>`、`FINDING_POLICY_DIGEST_MISSING:<path>`、`FINDING_SCOPE_HASH_INVALID:<path>`）、`REVIEW_STATE_PR_INVALID`、`REVIEW_STATE_COMMENTS_INVALID`、`REVIEW_STATE_*_NOT_JSON:<path>`。
+exit code：0 完成；1 有待確認的項目（`--fail-on-pending`）；2 錯誤（stderr 印出 `error: <訊息>`）。錯誤代碼：`OPTION_MISSING:--report`、`OPTION_MISSING:--pr`、`OPTION_INVALID:--ack-permission=<值>`、`REVIEW_STATE_KEY_MISSING`、`REVIEW_STATE_STALE_REPORT:<報表 head>≠<PR head>`、`REVIEW_STATE_REPORT_INVALID:<原因>`（`REPORT_SHAPE_INVALID`、`CONFIG_DIGEST_MISSING`、`AI_STANDARDS_DIGEST_MISSING`、`AI_SUMMARY_MISSING`、`FILE_PATH_MISSING`、`FILE_CONTENT_HASH_MISSING:<path>`、`FINDING_INVALID:<path>`、`FINDING_POLICY_DIGEST_MISSING:<path>`、`FINDING_SCOPE_HASH_INVALID:<path>`）、`REVIEW_STATE_PR_INVALID`、`REVIEW_STATE_COMMENTS_INVALID`、`REVIEW_STATE_*_NOT_JSON:<path>`。
 
 ## 追蹤的項目
 
@@ -78,7 +78,7 @@ exit code：0 完成；1 有待確認的項目（`--fail-on-pending`）；2 錯�
 |---|---|---|
 | `OPEN`（🔴 待確認） | 目前的 head 有這一項，沒有確認過 | 失敗 |
 | `ACKNOWLEDGED`（✅ 已確認） | 有一個確認的 scope 與 policy fingerprint 都等於目前的 | — |
-| `REOPENED`（🟠 重新開啟） | 確認過，但之後所在的程式碼（`CODE_CHANGED`）或規則（`POLICY_CHANGED`）改了；或修正後再次出現（`REAPPEARED`） | 失敗 |
+| `REOPENED`（🟠 重新開啟） | 確認過，但之後所在的程式碼（`CODE_CHANGED`）或規則（`POLICY_CHANGED`）改了；或修正後再次出現（`REAPPEARED`：即使程式碼與之前確認的相同，修正前的確認也不再採用，要重新確認） | 失敗 |
 | `FIXED`（🟢 已修正） | 之前出現過，目前的 head 已經沒有 | — |
 
 Check 結論：有 `OPEN` 或 `REOPENED` 時為 `failure`，否則 `success`。Check 綁定報表的 head SHA。

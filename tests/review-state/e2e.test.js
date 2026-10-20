@@ -127,7 +127,7 @@ test('端對端：真實報表 → 待確認 → 確認 → 上方插入程式�
 });
 
 test('CLI：缺少選項、沒有 key、舊的報表與無效輸入時 exit 2', async () => {
-  const report = { head: { sha: 'a'.repeat(40) }, files: [] };
+  const report = { head: { sha: 'a'.repeat(40) }, config: { digest: null }, ai: null, files: [] };
   const reportPath = await json('cli-report.json', report);
   const prPath = await json('cli-pr.json', { number: 1, user: { login: 'author' }, head: { sha: 'a'.repeat(40) } });
 

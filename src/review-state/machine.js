@@ -301,21 +301,31 @@ export function computeState({ report, previous, comments = [], pr, permissions 
     if (messages.length > 0 && !replay) replies.push({ commentId: comment.id, body: messages.join('\n') });
   }
 
+  // 修正後再次出現：之前的確認針對的是修正前的那一次，不再採用（設計：FIXED → 再次出現 → REOPENED），
+  // 即使 fingerprint 相同。這次執行才收到的確認保留。
+  const reappeared = new Set(Object.entries(stateItems)
+    .filter(([id, item]) => item.state === ITEM_STATE.FIXED && current.has(id))
+    .map(([id]) => id));
+  const kept = acks.filter((ack) => !reappeared.has(ack.itemId) || (lastProcessed !== null && ack.commentId > lastProcessed));
+
   // 每個項目的狀態。
   const items = [];
   for (const item of current.values()) {
     const shortId = shortIds.get(item.id);
-    const itemAcks = acks.filter((ack) => ack.itemId === item.id);
+    const itemAcks = kept.filter((ack) => ack.itemId === item.id);
     const valid = itemAcks.filter((ack) => ack.scope === item.scope && ack.policy === item.policy);
     const before = stateItems[item.id];
     let state = ITEM_STATE.OPEN;
     let reopenedBecause = null;
     if (valid.length > 0) {
       state = ITEM_STATE.ACKNOWLEDGED;
-    } else if (itemAcks.length > 0) {
+    } else if (itemAcks.length > 0 && !reappeared.has(item.id)) {
       state = ITEM_STATE.REOPENED;
       reopenedBecause = itemAcks.some((ack) => ack.scope !== item.scope) ? 'CODE_CHANGED' : 'POLICY_CHANGED';
-    } else if (before && [ITEM_STATE.FIXED, ITEM_STATE.REOPENED].includes(before.state)) {
+    } else if (reappeared.has(item.id)) {
+      state = ITEM_STATE.REOPENED;
+      reopenedBecause = 'REAPPEARED';
+    } else if (before && before.state === ITEM_STATE.REOPENED) {
       state = ITEM_STATE.REOPENED;
       reopenedBecause = before.reopenedBecause ?? 'REAPPEARED';
     }
@@ -375,7 +385,7 @@ export function computeState({ report, previous, comments = [], pr, permissions 
         .filter(([id]) => shortIds.has(id))
         .map(([id, value]) => [shortIds.get(id), `${value.scope}:${value.policy}`])),
     })),
-    acks,
+    acks: kept,
   };
   return { state, items, replies, notes, replay };
 }

@@ -30,7 +30,7 @@ const aiFinding = (blocker, description = 'AI：可能少了 null 檢查') => ({
 const report = (head, overrides = {}) => ({
   head: { sha: head },
   config: { digest: null },
-  ai: { model: 'm' },
+  ai: { model: 'm', standards: { digest: null } },
   files: [
     { path: 'app/WalletService.php', track: 'ESCALATED', contentHash: 'git:w1', needsHuman: true, ai: { status: 'PASS' }, findings: [door()] },
     { path: 'src/ok.ts', track: 'AI_TRACK', contentHash: 'git:ok', needsHuman: false, ai: { status: 'PASS' }, findings: [] },
@@ -178,6 +178,25 @@ test('AI 修正尚未 commit 時 Check 不通過；檔案層級的確認綁定 c
   const changed = step(withStandards(sha(3), 's2'), acked.dashboard.body, comments);
   assert.equal(changed.items[0].state, 'REOPENED');
   assert.equal(changed.items[0].reopenedBecause, 'POLICY_CHANGED');
+});
+
+test('確認過的項目修正後再次出現：即使 fingerprint 相同也重新開啟，要重新確認', () => {
+  const head1 = report(sha(1));
+  const first = step(head1, null);
+  const comments = [comment(1, '/reviewer ack F1-d00d@1111111 看過了')];
+  const acked = step(head1, first.dashboard.body, comments);
+  assert.equal(stateOf(acked, 'F1'), 'ACKNOWLEDGED');
+  const fixed = step(report(sha(2), { files: report(sha(2)).files.slice(1) }), acked.dashboard.body, comments);
+  assert.equal(stateOf(fixed, 'F1'), 'FIXED');
+  // 同樣的程式碼（scope 與 policy 都相同）再次出現：舊的確認不算。
+  const back = step(report(sha(3)), fixed.dashboard.body, comments);
+  assert.equal(stateOf(back, 'F1'), 'REOPENED');
+  assert.equal(back.items[0].reopenedBecause, 'REAPPEARED');
+  assert.equal(back.check.conclusion, 'failure');
+  // 下一次執行仍是重新開啟；新的確認之後才通過。
+  assert.equal(stateOf(step(report(sha(3)), back.dashboard.body, comments), 'F1'), 'REOPENED');
+  const reAcked = step(report(sha(3)), back.dashboard.body, [...comments, comment(2, '/reviewer ack F1-d00d@3333333 再看過一次')]);
+  assert.equal(stateOf(reAcked, 'F1'), 'ACKNOWLEDGED');
 });
 
 test('保存的確認每次都重新檢查權限：權限被移除或門檻提高時不再採用', () => {
@@ -417,9 +436,18 @@ test('updateReviewState：確認要綁定的欄位不齊全的報表不接受；
     ['finding 沒有 id', broken({}, { id: '' }), 'FINDING_INVALID:app/WalletService.php'],
     ['scopeHash 是空字串', broken({}, { scopeHash: '' }), 'FINDING_SCOPE_HASH_INVALID:app/WalletService.php'],
     ['head 是空字串', report('', {}), 'REPORT_SHAPE_INVALID'],
+    ['沒有 config', report(sha(1), { config: undefined }), 'CONFIG_DIGEST_MISSING'],
+    ['config 沒有 digest 欄位', report(sha(1), { config: { status: 'valid' } }), 'CONFIG_DIGEST_MISSING'],
+    ['config digest 是空字串', report(sha(1), { config: { digest: '' } }), 'CONFIG_DIGEST_MISSING'],
+    ['AI 有執行但沒有 standards', report(sha(1), { ai: { model: 'm' } }), 'AI_STANDARDS_DIGEST_MISSING'],
+    ['standards 沒有 digest 欄位', report(sha(1), { ai: { model: 'm', standards: { present: false } } }), 'AI_STANDARDS_DIGEST_MISSING'],
+    ['檔案有 AI 結果但報表沒有 AI 摘要', report(sha(1), { ai: null }), 'AI_SUMMARY_MISSING'],
   ]) {
     assert.throws(() => updateReviewState({ report: current, pr: PR, keys }), new RegExp(`REVIEW_STATE_REPORT_INVALID:${code.replace(/[.]/g, '\\.')}`), label);
   }
+  // 明確沒有設定檔與規範檔（digest 為 null）、沒有執行 AI（ai 為 null 且檔案沒有 AI 結果）都可以接受。
+  const noAi = report(sha(1), { ai: null, files: report(sha(1)).files.map(({ ai, ...file }) => file) });
+  assert.equal(updateReviewState({ report: noAi, pr: PR, keys }).headSha, sha(1));
   // scopeHash 為 null 時以 contentHash 綁定（檔案層級或沒有 scope 的 analyzer），可以接受。
   assert.equal(updateReviewState({ report: broken({}, { scopeHash: null }), pr: PR, keys }).items[0].kind, 'DOOR');
 

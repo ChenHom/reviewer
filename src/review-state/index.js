@@ -11,7 +11,8 @@ import { checkResult, computeState, itemLabel } from './machine.js';
 export const ACK_PERMISSIONS = Object.freeze(['write', 'maintain', 'admin']);
 
 /**
- * 報表中確認要綁定的欄位是否齊全：每個檔案的 `contentHash`，以及單向門 finding 的 `policyDigest`。
+ * 報表中確認要綁定的欄位是否齊全：專案設定與 codingstandards.md 的 digest、每個檔案的 `contentHash`，
+ * 以及單向門 finding 的 `policyDigest`。
  * 缺少時無法判斷程式碼或規則是否改變（例如所有缺欄位的 head 都會得到相同的 fingerprint），所以不接受。
  *
  * @param {object} report - 報表。
@@ -20,6 +21,13 @@ export const ACK_PERMISSIONS = Object.freeze(['write', 'maintain', 'admin']);
 export function reportError(report) {
   if (!Array.isArray(report?.files) || typeof report?.head?.sha !== 'string' || report.head.sha === '') return 'REPORT_SHAPE_INVALID';
   const filled = (value) => typeof value === 'string' && value !== '';
+  // 檔案層級項目的 policy：專案設定與（有 AI 審查時）codingstandards.md 的 digest。沒有設定檔或規範檔時是明確的 null，
+  // 欄位缺漏則不接受（否則缺欄位的報表都得到相同的 policy）。
+  const digestField = (owner) => owner !== null && typeof owner === 'object' && Object.hasOwn(owner, 'digest') && (owner.digest === null || filled(owner.digest));
+  if (!digestField(report.config)) return 'CONFIG_DIGEST_MISSING';
+  const aiRan = report.ai !== null && report.ai !== undefined;
+  if (aiRan && !digestField(report.ai.standards)) return 'AI_STANDARDS_DIGEST_MISSING';
+  if (!aiRan && report.files.some((file) => file?.ai !== undefined && file?.ai !== null)) return 'AI_SUMMARY_MISSING';
   for (const file of report.files) {
     if (!filled(file?.path)) return 'FILE_PATH_MISSING';
     if (!filled(file.contentHash)) return `FILE_CONTENT_HASH_MISSING:${file.path}`;

@@ -222,6 +222,12 @@
 
 8. **`--ai-apply` 的修正被當成通過**（P1，確認為真）：AI 結果 `FIXED` 代表修正只寫入 worktree，報表與 Check 的 head 仍是沒有修正的版本（`summarizeHuman()` 也記為 `pendingFixes`），卻被當成「AI 審查通過」。修正：只有 `PASS` 算通過；`FIXED` 產生檔案層級的 `AI_FIX_UNCOMMITTED`（說明為 AI 的修正內容），commit 後在新的 head 重新審查。
 9. **檔案層級的確認沒有綁定 `codingstandards.md`**（P1，確認為真）：merge base 的 `codingstandards.md` 改變後，AI 依不同的規範審查，舊的確認仍有效。修正：檔案層級項目的 policy 加入報表的 `ai.standards.digest`。
+10. **確認過的項目修正後再次出現時沿用舊確認**（P1，確認為真）：項目消失（`FIXED`）後又以相同的 fingerprint 出現，舊確認讓它直接回到已確認。設計的狀態表是「`FIXED` → 再次出現 → `REOPENED`」。修正：從 `FIXED` 再次出現時，之前的確認不再採用（從狀態移除），狀態為 `REOPENED`（`REAPPEARED`），要重新確認。
+11. **報表缺少 `config.digest` / `ai.standards.digest` 時以 `null` 代替**（P1，確認為真）：設定或規範改變後，缺欄位的報表 policy 不變，確認仍有效。修正：`reportError()` 要求 `config.digest` 欄位存在（字串或明確的 `null`）；有 AI 摘要時要求 `ai.standards.digest`；檔案有 AI 結果但報表沒有 AI 摘要時也拒絕。
+
+PR #12 留到 7b 的 P2：
+
+- 儀表板「AI 審查通過」的數量與清單包含 AI 結果是 `FIXED`（修正尚未 commit）的檔案，與同一個檔案的 `AI_FIX_UNCOMMITTED` 待確認項目矛盾；應只列出 `PASS`。
 
 **驗證**：`tests/review-state/` 的單元測試（codec、指令、狀態機、儀表板），以及以真實 git repo 執行 `reviewRange()` 與 CLI 的端對端測試：移除 `authorize` → 待確認 → 確認 → 上方插入另一個 method 仍有效 → 同一個 method 的邏輯改變後重新開啟 → 狀態被竄改時以 `--history` 重播。
 
