@@ -33,8 +33,8 @@ const report = (head, overrides = {}) => ({
   ai: { model: 'm' },
   files: [
     { path: 'app/WalletService.php', track: 'ESCALATED', contentHash: 'git:w1', needsHuman: true, findings: [door()] },
-    { path: 'src/ok.ts', track: 'AI_TRACK', contentHash: 'git:ok', needsHuman: false, findings: [] },
-    { path: 'src/skip.ts', track: 'AUTO_PASS', contentHash: 'git:s', needsHuman: false, findings: [] },
+    { path: 'src/ok.ts', track: 'AI_TRACK', contentHash: 'git:ok', needsHuman: false, ai: { status: 'PASS' }, findings: [] },
+    { path: 'src/skip.ts', track: 'AUTO_PASS', decision: 'NOT_SELECTED_FOR_HUMAN_REVIEW', contentHash: 'git:s', needsHuman: false, findings: [] },
   ],
   ...overrides,
 });
@@ -57,8 +57,8 @@ test('buildItems：單向門各自一項；AI 的 finding 與沒有 finding 但�
       { path: 'src/d.ts', track: 'AI_TRACK', contentHash: 'git:5', needsHuman: true, findings: [] },
       // 不認得的路由（fail-closed 成 ESCALATED）但沒有 finding：仍要有項目可以確認。
       { path: 'src/e.ts', track: 'WEIRD', contentHash: 'git:6', findings: [] },
-      { path: 'src/f.ts', track: 'AI_TRACK', contentHash: 'git:7', needsHuman: false, findings: [] },
-      { path: 'src/g.ts', track: 'AUTO_PASS', contentHash: 'git:8', findings: [] },
+      { path: 'src/f.ts', track: 'AI_TRACK', contentHash: 'git:7', needsHuman: false, ai: { status: 'FIXED' }, findings: [] },
+      { path: 'src/g.ts', track: 'AUTO_PASS', decision: 'NOT_SELECTED_FOR_HUMAN_REVIEW', contentHash: 'git:8', findings: [] },
     ],
   }));
   const summary = [...items.values()].map(({ kind, path, blocker, concerns }) => [kind, path, blocker, concerns ?? null]);
@@ -83,6 +83,46 @@ test('buildItems：單向門各自一項；AI 的 finding 與沒有 finding 但�
   const fallback = buildItems(report(sha(1), { files: [{ path: 'a', track: 'ESCALATED', contentHash: 'git:9', findings: [door({ scopeHash: null, policyDigest: null })] }] }));
   assert.equal(fallback.get(DOOR).scope, fingerprint('git:9'));
   assert.deepEqual(buildItems({}), new Map());
+});
+
+test('buildItems：只有機械審查略過與 AI 審查通過可以不產生項目；不認得或不一致的組合一律需要確認', () => {
+  const kinds = (file) => [...buildItems(report(sha(1), { files: [{ path: 'x', contentHash: 'git:x', findings: [], ...file }] })).values()]
+    .map(({ blocker }) => blocker);
+  assert.deepEqual(kinds({ track: 'AUTO_PASS', decision: 'NOT_SELECTED_FOR_HUMAN_REVIEW', needsHuman: false }), []);
+  assert.deepEqual(kinds({ track: 'AI_TRACK', needsHuman: false, ai: { status: 'PASS' } }), []);
+  // 不認得的路由，即使 needsHuman 為 false。
+  assert.deepEqual(kinds({ track: 'SOMETHING_NEW', needsHuman: false }), ['HUMAN_REVIEW_REQUIRED']);
+  // AUTO_PASS 但決策不是 NOT_SELECTED，或 needsHuman 為 true。
+  assert.deepEqual(kinds({ track: 'AUTO_PASS', decision: 'HUMAN_REVIEW_REQUIRED', needsHuman: false }), ['HUMAN_REVIEW_REQUIRED']);
+  assert.deepEqual(kinds({ track: 'AUTO_PASS', needsHuman: false }), ['HUMAN_REVIEW_REQUIRED']);
+  assert.deepEqual(kinds({ track: 'AUTO_PASS', decision: 'NOT_SELECTED_FOR_HUMAN_REVIEW', needsHuman: true }), ['HUMAN_REVIEW_REQUIRED']);
+  // AI_TRACK 的 needsHuman 為 false，但沒有 AI 結果或結果不是通過。
+  assert.deepEqual(kinds({ track: 'AI_TRACK', needsHuman: false }), ['AI_REVIEW_MISSING']);
+  assert.deepEqual(kinds({ track: 'AI_TRACK', needsHuman: false, ai: { status: 'NEEDS_HUMAN' } }), ['HUMAN_REVIEW_REQUIRED']);
+  // ESCALATED 但沒有任何 finding。
+  assert.deepEqual(kinds({ track: 'ESCALATED', needsHuman: true }), ['HUMAN_REVIEW_REQUIRED']);
+  // 這種報表的 Check 不會通過。
+  const result = step(report(sha(1), { files: [{ path: 'x', track: 'SOMETHING_NEW', needsHuman: false, contentHash: 'git:x', findings: [] }] }), null);
+  assert.equal(result.check.conclusion, 'failure');
+});
+
+test('保存的確認每次都重新檢查權限：權限被移除或門檻提高時不再採用', () => {
+  const first = step(report(sha(1)), null);
+  const comments = [comment(3, '/reviewer ack F1-d00d@1111111 已確認')];
+  const acked = step(report(sha(1)), first.dashboard.body, comments);
+  assert.equal(stateOf(acked, 'F1'), 'ACKNOWLEDGED');
+  for (const [label, extra] of [
+    ['降為 read', { permissions: { alice: 'read' } }],
+    ['沒有權限資料', { permissions: {} }],
+    ['門檻提高到 maintain', { minPermission: 'maintain' }],
+  ]) {
+    const result = step(report(sha(1)), acked.dashboard.body, comments, extra);
+    assert.equal(stateOf(result, 'F1'), 'OPEN', label);
+    assert.deepEqual(result.notes, [{ code: 'ACKS_WITHDRAWN', count: 1 }], label);
+    assert.match(result.dashboard.body, /確認者目前的權限不足/, label);
+  }
+  // 權限足夠（maintain 門檻下的 maintain）時仍有效。
+  assert.equal(stateOf(step(report(sha(1)), acked.dashboard.body, comments, { permissions: { alice: 'maintain' }, minPermission: 'maintain' }), 'F1'), 'ACKNOWLEDGED');
 });
 
 test('流程：待確認 → 確認 → 程式碼改變後重新開啟 → 再確認 → 修正 → 再次出現', () => {
@@ -173,7 +213,7 @@ test('確認的指令留言之後被編輯、刪除或作者不符時，確認�
     assert.equal(stateOf(result, 'F1'), 'OPEN', label);
     assert.equal(result.check.conclusion, 'failure', label);
     assert.deepEqual(result.notes, [{ code: 'ACKS_WITHDRAWN', count: 1 }], label);
-    assert.match(result.dashboard.body, /1 個確認的指令留言已被刪除或編輯/, label);
+    assert.match(result.dashboard.body, /1 個確認不再採用：指令留言被刪除或編輯/, label);
     // 下一次執行：確認已從狀態移除，不再重複說明。
     assert.deepEqual(step(report(sha(1)), result.dashboard.body, comments).notes, [], label);
   }

@@ -42,7 +42,7 @@ node bin/review-state.js --report report.json --pr pr.json --unsigned
 | `--pr <file>` | 必填。PR，GitHub REST 的 pull request JSON（使用 `number`、`user.login`、`head.sha`）。`head.sha` 與報表的 head 不同時以 `REVIEW_STATE_STALE_REPORT` 結束：舊的報表晚到時不能拿來更新狀態或 Check |
 | `--dashboard <file>` | 上一版儀表板留言的內容：純文字，或含 `body` 的 JSON（GitHub comment）。第一次執行時省略 |
 | `--comments <file>` | PR 的**全部** issue comments，GitHub REST 的 JSON 陣列（使用 `id`、`body`、`user.login`、`user.id`、`user.type`、`created_at`、`updated_at`）。保存的確認每次都與它核對，缺少的留言視為已刪除 |
-| `--permissions <file>` | 留言者的權限：`{ "<login>": "<權限>" }`，值為 `admin`、`maintain`、`write`、`triage`、`read`、`none`，或 GitHub collaborator permission API 的 `{ role_name, permission }`。沒有列出的留言者，確認一律不採用 |
+| `--permissions <file>` | 留言者目前的權限：`{ "<login>": "<權限>" }`，值為 `admin`、`maintain`、`write`、`triage`、`read`、`none`，或 GitHub collaborator permission API 的 `{ role_name, permission }`。沒有列出的留言者，確認一律不採用；之前接受的確認也每次重新檢查，所以要涵蓋所有確認者 |
 | `--history <path>` | 之前 head 的報表（檔案或目錄，目錄中所有 `.json`）；可重複。只在狀態無法驗證時用來驗證確認指令的 `@head`（見「狀態的保存」）。無法解析的檔案在 stderr 警告後略過 |
 | `--ack-permission <level>` | 確認所需的最低權限：`write`（預設）、`maintain`、`admin` |
 | `--out <file>` | 寫出完整結果（JSON，見「輸出」） |
@@ -62,10 +62,10 @@ exit code：0 完成；1 有待確認的項目（`--fail-on-pending`）；2 錯�
 | 種類 | 來源 | 確認綁定 |
 |---|---|---|
 | 🚪 單向門（`DOOR`） | 報表 `files[].findings` 中機械審查的 finding（`kind` 不是 `AI`），每個 finding 一項 | finding 的 `scopeHash`（所屬 method / function 的局部 AST hash；檔案層級或沒有 scope 時為檔案內容）與 `policyDigest`（產生這個原因的 interpreter 或專案設定） |
-| 🤖 檔案層級（`FILE`） | 每個檔案一項：AI 的 finding（`AI_CONCERN`、`AI_NEEDS_HUMAN`、`AI_REVIEW_FAILED`），以及需要人工但沒有任何 finding 的檔案（沒有執行 AI 審查時為 `AI_REVIEW_MISSING`，其他為 `HUMAN_REVIEW_REQUIRED`） | 檔案內容（`contentHash`）與專案設定的 digest |
+| 🤖 檔案層級（`FILE`） | 每個檔案一項：AI 的 finding（`AI_CONCERN`、`AI_NEEDS_HUMAN`、`AI_REVIEW_FAILED`），以及沒有單向門、又不確定不需要人工的檔案（`AI_TRACK` 沒有 AI 結果時為 `AI_REVIEW_MISSING`，其他為 `HUMAN_REVIEW_REQUIRED`） | 檔案內容（`contentHash`）與專案設定的 digest |
 
 - AI 的輸出不是 deterministic 的，同一個問題在兩次審查中的標題可能不同，逐條確認會在每次重跑時失效；所以 AI 的項目**以檔案為單位**確認一次，確認的是整個檔案目前的內容，檔案一改就重新開啟。
-- 需要人工的檔案一定有項目可以確認（fail-closed）：不認得的路由、沒有執行 AI 審查的 `AI_TRACK` 檔案都會產生檔案層級的項目。
+- 只有兩種已知的組合可以不產生項目：機械審查略過（`AUTO_PASS` 且決策是 `NOT_SELECTED_FOR_HUMAN_REVIEW`），以及 AI 審查通過（`AI_TRACK`、`needsHuman: false`、AI 結果是 `PASS` 或 `FIXED`）。其他檔案（不認得的路由、欄位不一致或缺少、沒有執行 AI 審查）只要沒有單向門，就產生檔案層級的項目（fail-closed）。
 - 編號是 `F<n>-<id 前 4 碼>`（例如 `F1-3fa2`）。`F<n>` 依路徑與行號配發、永不重用（修正後也不會給別的項目）；id 前綴讓狀態遺失後仍能找到正確的項目。
 - finding id 不含行號、也不含 head 側的值（見 [PR Review CLI「Findings」](review-cli.md#findings)），所以在上方插入程式碼、或作者微調變更後的值時仍是同一項；被看過的程式碼是否又改了，由 `scopeHash` 判斷。
 
@@ -114,7 +114,7 @@ Check 結論：有 `OPEN` 或 `REOPENED` 時為 `failure`，否則 `success`。C
 
 通過時回覆 `ACK_ACCEPTED`（✅）。bot 的留言（`user.type` 為 `Bot` 或 login 以 `[bot]` 結尾）一律忽略；格式錯誤的 `/reviewer` 行回覆正確格式。每則留言只處理一次（狀態記錄 `lastProcessedCommentId`），回覆不會重複。
 
-已接受的確認在之後的每次執行都會與目前的留言核對：指令留言被刪除、被編輯過或作者不符時，這個確認不再採用（項目回到待確認），儀表板說明有幾個確認因此失效。確認者要撤回確認，編輯或刪除指令留言即可。
+已接受的確認在之後的每次執行都會重新檢查：指令留言被刪除、被編輯過或作者不符，或確認者目前的權限低於現在的門檻（權限被移除、`--ack-permission` 提高）時，這個確認不再採用（項目回到待確認），儀表板說明有幾個確認因此失效。確認者要撤回確認，編輯或刪除指令留言即可。
 
 `@head` 的檢查是為了「人看的是 A，推了 B 之後才送出確認，結果確認綁到 B」：確認綁定的是確認者看到的版本，不是送出確認時的最新版本。
 
@@ -146,7 +146,7 @@ Check 結論：有 `OPEN` 或 `REOPENED` 時為 `failure`，否則 `success`。C
 | `replies` | 確認指令的回覆：`[{ commentId, body }]` |
 | `threads` | 單向門的行內 thread 目標狀態：`[{ findingId, label, state: "open" \| "resolved", location, body }]`。`location` 為 `{ path, side: "LEFT" \| "RIGHT", startLine, line }`（已修正的項目為 `null`）；`body` 的最後一行是 `<!-- reviewer:finding <id> -->`，workflow 以它找到既有的 thread，沒有就建立（只建立 open 的），有就 resolve / unresolve。檔案層級的項目沒有 thread |
 | `items` | 所有項目：`id`、`label`、`kind`、`state`、`blocker`、`path`、`location`、`reopenedBecause` |
-| `notes` | 說明：`STATE_RESET`（狀態無法驗證，含 `reason`、`replayed`、`rejected`）、`ACKS_WITHDRAWN`（指令留言被刪除或編輯而不再採用的確認數，含 `count`） |
+| `notes` | 說明：`STATE_RESET`（狀態無法驗證，含 `reason`、`replayed`、`rejected`）、`ACKS_WITHDRAWN`（指令留言被刪除或編輯、或確認者權限不足而不再採用的確認數，含 `count`） |
 
 ## 與設計的差異
 

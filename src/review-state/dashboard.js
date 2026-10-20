@@ -158,7 +158,7 @@ export function formatDashboard({ report, items, notes, minPermission, compact =
     if (note.code === 'STATE_RESET') {
       lines.push('', `> ⚠️ 先前的狀態無法驗證（${escapeText(note.reason, 60)}），已從頭重算：重新驗證了 ${note.replayed} 個確認，其中 ${note.rejected} 個無法驗證，需要重新確認。`);
     } else if (note.code === 'ACKS_WITHDRAWN') {
-      lines.push('', `> ⚠️ ${note.count} 個確認的指令留言已被刪除或編輯，這些確認不再採用。`);
+      lines.push('', `> ⚠️ ${note.count} 個確認不再採用：指令留言被刪除或編輯，或確認者目前的權限不足。`);
     } else if (note.code === 'STATE_OVERFLOW') {
       lines.push('', '> ⚠️ 狀態超過留言長度上限，這次沒有保存；下次會從確認留言重新計算。');
     }

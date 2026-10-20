@@ -211,6 +211,8 @@
 **PR #12 review 的修正**：
 
 1. **確認留言被編輯或刪除後確認仍有效**（P1，確認為真）：確認被接受後保存在狀態中，之後的執行以 `lastProcessedCommentId` 跳過原本的留言；確認者把指令留言改掉或刪掉，項目仍是已確認，Check 繼續通過。修正：保存的確認每次都與目前的留言核對，留言不在、被編輯過、作者不符或變成 bot 時不再採用（儀表板以 `ACKS_WITHDRAWN` 說明）。因此 `--comments` 必須是 PR 的全部 issue comments。
+2. **不認得的路由被當成不需要人工**（P1，確認為真）：檔案層級的項目以 `needsHuman !== false` 判斷，路由不認得、`needsHuman: false` 又沒有 finding 的檔案不產生項目，Check 通過。修正：只有兩種已知的組合可以不產生項目（`AUTO_PASS` 且決策是 `NOT_SELECTED_FOR_HUMAN_REVIEW`；`AI_TRACK`、`needsHuman: false` 且 AI 結果是 `PASS` / `FIXED`），其他沒有單向門的檔案一律產生檔案層級的項目。
+3. **保存的確認沒有重新檢查權限**（P1，確認為真）：確認者之後失去權限，或 `--ack-permission` 提高後，舊的確認仍有效。修正：保存的確認每次都以目前的 `permissions` 與門檻重新檢查（也重新檢查不是 PR 作者），不符時不再採用。因此 `--permissions` 必須涵蓋所有確認者。
 
 **驗證**：`tests/review-state/` 的單元測試（codec、指令、狀態機、儀表板），以及以真實 git repo 執行 `reviewRange()` 與 CLI 的端對端測試：移除 `authorize` → 待確認 → 確認 → 上方插入另一個 method 仍有效 → 同一個 method 的邏輯改變後重新開啟 → 狀態被竄改時以 `--history` 重播。
 

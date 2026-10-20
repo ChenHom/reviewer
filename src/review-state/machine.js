@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 
+import { DECISION } from '../contracts.js';
 import { canonicalizeJsonValue } from '../facts/contracts.js';
-import { MAX_REASON_CHARS, ackMessage, evaluateAck, isBotComment, parseCommands } from './commands.js';
+import { MAX_REASON_CHARS, PERMISSION_RANK, ackMessage, evaluateAck, isBotComment, parseCommands, permissionOf } from './commands.js';
 import { STATE_VERSION } from './codec.js';
 
 /**
@@ -10,8 +11,8 @@ import { STATE_VERSION } from './codec.js';
  * > 新狀態 = f(最新報表, 所有有效的確認)
  *
  * 狀態留言只保存短編號、各 head 的 fingerprint（驗證 `@sha` 用）與已驗證的確認，所以事件的處理順序
- * （push 與確認留言交錯）不影響結果。保存的確認每次都與目前的留言核對（留言被刪除或編輯過就不再採用），
- * 所以 `comments` 必須是 PR 的全部 issue comments。
+ * （push 與確認留言交錯）不影響結果。保存的確認每次都與目前的留言與權限核對（留言被刪除或編輯過、
+ * 確認者的權限不足就不再採用），所以 `comments` 必須是 PR 的全部 issue comments，`permissions` 必須涵蓋確認者。
  *
  * 追蹤的項目（item）：
  * - `DOOR`：機械審查的單向門 finding（`files[].findings` 中 `kind` 不是 `AI` 的），各自確認，
@@ -63,6 +64,21 @@ function fileBlocker(file, aiFindings) {
 }
 
 /**
+ * 檔案是否確定不需要人工：只有兩種已知的組合，其他（不認得的路由、欄位不一致或缺少）一律需要（fail-closed）。
+ *
+ * - 機械審查略過：`AUTO_PASS` 且決策是 `NOT_SELECTED_FOR_HUMAN_REVIEW`；
+ * - AI 審查通過：`AI_TRACK`、`needsHuman: false`，且 AI 的結果是 `PASS` 或 `FIXED`。
+ *
+ * @param {object} file - review file result。
+ * @returns {boolean} 是否不需要人工。
+ */
+export function clearedFile(file) {
+  if (file.track === 'AUTO_PASS') return file.decision === DECISION.NOT_SELECTED_FOR_HUMAN_REVIEW && file.needsHuman !== true;
+  if (file.track === 'AI_TRACK') return file.needsHuman === false && ['PASS', 'FIXED'].includes(file.ai?.status);
+  return false;
+}
+
+/**
  * 報表中要追蹤的項目。
  *
  * @param {object} report - bin/review.js 的 JSON 報表。
@@ -88,8 +104,8 @@ export function buildItems(report) {
         policy: fingerprint(finding.policyDigest ?? digest(['blocker', finding.blocker, null])),
       });
     }
-    // 需要人工的檔案一定要有項目可以確認（fail-closed）：AI 的 finding 或沒有任何 finding 時以檔案為單位。
-    if (aiFindings.length > 0 || (file.needsHuman !== false && file.track !== 'AUTO_PASS' && doors.length === 0)) {
+    // 需要人工的檔案一定要有項目可以確認（fail-closed）：AI 的 finding，或不確定不需要人工、又沒有單向門的檔案。
+    if (aiFindings.length > 0 || (!clearedFile(file) && doors.length === 0)) {
       const id = digest(['file-review', file.path]);
       items.set(id, {
         id,
@@ -198,14 +214,19 @@ export function computeState({ report, previous, comments = [], pr, permissions 
 
   const known = new Map([...shortIds].map(([id, shortId]) => [id, { shortId }]));
   const ordered = [...comments].filter((comment) => Number.isInteger(comment?.id)).sort((left, right) => left.id - right.id);
-  // 保存的確認每次都與目前的留言核對：指令留言被刪除、被編輯過或作者不符時，這個確認不再採用。
+  // 保存的確認每次都重新檢查：指令留言被刪除、被編輯過或作者不符，確認者是 PR 作者，或確認者目前的權限
+  // 低於現在的門檻（權限被移除、`--ack-permission` 提高）時，這個確認不再採用。
   const byId = new Map(ordered.map((comment) => [comment.id, comment]));
   const standing = (ack) => {
     const source = byId.get(ack.commentId);
+    const login = String(ack.login ?? '').toLowerCase();
+    const permission = permissionOf(permissions, login);
     return Boolean(source)
       && !isBotComment(source)
       && (source.updated_at === undefined || source.updated_at === source.created_at)
-      && String(source.user?.login ?? '').toLowerCase() === String(ack.login ?? '').toLowerCase();
+      && String(source.user?.login ?? '').toLowerCase() === login
+      && login !== String(pr.login ?? '').toLowerCase()
+      && permission !== null && PERMISSION_RANK[permission] >= PERMISSION_RANK[minPermission];
   };
   const acks = (prior?.acks ?? []).filter(standing);
   const withdrawn = (prior?.acks?.length ?? 0) - acks.length;
