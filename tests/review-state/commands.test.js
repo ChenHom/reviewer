@@ -60,6 +60,14 @@ test('isBotComment 與 permissionOf', () => {
   assert.equal(permissionOf({ bob: { role_name: 'maintain', permission: 'write' } }, 'bob'), 'maintain');
   assert.equal(permissionOf({ bob: { permission: 'admin' } }, 'bob'), 'admin');
   assert.equal(permissionOf({ bob: 'owner' }, 'bob'), null);
+  // 自訂角色：role_name 不是標準權限時改用 permission。
+  assert.equal(permissionOf({ bob: { role_name: 'security-reviewer', permission: 'write' } }, 'bob'), 'write');
+  assert.equal(permissionOf({ bob: { role_name: 'security-reviewer', permission: 'pull' } }, 'bob'), null);
+  // prototype 上的名稱不是權限（否則 rank 不是數字，比較會放行）。
+  for (const name of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
+    assert.equal(permissionOf({ bob: name }, 'bob'), null, name);
+    assert.equal(permissionOf({ bob: { role_name: name, permission: name } }, 'bob'), null, name);
+  }
   assert.equal(permissionOf({}, 'bob'), null);
   assert.equal(permissionOf(null, 'bob'), null);
 });
@@ -95,6 +103,7 @@ test('evaluateAck：依序拒絕各種不合法的確認', () => {
   assert.equal(code(ack(), comment({ user: { login: 'Author' } })), 'ACK_BY_AUTHOR');
   assert.equal(code(ack(), comment({ user: {} })), 'ACK_BY_AUTHOR');
   assert.equal(code(ack(), comment({ user: { login: 'stranger' } })), 'ACK_PERMISSION_UNKNOWN');
+  assert.equal(code(ack(), comment(), context({ permissions: { alice: 'constructor' } })), 'ACK_PERMISSION_UNKNOWN');
   assert.equal(code(ack(), comment({ user: { login: 'reader' } })), 'ACK_PERMISSION_DENIED');
   assert.equal(code(ack(), comment(), context({ minPermission: 'admin' })), 'ACK_PERMISSION_DENIED');
   assert.equal(code(ack({ reason: '' })), 'ACK_REASON_MISSING');

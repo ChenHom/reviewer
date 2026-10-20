@@ -38,12 +38,12 @@ node bin/review-state.js --report report.json --pr pr.json --unsigned
 
 | 選項 | 說明 |
 |---|---|
-| `--report <file>` | 必填。目前 head 的報表（`bin/review.js --out`） |
+| `--report <file>` | 必填。目前 head 的報表（`bin/review.js --out`）。確認要綁定的欄位必須齊全：每個檔案的 `contentHash`、每個單向門 finding 的 `id`、`blocker`、`policyDigest`（`scopeHash` 可以是 `null`，這時以 `contentHash` 綁定）。缺少時以 `REVIEW_STATE_REPORT_INVALID:<原因>` 結束：無法判斷程式碼或規則有沒有改變 |
 | `--pr <file>` | 必填。PR，GitHub REST 的 pull request JSON（使用 `number`、`user.login`、`head.sha`）。`head.sha` 與報表的 head 不同時以 `REVIEW_STATE_STALE_REPORT` 結束：舊的報表晚到時不能拿來更新狀態或 Check |
 | `--dashboard <file>` | 上一版儀表板留言的內容：純文字，或含 `body` 的 JSON（GitHub comment）。第一次執行時省略 |
 | `--comments <file>` | PR 的**全部** issue comments，GitHub REST 的 JSON 陣列（使用 `id`、`body`、`user.login`、`user.id`、`user.type`、`created_at`、`updated_at`）。保存的確認每次都與它核對，缺少的留言視為已刪除 |
-| `--permissions <file>` | 留言者目前的權限：`{ "<login>": "<權限>" }`，值為 `admin`、`maintain`、`write`、`triage`、`read`、`none`，或 GitHub collaborator permission API 的 `{ role_name, permission }`。沒有列出的留言者，確認一律不採用；之前接受的確認也每次重新檢查，所以要涵蓋所有確認者 |
-| `--history <path>` | 之前 head 的報表（檔案或目錄，目錄中所有 `.json`）；可重複。只在狀態無法驗證時用來驗證確認指令的 `@head`（見「狀態的保存」）。無法解析的檔案在 stderr 警告後略過 |
+| `--permissions <file>` | 留言者目前的權限：`{ "<login>": "<權限>" }`，值為 `admin`、`maintain`、`write`、`triage`、`read`、`none`，或 GitHub collaborator permission API 的 `{ role_name, permission }`（`role_name` 是自訂角色時改用 `permission` 的標準權限）。沒有列出或不認得的權限，確認一律不採用；之前接受的確認也每次重新檢查，所以要涵蓋所有確認者 |
+| `--history <path>` | 之前 head 的報表（檔案或目錄，目錄中所有 `.json`）；可重複。只在狀態無法驗證時用來驗證確認指令的 `@head`（見「狀態的保存」）。無法解析的檔案在 stderr 警告後略過；欄位不齊全的報表（同 `--report` 的條件）不用來驗證 |
 | `--ack-permission <level>` | 確認所需的最低權限：`write`（預設）、`maintain`、`admin` |
 | `--out <file>` | 寫出完整結果（JSON，見「輸出」） |
 | `--json` | stdout 輸出完整結果（取代儀表板 Markdown） |
@@ -55,7 +55,7 @@ node bin/review-state.js --report report.json --pr pr.json --unsigned
 | `REVIEWER_STATE_KEY` | 狀態的 HMAC key。必填，除非 `--unsigned`。key 本身不會出現在留言中（留言只有 key 的 sha256 前 8 碼） |
 | `REVIEWER_STATE_PREVIOUS_KEYS` | 換 key 後仍可驗證舊狀態的 key，以換行或逗號分隔。寫出時一律使用 `REVIEWER_STATE_KEY` |
 
-exit code：0 完成；1 有待確認的項目（`--fail-on-pending`）；2 錯誤（stderr 印出 `error: <訊息>`）。錯誤代碼：`OPTION_MISSING:--report`、`OPTION_MISSING:--pr`、`OPTION_INVALID:--ack-permission=<值>`、`REVIEW_STATE_KEY_MISSING`、`REVIEW_STATE_STALE_REPORT:<報表 head>≠<PR head>`、`REVIEW_STATE_REPORT_INVALID`、`REVIEW_STATE_PR_INVALID`、`REVIEW_STATE_COMMENTS_INVALID`、`REVIEW_STATE_*_NOT_JSON:<path>`。
+exit code：0 完成；1 有待確認的項目（`--fail-on-pending`）；2 錯誤（stderr 印出 `error: <訊息>`）。錯誤代碼：`OPTION_MISSING:--report`、`OPTION_MISSING:--pr`、`OPTION_INVALID:--ack-permission=<值>`、`REVIEW_STATE_KEY_MISSING`、`REVIEW_STATE_STALE_REPORT:<報表 head>≠<PR head>`、`REVIEW_STATE_REPORT_INVALID:<原因>`（`REPORT_SHAPE_INVALID`、`FILE_PATH_MISSING`、`FILE_CONTENT_HASH_MISSING:<path>`、`FINDING_INVALID:<path>`、`FINDING_POLICY_DIGEST_MISSING:<path>`、`FINDING_SCOPE_HASH_INVALID:<path>`）、`REVIEW_STATE_PR_INVALID`、`REVIEW_STATE_COMMENTS_INVALID`、`REVIEW_STATE_*_NOT_JSON:<path>`。
 
 ## 追蹤的項目
 

@@ -215,6 +215,8 @@
 3. **保存的確認沒有重新檢查權限**（P1，確認為真）：確認者之後失去權限，或 `--ack-permission` 提高後，舊的確認仍有效。修正：保存的確認每次都以目前的 `permissions` 與門檻重新檢查（也重新檢查不是 PR 作者），不符時不再採用。因此 `--permissions` 必須涵蓋所有確認者。
 4. **有單向門的檔案，AI 沒有審查單向門以外的部分卻不需要人工看整個檔案**（P1，確認為真）：有單向門時不產生檔案層級的項目；沒有 `--ai`，或 AI 失敗時（`aiFindingsFor()` 對 `ESCALATED` 不產生 `AI_REVIEW_FAILED`），確認完單向門 Check 就通過，單向門以外的部分沒有人看過。修正：有單向門、但 AI 的結果不是 `PASS` 時，另外產生檔案層級的項目（`AI_REVIEW_MISSING` / `AI_REVIEW_FAILED` / `AI_NEEDS_HUMAN`）。同一個檔案中單向門排在檔案層級項目前面。
 5. **編號的 4 碼前綴可能重複**（P2，確認為真）：兩個項目的 id 前 4 碼相同時，前綴對應到多個項目，儀表板產生的兩個指令都被拒絕，Check 無法通過。修正：前綴對應到多個項目時以短編號縮小範圍；儀表板的前綴加長到所有已知項目都不重複。
+6. **報表缺少 `contentHash` 時確認永遠有效**（P1，確認為真）：缺欄位時 fingerprint 的是字串 `"undefined"`，之後同樣缺欄位的 head 都相同，檔案改了確認仍有效。修正：`reportError()` 檢查確認要綁定的欄位（檔案的 `contentHash`、單向門 finding 的 `id`、`blocker`、`policyDigest`、非空的 `scopeHash`），不齊全時以 `REVIEW_STATE_REPORT_INVALID:<原因>` 拒絕；這樣的歷史報表不用來驗證 `@head`。`policyDigest` 也一併要求：缺少時原本以固定值代替，規則改變也不會讓確認失效。
+7. **自訂角色的權限被當成不認得**（P2，確認為真）：GitHub 的 `role_name` 是自訂角色名稱時，標準權限在 `permission`。修正：`role_name` 不是標準權限時改用 `permission`。查證時另外發現 `value in PERMISSION_RANK` 會把 `constructor`、`toString` 等 prototype 上的名稱當成權限，rank 不是數字，`NaN < 3` 為 false，權限檢查會放行；改用 `Object.hasOwn()`。
 
 **驗證**：`tests/review-state/` 的單元測試（codec、指令、狀態機、儀表板），以及以真實 git repo 執行 `reviewRange()` 與 CLI 的端對端測試：移除 `authorize` → 待確認 → 確認 → 上方插入另一個 method 仍有效 → 同一個 method 的邏輯改變後重新開啟 → 狀態被竄改時以 `--history` 重播。
 

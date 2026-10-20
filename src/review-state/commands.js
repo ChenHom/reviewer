@@ -62,7 +62,9 @@ export function isBotComment(comment) {
 }
 
 /**
- * 留言者的權限（`permissions` 的值可以是字串或 `{ role_name, permission }`）。沒有資料時為 null。
+ * 留言者的權限（`permissions` 的值可以是字串或 GitHub 的 `{ role_name, permission }`）。`role_name` 是
+ * 自訂角色的名稱時（不是標準權限），改用 `permission` 的標準權限。沒有資料或不認得時為 null。
+ * 只認 `PERMISSION_RANK` 自己的 key（`constructor` 等 prototype 上的名稱不算）。
  *
  * @param {object} permissions - login → 權限。
  * @param {string} login - 留言者。
@@ -70,8 +72,8 @@ export function isBotComment(comment) {
  */
 export function permissionOf(permissions, login) {
   const entry = Object.entries(permissions ?? {}).find(([name]) => name.toLowerCase() === login.toLowerCase())?.[1];
-  const value = typeof entry === 'string' ? entry : (entry?.role_name ?? entry?.permission);
-  return typeof value === 'string' && value in PERMISSION_RANK ? value : null;
+  const candidates = typeof entry === 'string' ? [entry] : [entry?.role_name, entry?.permission];
+  return candidates.find((value) => typeof value === 'string' && Object.hasOwn(PERMISSION_RANK, value)) ?? null;
 }
 
 /**

@@ -378,6 +378,36 @@ test('updateReviewState：報表不是 PR 目前的 head、輸入不合法時拒
   assert.equal(updateReviewState({ report: report(sha(1)), pr: PR, keys }).headSha, sha(1));
 });
 
+test('updateReviewState：確認要綁定的欄位不齊全的報表不接受；這樣的歷史報表不用來驗證確認', () => {
+  const broken = (fileOverrides, findingOverrides = {}) => report(sha(1), {
+    files: [{ ...report(sha(1)).files[0], ...fileOverrides, findings: [door(findingOverrides)] }],
+  });
+  for (const [label, current, code] of [
+    ['沒有 contentHash', broken({ contentHash: undefined }), 'FILE_CONTENT_HASH_MISSING:app/WalletService.php'],
+    ['空的 contentHash', broken({ contentHash: '' }), 'FILE_CONTENT_HASH_MISSING:app/WalletService.php'],
+    ['沒有 path', broken({ path: undefined }), 'FILE_PATH_MISSING'],
+    ['finding 沒有 policyDigest', broken({}, { policyDigest: undefined }), 'FINDING_POLICY_DIGEST_MISSING:app/WalletService.php'],
+    ['finding 沒有 id', broken({}, { id: '' }), 'FINDING_INVALID:app/WalletService.php'],
+    ['scopeHash 是空字串', broken({}, { scopeHash: '' }), 'FINDING_SCOPE_HASH_INVALID:app/WalletService.php'],
+    ['head 是空字串', report('', {}), 'REPORT_SHAPE_INVALID'],
+  ]) {
+    assert.throws(() => updateReviewState({ report: current, pr: PR, keys }), new RegExp(`REVIEW_STATE_REPORT_INVALID:${code.replace(/[.]/g, '\\.')}`), label);
+  }
+  // scopeHash 為 null 時以 contentHash 綁定（檔案層級或沒有 scope 的 analyzer），可以接受。
+  assert.equal(updateReviewState({ report: broken({}, { scopeHash: null }), pr: PR, keys }).items[0].kind, 'DOOR');
+
+  // 歷史報表缺少欄位：狀態遺失時不能用它驗證 @head。
+  const head1 = report(sha(1));
+  const first = step(head1, null);
+  const comments = [comment(1, '/reviewer ack F1-d00d@1111111 看過了')];
+  const acked = step(head1, first.dashboard.body, comments);
+  const tampered = acked.dashboard.body.replace(/sig=[0-9a-f]{64}/, `sig=${'0'.repeat(64)}`);
+  const head2 = report(sha(2));
+  const historyWithoutHash = { ...head1, files: head1.files.map((file) => ({ ...file, contentHash: undefined })) };
+  assert.equal(stateOf(step(head2, tampered, comments, { history: [historyWithoutHash] }), 'F1'), 'OPEN');
+  assert.equal(stateOf(step(head2, tampered, comments, { history: [head1] }), 'F1'), 'ACKNOWLEDGED');
+});
+
 test('checkResult：有待確認就失敗', () => {
   const head = report(sha(1));
   assert.deepEqual(checkResult(head, []), { headSha: sha(1), conclusion: 'success', title: '不需要人工確認', pending: 0 });

@@ -11,6 +11,28 @@ import { checkResult, computeState, itemLabel } from './machine.js';
 export const ACK_PERMISSIONS = Object.freeze(['write', 'maintain', 'admin']);
 
 /**
+ * 報表中確認要綁定的欄位是否齊全：每個檔案的 `contentHash`，以及單向門 finding 的 `policyDigest`。
+ * 缺少時無法判斷程式碼或規則是否改變（例如所有缺欄位的 head 都會得到相同的 fingerprint），所以不接受。
+ *
+ * @param {object} report - 報表。
+ * @returns {string|null} 第一個錯誤，沒有時為 null。
+ */
+export function reportError(report) {
+  if (!Array.isArray(report?.files) || typeof report?.head?.sha !== 'string' || report.head.sha === '') return 'REPORT_SHAPE_INVALID';
+  const filled = (value) => typeof value === 'string' && value !== '';
+  for (const file of report.files) {
+    if (!filled(file?.path)) return 'FILE_PATH_MISSING';
+    if (!filled(file.contentHash)) return `FILE_CONTENT_HASH_MISSING:${file.path}`;
+    for (const finding of (file.findings ?? []).filter((item) => item?.kind !== 'AI')) {
+      if (!filled(finding.id) || !filled(finding.blocker)) return `FINDING_INVALID:${file.path}`;
+      if (!filled(finding.policyDigest)) return `FINDING_POLICY_DIGEST_MISSING:${file.path}`;
+      if (finding.scopeHash !== undefined && finding.scopeHash !== null && !filled(finding.scopeHash)) return `FINDING_SCOPE_HASH_INVALID:${file.path}`;
+    }
+  }
+  return null;
+}
+
+/**
  * 更新二次 review 狀態。
  *
  * @param {object} options - 輸入。
@@ -25,7 +47,8 @@ export const ACK_PERMISSIONS = Object.freeze(['write', 'maintain', 'admin']);
  * @returns {object} 輸出：`dashboard`、`check`、`replies`、`threads`、`items`、`notes`、`previousState`。
  */
 export function updateReviewState({ report, pr, dashboard = null, comments = [], permissions = {}, history = [], keys, minPermission = 'write' }) {
-  if (!Array.isArray(report?.files) || typeof report?.head?.sha !== 'string') throw new Error('REVIEW_STATE_REPORT_INVALID');
+  const invalid = reportError(report);
+  if (invalid) throw new Error(`REVIEW_STATE_REPORT_INVALID:${invalid}`);
   if (!Number.isInteger(pr?.number) || typeof pr?.user?.login !== 'string' || pr.user.login === '') throw new Error('REVIEW_STATE_PR_INVALID');
   if (!ACK_PERMISSIONS.includes(minPermission)) throw new Error(`REVIEW_STATE_ACK_PERMISSION_INVALID:${minPermission}`);
   // 報表必須是 PR 目前的 head：舊的報表晚到時不能拿來更新狀態或 Check。
@@ -46,7 +69,8 @@ export function updateReviewState({ report, pr, dashboard = null, comments = [],
     pr: { number: pr.number, login: pr.user.login },
     permissions,
     minPermission,
-    history,
+    // 欄位不齊全的歷史報表不用來驗證確認。
+    history: history.filter((old) => reportError(old) === null),
   });
   const rendered = renderDashboard({ report, result, key: keys.current, minPermission });
   return {
