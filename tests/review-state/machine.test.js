@@ -32,7 +32,7 @@ const report = (head, overrides = {}) => ({
   config: { digest: null },
   ai: { model: 'm', standards: { digest: null } },
   files: [
-    { path: 'app/WalletService.php', track: 'ESCALATED', contentHash: 'git:w1', needsHuman: true, ai: { status: 'PASS' }, findings: [door()] },
+    { path: 'app/WalletService.php', track: 'ESCALATED', decision: 'HUMAN_REVIEW_REQUIRED', contentHash: 'git:w1', needsHuman: true, ai: { status: 'PASS' }, findings: [door()] },
     { path: 'src/ok.ts', track: 'AI_TRACK', decision: 'HUMAN_REVIEW_REQUIRED', contentHash: 'git:ok', needsHuman: false, ai: { status: 'PASS' }, findings: [] },
     { path: 'src/skip.ts', track: 'AUTO_PASS', decision: 'NOT_SELECTED_FOR_HUMAN_REVIEW', contentHash: 'git:s', needsHuman: false, findings: [] },
   ],
@@ -124,11 +124,15 @@ test('buildItems：只有機械審查略過與 AI 審查通過可以不產生項
 });
 
 test('有單向門的檔案：AI 沒有放行單向門以外的部分時，另外產生檔案層級的項目', () => {
-  const items = (ai) => [...buildItems(report(sha(1), {
-    files: [{ path: 'app/W.php', track: 'ESCALATED', contentHash: 'git:w', needsHuman: true, ...(ai ? { ai } : {}), findings: [door()] }],
+  const items = (ai, overrides = {}) => [...buildItems(report(sha(1), {
+    files: [{ path: 'app/W.php', track: 'ESCALATED', decision: 'HUMAN_REVIEW_REQUIRED', contentHash: 'git:w', needsHuman: true, ...(ai ? { ai } : {}), findings: [door()], ...overrides }],
   })).values()].map(({ kind, blocker, description }) => [kind, blocker, description]);
   const doorRow = ['DOOR', 'TRANSACTION_BOUNDARY_REMOVED', '移除呼叫 \\DB::transaction'];
   assert.deepEqual(items({ status: 'PASS' }), [doorRow]);
+  // AI 通過，但路由與決策不一致（不認得、缺少或 NOT_SELECTED 的決策，或路由不是 ESCALATED）：AI 不能放行其他部分。
+  for (const overrides of [{ decision: 'SOMETHING_NEW' }, { decision: undefined }, { decision: 'NOT_SELECTED_FOR_HUMAN_REVIEW' }, { track: 'AI_TRACK' }, { track: 'SOMETHING_NEW' }]) {
+    assert.deepEqual(items({ status: 'PASS' }, overrides), [doorRow, ['FILE', 'HUMAN_REVIEW_REQUIRED', null]], JSON.stringify(overrides));
+  }
   assert.deepEqual(items(null), [doorRow, ['FILE', 'AI_REVIEW_MISSING', null]]);
   assert.deepEqual(items({ status: 'FAILED', error: 'AI_TIMEOUT' }), [doorRow, ['FILE', 'AI_REVIEW_FAILED', 'AI_TIMEOUT']]);
   assert.deepEqual(items({ status: 'NEEDS_HUMAN', summary: '另外改了退款金額的計算' }), [doorRow, ['FILE', 'AI_NEEDS_HUMAN', '另外改了退款金額的計算']]);

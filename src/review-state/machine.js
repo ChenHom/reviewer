@@ -83,6 +83,17 @@ export function clearedFile(file) {
 }
 
 /**
+ * 有單向門的檔案，AI 是否放行了單向門以外的部分：只有一致的升級（`ESCALATED`、決策是 `HUMAN_REVIEW_REQUIRED`）
+ * 且 AI 的結果是 `PASS`。不認得的決策也會被路由升級，但那是因為它的審查範圍不可信，AI 的結果不能放行。
+ *
+ * @param {object} file - review file result。
+ * @returns {boolean} 是否放行。
+ */
+function aiClearedRest(file) {
+  return file.track === 'ESCALATED' && file.decision === DECISION.HUMAN_REVIEW_REQUIRED && file.ai?.status === 'PASS';
+}
+
+/**
  * 報表中要追蹤的項目。
  *
  * @param {object} report - bin/review.js 的 JSON 報表。
@@ -112,10 +123,9 @@ export function buildItems(report) {
     // 需要人工的檔案一定要有項目可以確認（fail-closed）：
     // - AI 的 finding；
     // - 沒有單向門、又不確定不需要人工的檔案；
-    // - 有單向門，但 AI 沒有放行單向門以外的部分（沒有 AI 審查、AI 失敗、AI 判斷需要人工）：確認單向門不代表
-    //   看過整個檔案。
-    const aiPassed = file.ai?.status === 'PASS';
-    if (aiFindings.length > 0 || (doors.length === 0 ? !clearedFile(file) : !aiPassed)) {
+    // - 有單向門，但 AI 沒有放行單向門以外的部分（沒有 AI 審查、AI 失敗、AI 判斷需要人工，或路由與決策不一致）：
+    //   確認單向門不代表看過整個檔案。
+    if (aiFindings.length > 0 || (doors.length === 0 ? !clearedFile(file) : !aiClearedRest(file))) {
       const id = digest(['file-review', file.path]);
       items.set(id, {
         id,

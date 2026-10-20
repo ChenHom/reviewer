@@ -227,11 +227,13 @@
 12. **合法簽章的舊狀態可以被還原**（P1，確認為真）：簽章只保證狀態是 reviewer 產生的，不保證是最新的。有寫入權限的人把儀表板改回項目修正前、已確認的內容後，項目再次出現時直接是已確認，Check 通過。修正：保存的狀態只在儀表板留言由 bot 建立、而且最後一次編輯（GraphQL 的 `editor`）也是 bot 自己時採用，否則丟棄並從確認留言重播（`STATE_NOT_FROM_BOT` / `STATE_EDITED_BY_OTHER` / `STATE_EDITOR_UNKNOWN`）；因此 `--dashboard` 改為傳入 GitHub 留言的 JSON，7b 的 workflow 要另外以 GraphQL 取得 `editor`。重播時也不知道項目是否曾經修正後再出現，所以 `--history` 中有任何一個 head 沒有這一項時，只採用目前 head 的確認（`ACK_REPLAY_UNVERIFIABLE`）。儀表板留言被刪除、但已經有確認指令時同樣重播（`DASHBOARD_MISSING`），不當成第一次執行。
 13. **缺少時間的確認留言被接受**（P1，確認為真）：留言沒有 `created_at` / `updated_at` 時無法偵測編輯，指令仍被接受；之後以 `lastProcessedCommentId` 跳過，保存的確認也把缺少 `updated_at` 視為未編輯，內容被換掉仍有效。修正：兩個時間都要有而且相同，否則新的確認以 `ACK_EDIT_UNKNOWN` 拒絕，保存的確認不再採用。
 14. **`AI_TRACK` 搭配不認得的決策時，AI 通過就放行**（P1，確認為真）：路由只對 `HUMAN_REVIEW_REQUIRED` 產生 `AI_TRACK`，不認得的決策要升級，AI 不能放行；但 `clearedFile()` 只看路由、`needsHuman` 與 AI 結果，不一致的報表（`AI_TRACK` 加上不認得、缺少或 `NOT_SELECTED` 的決策）會被當成 AI 審查通過，Check 通過。修正：AI 審查通過還要求決策是 `HUMAN_REVIEW_REQUIRED`，否則產生檔案層級的項目。
+15. **有單向門的檔案，決策不認得時 AI 通過仍省略檔案層級的項目**（P1，確認為真）：有單向門時只看 AI 結果是否為 `PASS`，不認得的決策（路由升級正是因為審查範圍不可信）在確認單向門後 Check 就通過。修正：只有路由是 `ESCALATED`、決策是 `HUMAN_REVIEW_REQUIRED`、AI 結果是 `PASS` 時才省略，否則產生檔案層級的項目。
 
 PR #12 留到 7b 的 P2：
 
 - 儀表板「AI 審查通過」的數量與清單包含 AI 結果是 `FIXED`（修正尚未 commit）的檔案，與同一個檔案的 `AI_FIX_UNCOMMITTED` 待確認項目矛盾；應只列出 `PASS`。
 - 項目在還沒處理過任何留言時（`lastProcessedCommentId` 為 `null`）變成 `FIXED`，之後再次出現的同一次執行收到第一個確認：確認被接受、也回覆了 ✅，卻因為保留條件要求之前的留言 id 不是 `null` 而被丟掉，項目維持 `REOPENED`，要再確認一次。應把這次執行處理的確認都當成新的。
+- 確認過的項目修正後以相同的 fingerprint 再次出現時，同一個確認者在這次執行送出的新確認被當成與舊確認重複而沒有加入，舊確認接著被「再次出現」的規則移除，項目維持 `REOPENED`（回覆卻是 ✅），要再確認一次。應先移除再次出現項目的舊確認，再檢查重複。
 
 **驗證**：`tests/review-state/` 的單元測試（codec、指令、狀態機、儀表板），以及以真實 git repo 執行 `reviewRange()` 與 CLI 的端對端測試：移除 `authorize` → 待確認 → 確認 → 上方插入另一個 method 仍有效 → 同一個 method 的邏輯改變後重新開啟 → 狀態被竄改時以 `--history` 重播 → 只有儀表板內容（沒有作者與編輯者）時不採用狀態。
 
