@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { stateKeys } from '../../src/review-state/codec.js';
 import { DASHBOARD_MARKER, escapeText, formatDashboard, renderDashboard, threadTargets } from '../../src/review-state/dashboard.js';
 import { updateReviewState } from '../../src/review-state/index.js';
-import { ITEM_STATE, buildItems, checkResult, computeState, fingerprint, itemLabel } from '../../src/review-state/machine.js';
+import { ITEM_STATE, buildItems, checkResult, computeState, fingerprint, itemLabel, labelLength } from '../../src/review-state/machine.js';
 
 const sha = (n) => String(n).repeat(40).slice(0, 40);
 const DOOR = 'd00d'.padEnd(64, 'a');
@@ -32,7 +32,7 @@ const report = (head, overrides = {}) => ({
   config: { digest: null },
   ai: { model: 'm' },
   files: [
-    { path: 'app/WalletService.php', track: 'ESCALATED', contentHash: 'git:w1', needsHuman: true, findings: [door()] },
+    { path: 'app/WalletService.php', track: 'ESCALATED', contentHash: 'git:w1', needsHuman: true, ai: { status: 'PASS' }, findings: [door()] },
     { path: 'src/ok.ts', track: 'AI_TRACK', contentHash: 'git:ok', needsHuman: false, ai: { status: 'PASS' }, findings: [] },
     { path: 'src/skip.ts', track: 'AUTO_PASS', decision: 'NOT_SELECTED_FOR_HUMAN_REVIEW', contentHash: 'git:s', needsHuman: false, findings: [] },
   ],
@@ -98,12 +98,59 @@ test('buildItems：只有機械審查略過與 AI 審查通過可以不產生項
   assert.deepEqual(kinds({ track: 'AUTO_PASS', decision: 'NOT_SELECTED_FOR_HUMAN_REVIEW', needsHuman: true }), ['HUMAN_REVIEW_REQUIRED']);
   // AI_TRACK 的 needsHuman 為 false，但沒有 AI 結果或結果不是通過。
   assert.deepEqual(kinds({ track: 'AI_TRACK', needsHuman: false }), ['AI_REVIEW_MISSING']);
-  assert.deepEqual(kinds({ track: 'AI_TRACK', needsHuman: false, ai: { status: 'NEEDS_HUMAN' } }), ['HUMAN_REVIEW_REQUIRED']);
+  assert.deepEqual(kinds({ track: 'AI_TRACK', needsHuman: false, ai: { status: 'NEEDS_HUMAN' } }), ['AI_NEEDS_HUMAN']);
   // ESCALATED 但沒有任何 finding。
-  assert.deepEqual(kinds({ track: 'ESCALATED', needsHuman: true }), ['HUMAN_REVIEW_REQUIRED']);
+  assert.deepEqual(kinds({ track: 'ESCALATED', needsHuman: true }), ['AI_REVIEW_MISSING']);
+  assert.deepEqual(kinds({ track: 'ESCALATED', needsHuman: true, ai: { status: 'PASS' } }), ['HUMAN_REVIEW_REQUIRED']);
   // 這種報表的 Check 不會通過。
   const result = step(report(sha(1), { files: [{ path: 'x', track: 'SOMETHING_NEW', needsHuman: false, contentHash: 'git:x', findings: [] }] }), null);
   assert.equal(result.check.conclusion, 'failure');
+});
+
+test('有單向門的檔案：AI 沒有放行單向門以外的部分時，另外產生檔案層級的項目', () => {
+  const items = (ai) => [...buildItems(report(sha(1), {
+    files: [{ path: 'app/W.php', track: 'ESCALATED', contentHash: 'git:w', needsHuman: true, ...(ai ? { ai } : {}), findings: [door()] }],
+  })).values()].map(({ kind, blocker, description }) => [kind, blocker, description]);
+  const doorRow = ['DOOR', 'TRANSACTION_BOUNDARY_REMOVED', '移除呼叫 \\DB::transaction'];
+  assert.deepEqual(items({ status: 'PASS' }), [doorRow]);
+  assert.deepEqual(items(null), [doorRow, ['FILE', 'AI_REVIEW_MISSING', null]]);
+  assert.deepEqual(items({ status: 'FAILED', error: 'AI_TIMEOUT' }), [doorRow, ['FILE', 'AI_REVIEW_FAILED', 'AI_TIMEOUT']]);
+  assert.deepEqual(items({ status: 'NEEDS_HUMAN', summary: '另外改了退款金額的計算' }), [doorRow, ['FILE', 'AI_NEEDS_HUMAN', '另外改了退款金額的計算']]);
+
+  // 確認單向門不夠：檔案層級的項目也確認後 Check 才通過；單向門排在同一個檔案的檔案層級項目前面。
+  const noAi = report(sha(1), { files: [{ ...report(sha(1)).files[0], ai: undefined }] });
+  const first = step(noAi, null);
+  assert.deepEqual(first.items.map(({ label, kind, state }) => [label.split('-')[0], kind, state]), [['F1', 'DOOR', 'OPEN'], ['F2', 'FILE', 'OPEN']]);
+  const doorOnly = step(noAi, first.dashboard.body, [comment(1, `/reviewer ack ${first.items[0].label}@1111111 單向門看過了`)]);
+  assert.equal(doorOnly.check.conclusion, 'failure');
+  const both = step(noAi, doorOnly.dashboard.body, [
+    comment(1, `/reviewer ack ${first.items[0].label}@1111111 單向門看過了`),
+    comment(2, `/reviewer ack ${first.items[1].label}@1111111 整個檔案看過了`),
+  ]);
+  assert.equal(both.check.conclusion, 'success');
+  assert.match(both.dashboard.body, /沒有 AI 審查/);
+});
+
+test('編號的 id 前綴：與其他項目重複時加長；舊的 4 碼指令以短編號區分', () => {
+  assert.equal(labelLength(['abcd1', 'abcd2', 'ffff0']), 5);
+  assert.equal(labelLength(['abcd', 'ffff']), 4);
+  assert.equal(labelLength([]), 4);
+  assert.equal(labelLength(['a'.repeat(64), `${'a'.repeat(63)}b`]), 64);
+
+  const first = 'abcd1'.padEnd(64, '1');
+  const second = 'abcd2'.padEnd(64, '2');
+  const twin = report(sha(1), { files: [{ ...report(sha(1)).files[0], findings: [door({ id: first }), door({ id: second, blocker: 'ROW_LOCK_REMOVED', location: { side: 'base', startLine: 90, endLine: 90 } })] }] });
+  const start = step(twin, null);
+  assert.deepEqual(start.items.map(({ label }) => label), ['F1-abcd1', 'F2-abcd2']);
+  assert.match(start.dashboard.body, /\/reviewer ack F1-abcd1@1111111/);
+  const acked = step(twin, start.dashboard.body, [
+    comment(1, '/reviewer ack F1-abcd@1111111 4 碼的舊指令，以 F1 區分'),
+    comment(2, '/reviewer ack F2-abcd2@1111111 完整的前綴'),
+    comment(3, '/reviewer ack F9-abcd@1111111 編號不對'),
+  ]);
+  assert.deepEqual(acked.items.map(({ state }) => state), ['ACKNOWLEDGED', 'ACKNOWLEDGED']);
+  assert.match(acked.replies[0].body, /^✅ 已確認 F1-abcd1/);
+  assert.match(acked.replies[2].body, /id 前綴對應到多個項目/);
 });
 
 test('保存的確認每次都重新檢查權限：權限被移除或門檻提高時不再採用', () => {

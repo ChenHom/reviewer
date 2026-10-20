@@ -65,14 +65,21 @@ test('端對端：真實報表 → 待確認 → 確認 → 上方插入程式�
   const first = await cli(['--report', files.report, '--pr', files.pr, '--out', join(work, 'out1.json'), '--fail-on-pending']);
   assert.equal(first.code, 1, first.stderr);
   const out1 = JSON.parse(await readFile(join(work, 'out1.json'), 'utf8'));
-  const label = out1.items[0].label;
+  const byKind = (out, kind) => out.items.find((item) => item.kind === kind);
+  // 沒有 AI 審查：單向門之外，整個檔案也要人工確認。
+  assert.deepEqual(out1.items.map(({ kind, blocker }) => [kind, blocker]), [['DOOR', 'AUTHORIZATION_GUARD_REMOVED'], ['FILE', 'AI_REVIEW_MISSING']]);
+  const label = byKind(out1, 'DOOR').label;
+  const fileLabel = byKind(out1, 'FILE').label;
   assert.match(label, new RegExp(`^F1-${finding.id.slice(0, 4)}$`));
   assert.equal(out1.check.conclusion, 'failure');
   assert.equal(out1.dashboard.body, first.stdout.trimEnd());
   assert.match(first.stdout, new RegExp(`/reviewer ack ${label}@${head1.slice(0, 7)}`));
 
   // 確認（儀表板以 GitHub comment JSON 傳入）。
-  const comments = [{ id: 100, body: `/reviewer ack ${label}@${head1.slice(0, 7)} 呼叫端已檢查權限`, user: { login: 'alice', type: 'User' }, created_at: 't', updated_at: 't' }];
+  const comments = [
+    { id: 100, body: `/reviewer ack ${label}@${head1.slice(0, 7)} 呼叫端已檢查權限`, user: { login: 'alice', type: 'User' }, created_at: 't', updated_at: 't' },
+    { id: 101, body: `/reviewer ack ${fileLabel}@${head1.slice(0, 7)} 整個檔案看過了`, user: { login: 'alice', type: 'User' }, created_at: 't', updated_at: 't' },
+  ];
   const second = await cli([
     '--report', files.report, '--pr', files.pr, '--permissions', files.permissions,
     '--dashboard', await json('dashboard1.json', { body: out1.dashboard.body }),
@@ -80,18 +87,20 @@ test('端對端：真實報表 → 待確認 → 確認 → 上方插入程式�
   ]);
   assert.equal(second.code, 0, second.stderr);
   const out2 = JSON.parse(second.stdout);
-  assert.equal(out2.items[0].state, 'ACKNOWLEDGED');
+  assert.deepEqual(out2.items.map(({ state }) => state), ['ACKNOWLEDGED', 'ACKNOWLEDGED']);
   assert.match(out2.replies[0].body, /^✅/);
+  assert.match(out2.replies[1].body, /^✅/);
 
-  // 上方插入另一個 method：finding 與 scope 不變，確認仍有效。
+  // 上方插入另一個 method：單向門的 finding 與 scope 不變，確認仍有效；檔案層級的確認綁定檔案內容，重新開啟。
   const head2 = await commit(service('        return $order->refund($order->amount);', '    public function audit($order)\n    {\n        return $order->id;\n    }\n\n'), 'insert above');
   const third = await cli([
     '--report', await json('report2.json', await reviewRange({ repo, base, head: head2 })), '--pr', await json('pr2.json', pr(head2)),
     '--permissions', files.permissions, '--dashboard', await json('dashboard2.md', out2.dashboard.body), '--comments', await json('comments.json', comments), '--json',
   ]);
   const out3 = JSON.parse(third.stdout);
-  assert.equal(out3.items[0].state, 'ACKNOWLEDGED');
-  assert.equal(out3.items[0].label, label);
+  assert.equal(byKind(out3, 'DOOR').state, 'ACKNOWLEDGED');
+  assert.equal(byKind(out3, 'DOOR').label, label);
+  assert.equal(byKind(out3, 'FILE').state, 'REOPENED');
 
   // 同一個 method 的邏輯改變：重新開啟。
   const head3 = await commit(service('        return $order->refund($order->amount - 1);', '    public function audit($order)\n    {\n        return $order->id;\n    }\n\n'), 'change logic');
@@ -100,7 +109,7 @@ test('端對端：真實報表 → 待確認 → 確認 → 上方插入程式�
     '--permissions', files.permissions, '--dashboard', await json('dashboard3.md', out3.dashboard.body), '--comments', await json('comments.json', comments), '--json',
   ]);
   const out4 = JSON.parse(fourth.stdout);
-  assert.deepEqual(out4.items.find((item) => item.label === label), { ...out3.items[0], state: 'REOPENED', reopenedBecause: 'CODE_CHANGED', location: out4.items.find((item) => item.label === label).location });
+  assert.deepEqual(byKind(out4, 'DOOR'), { ...byKind(out3, 'DOOR'), state: 'REOPENED', reopenedBecause: 'CODE_CHANGED', location: byKind(out4, 'DOOR').location });
   assert.equal(out4.check.conclusion, 'failure');
 
   // 狀態被竄改時，以之前的報表（--history）驗證確認。
@@ -113,7 +122,7 @@ test('端對端：真實報表 → 待確認 → 確認 → 上方插入程式�
   ]);
   const replayed = JSON.parse(replay.stdout);
   assert.equal(replayed.previousState.reason, 'STATE_SIGNATURE_MISMATCH');
-  assert.equal(replayed.items[0].state, 'ACKNOWLEDGED');
+  assert.deepEqual(replayed.items.map(({ state }) => state), ['ACKNOWLEDGED', 'ACKNOWLEDGED']);
   assert.deepEqual(replayed.replies, []);
 });
 

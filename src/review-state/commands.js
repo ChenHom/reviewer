@@ -2,7 +2,7 @@
  * 人工豁免指令：`/reviewer ack F1-3fa2@a1b2c3d <理由>`。
  *
  * - `F1` 是儀表板的短編號，`3fa2` 是 finding id 的前綴（至少 4 碼）。狀態遺失後短編號會重新配發，
- *   所以以 id 前綴找項目，短編號只用來防止打錯。
+ *   所以以 id 前綴找項目；前綴對應到多個項目時再以短編號縮小範圍，短編號也用來防止打錯。
  * - `@a1b2c3d` 是確認者看到的 head（至少 7 碼）。該項目在那個 head 的局部 AST hash 與規則必須等於目前的，
  *   否則代表看完之後程式碼或規則又改了，拒絕並要求重看。
  * - 每一行先做 NFKC 正規化（中文輸入法的全形 `＠`、全形空白、全形英數字視為半形）。
@@ -111,10 +111,14 @@ export function evaluateAck(command, comment, context) {
   if (PERMISSION_RANK[permission] < PERMISSION_RANK[context.minPermission]) return reject('ACK_PERMISSION_DENIED');
   if (command.reason === '') return reject('ACK_REASON_MISSING');
 
-  const item = uniquePrefix(context.known.keys(), command.idPrefix);
-  if (item.ambiguous) return reject('ACK_ID_AMBIGUOUS');
-  if (item.value === null) return reject('ACK_ITEM_UNKNOWN');
-  const itemId = item.value;
+  // id 前綴對應到多個項目時，再以短編號縮小範圍（狀態遺失後重播時短編號不可靠，不縮小）。
+  const matches = [...context.known.keys()].filter((id) => id.startsWith(command.idPrefix));
+  if (matches.length === 0) return reject('ACK_ITEM_UNKNOWN');
+  const narrowed = matches.length > 1 && context.checkShortId
+    ? matches.filter((id) => context.known.get(id).shortId === command.shortId)
+    : matches;
+  if (narrowed.length !== 1) return reject('ACK_ID_AMBIGUOUS');
+  const itemId = narrowed[0];
   if (context.checkShortId && context.known.get(itemId).shortId !== command.shortId) return reject('ACK_SHORT_ID_MISMATCH', itemId);
   const current = context.current.get(itemId);
   if (!current) return reject('ACK_ITEM_FIXED', itemId);

@@ -98,7 +98,10 @@ test('evaluateAck：依序拒絕各種不合法的確認', () => {
   assert.equal(code(ack(), comment({ user: { login: 'reader' } })), 'ACK_PERMISSION_DENIED');
   assert.equal(code(ack(), comment(), context({ minPermission: 'admin' })), 'ACK_PERMISSION_DENIED');
   assert.equal(code(ack({ reason: '' })), 'ACK_REASON_MISSING');
-  assert.equal(code(ack({ idPrefix: '3fa' })), 'ACK_ID_AMBIGUOUS');
+  // 前綴對應到多個項目：以短編號縮小範圍；短編號也對不上，或重播時（不檢查短編號）為不唯一。
+  assert.equal(code(ack({ idPrefix: '3fa' })), 'ACK_ACCEPTED');
+  assert.equal(code(ack({ idPrefix: '3fa', shortId: 'F2' })), 'ACK_ID_AMBIGUOUS');
+  assert.equal(code(ack({ idPrefix: '3fa' }), comment(), context({ checkShortId: false })), 'ACK_ID_AMBIGUOUS');
   assert.equal(code(ack({ idPrefix: 'beef' })), 'ACK_ITEM_UNKNOWN');
   assert.equal(code(ack({ shortId: 'F2' })), 'ACK_SHORT_ID_MISMATCH');
   assert.equal(code(ack({ shortId: 'F5', idPrefix: 'dead' })), 'ACK_ITEM_FIXED');

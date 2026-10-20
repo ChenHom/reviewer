@@ -213,6 +213,8 @@
 1. **確認留言被編輯或刪除後確認仍有效**（P1，確認為真）：確認被接受後保存在狀態中，之後的執行以 `lastProcessedCommentId` 跳過原本的留言；確認者把指令留言改掉或刪掉，項目仍是已確認，Check 繼續通過。修正：保存的確認每次都與目前的留言核對，留言不在、被編輯過、作者不符或變成 bot 時不再採用（儀表板以 `ACKS_WITHDRAWN` 說明）。因此 `--comments` 必須是 PR 的全部 issue comments。
 2. **不認得的路由被當成不需要人工**（P1，確認為真）：檔案層級的項目以 `needsHuman !== false` 判斷，路由不認得、`needsHuman: false` 又沒有 finding 的檔案不產生項目，Check 通過。修正：只有兩種已知的組合可以不產生項目（`AUTO_PASS` 且決策是 `NOT_SELECTED_FOR_HUMAN_REVIEW`；`AI_TRACK`、`needsHuman: false` 且 AI 結果是 `PASS` / `FIXED`），其他沒有單向門的檔案一律產生檔案層級的項目。
 3. **保存的確認沒有重新檢查權限**（P1，確認為真）：確認者之後失去權限，或 `--ack-permission` 提高後，舊的確認仍有效。修正：保存的確認每次都以目前的 `permissions` 與門檻重新檢查（也重新檢查不是 PR 作者），不符時不再採用。因此 `--permissions` 必須涵蓋所有確認者。
+4. **有單向門的檔案，AI 沒有審查單向門以外的部分卻不需要人工看整個檔案**（P1，確認為真）：有單向門時不產生檔案層級的項目；沒有 `--ai`，或 AI 失敗時（`aiFindingsFor()` 對 `ESCALATED` 不產生 `AI_REVIEW_FAILED`），確認完單向門 Check 就通過，單向門以外的部分沒有人看過。修正：有單向門、但 AI 的結果不是 `PASS` 時，另外產生檔案層級的項目（`AI_REVIEW_MISSING` / `AI_REVIEW_FAILED` / `AI_NEEDS_HUMAN`）。同一個檔案中單向門排在檔案層級項目前面。
+5. **編號的 4 碼前綴可能重複**（P2，確認為真）：兩個項目的 id 前 4 碼相同時，前綴對應到多個項目，儀表板產生的兩個指令都被拒絕，Check 無法通過。修正：前綴對應到多個項目時以短編號縮小範圍；儀表板的前綴加長到所有已知項目都不重複。
 
 **驗證**：`tests/review-state/` 的單元測試（codec、指令、狀態機、儀表板），以及以真實 git repo 執行 `reviewRange()` 與 CLI 的端對端測試：移除 `authorize` → 待確認 → 確認 → 上方插入另一個 method 仍有效 → 同一個 method 的邏輯改變後重新開啟 → 狀態被竄改時以 `--history` 重播。
 

@@ -57,10 +57,10 @@ export function fingerprint(value) {
  * @returns {string} 原因代碼。
  */
 function fileBlocker(file, aiFindings) {
-  if (aiFindings.some((finding) => finding.blocker === 'AI_REVIEW_FAILED')) return 'AI_REVIEW_FAILED';
+  if (file.ai?.status === 'FAILED' || aiFindings.some((finding) => finding.blocker === 'AI_REVIEW_FAILED')) return 'AI_REVIEW_FAILED';
   if (aiFindings.some((finding) => finding.blocker === 'AI_CONCERN')) return 'AI_CONCERN';
-  if (aiFindings.length > 0) return 'AI_NEEDS_HUMAN';
-  return file.track === 'AI_TRACK' && !file.ai ? 'AI_REVIEW_MISSING' : 'HUMAN_REVIEW_REQUIRED';
+  if (aiFindings.length > 0 || file.ai?.status === 'NEEDS_HUMAN') return 'AI_NEEDS_HUMAN';
+  return ['AI_TRACK', 'ESCALATED'].includes(file.track) && !file.ai ? 'AI_REVIEW_MISSING' : 'HUMAN_REVIEW_REQUIRED';
 }
 
 /**
@@ -104,8 +104,13 @@ export function buildItems(report) {
         policy: fingerprint(finding.policyDigest ?? digest(['blocker', finding.blocker, null])),
       });
     }
-    // 需要人工的檔案一定要有項目可以確認（fail-closed）：AI 的 finding，或不確定不需要人工、又沒有單向門的檔案。
-    if (aiFindings.length > 0 || (!clearedFile(file) && doors.length === 0)) {
+    // 需要人工的檔案一定要有項目可以確認（fail-closed）：
+    // - AI 的 finding；
+    // - 沒有單向門、又不確定不需要人工的檔案；
+    // - 有單向門，但 AI 沒有放行單向門以外的部分（沒有 AI 審查、AI 失敗、AI 判斷需要人工）：確認單向門不代表
+    //   看過整個檔案。
+    const aiPassed = ['PASS', 'FIXED'].includes(file.ai?.status);
+    if (aiFindings.length > 0 || (doors.length === 0 ? !clearedFile(file) : !aiPassed)) {
       const id = digest(['file-review', file.path]);
       items.set(id, {
         id,
@@ -113,7 +118,8 @@ export function buildItems(report) {
         path: file.path,
         subject: file.path,
         blocker: fileBlocker(file, aiFindings),
-        description: aiFindings.map((finding) => finding.description).filter(Boolean).join('；') || null,
+        description: aiFindings.map((finding) => finding.description).filter(Boolean).join('；')
+          || (file.ai?.status === 'FAILED' ? file.ai.error : file.ai?.summary) || null,
         concerns: aiFindings.length,
         location: null,
         scope: fingerprint(file.contentHash),
@@ -158,19 +164,35 @@ function stateHeads(state) {
  * @returns {number} 比較結果。
  */
 export function compareItems(left, right) {
+  const kindOrder = (item) => (item.kind === 'FILE' ? 1 : 0);
   return left.path.localeCompare(right.path)
+    || kindOrder(left) - kindOrder(right)
     || (left.location?.startLine ?? 0) - (right.location?.startLine ?? 0)
     || left.id.localeCompare(right.id);
 }
 
 /**
- * 項目的顯示編號（短編號 + id 前 4 碼）。
+ * 顯示編號中 id 前綴的長度：至少 4 碼，加長到所有已知項目都不重複。
  *
- * @param {{shortId: string, id: string}} item - 項目。
+ * @param {Iterable<string>} ids - 所有已知項目的 id。
+ * @returns {number} 長度。
+ */
+export function labelLength(ids) {
+  const list = [...new Set(ids)];
+  for (let length = 4; length < 64; length += 1) {
+    if (new Set(list.map((id) => id.slice(0, length))).size === list.length) return length;
+  }
+  return 64;
+}
+
+/**
+ * 項目的顯示編號（短編號 + id 前綴，預設 4 碼；與其他項目重複時 computeState() 會加長）。
+ *
+ * @param {{shortId: string, id: string, labelLength?: number}} item - 項目。
  * @returns {string} 例如 `F1-3fa2`。
  */
 export function itemLabel(item) {
-  return `${item.shortId}-${item.id.slice(0, 4)}`;
+  return `${item.shortId}-${item.id.slice(0, item.labelLength ?? 4)}`;
 }
 
 /**
@@ -213,6 +235,7 @@ export function computeState({ report, previous, comments = [], pr, permissions 
   heads.set(headSha, snapshot(current));
 
   const known = new Map([...shortIds].map(([id, shortId]) => [id, { shortId }]));
+  const prefixLength = labelLength(known.keys());
   const ordered = [...comments].filter((comment) => Number.isInteger(comment?.id)).sort((left, right) => left.id - right.id);
   // 保存的確認每次都重新檢查：指令留言被刪除、被編輯過或作者不符，確認者是 PR 作者，或確認者目前的權限
   // 低於現在的門檻（權限被移除、`--ack-permission` 提高）時，這個確認不再採用。
@@ -248,7 +271,7 @@ export function computeState({ report, previous, comments = [], pr, permissions 
         continue;
       }
       const result = evaluateAck(command, comment, context);
-      const label = result.itemId ? itemLabel({ id: result.itemId, shortId: shortIds.get(result.itemId) }) : command.shortId;
+      const label = result.itemId ? itemLabel({ id: result.itemId, shortId: shortIds.get(result.itemId), labelLength: prefixLength }) : command.shortId;
       messages.push(ackMessage(result.code, { label, sha: result.sha ?? command.sha, minPermission }));
       if (replay) {
         replayed += 1;
@@ -292,7 +315,7 @@ export function computeState({ report, previous, comments = [], pr, permissions 
       state = ITEM_STATE.REOPENED;
       reopenedBecause = before.reopenedBecause ?? 'REAPPEARED';
     }
-    items.push({ ...item, shortId, state, reopenedBecause, acks: valid, firstSeenSha: before?.firstSeenSha ?? headSha });
+    items.push({ ...item, shortId, labelLength: prefixLength, state, reopenedBecause, acks: valid, firstSeenSha: before?.firstSeenSha ?? headSha });
   }
   for (const [id, before] of Object.entries(stateItems)) {
     if (current.has(id)) continue;
@@ -305,6 +328,7 @@ export function computeState({ report, previous, comments = [], pr, permissions 
       description: null,
       location: null,
       shortId: before.shortId,
+      labelLength: prefixLength,
       state: ITEM_STATE.FIXED,
       reopenedBecause: null,
       acks: [],
