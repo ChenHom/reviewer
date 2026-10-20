@@ -54,19 +54,21 @@ Authoritative Candidate / Summary / Check
 ## 安裝成 `reviewer` 指令（在其他專案使用）
 
 ```bash
-npm i -g github:ChenHom/reviewer   # 全域安裝；固定版本可加 #<tag 或 commit>
-reviewer doctor                    # 檢查 git、TS/JS 與 PHP analyzer 的依賴，缺少時印出安裝方式
-reviewer review --base origin/main # 在要 review 的專案目錄中執行（或加 --repo <path>）
+npm i -g github:ChenHom/reviewer#<tag 或 commit>   # 全域安裝（套件名稱 @chenhom/reviewer，指令 reviewer）
+reviewer doctor                                   # 檢查 Node.js、git、TS/JS 與 PHP analyzer 的依賴，缺少時印出安裝方式
+reviewer review --base origin/main                # 在要 review 的專案目錄中執行（或加 --repo <path>）
 ```
 
-也可以裝在專案中：`npm i -D github:ChenHom/reviewer`，以 `npx reviewer ...` 執行。
+也可以裝在專案中：`npm i -D github:ChenHom/reviewer#<tag 或 commit>`，以 `npx --no reviewer ...` 或 npm scripts 執行。
+
+- **不要用 `npx reviewer`（沒有 `--no`）或 `npm update -g` 安裝、更新**：npm 上的 `reviewer` 是別人的套件，本機沒有安裝時 `npx reviewer` 會（在 CI 中不經確認）下載並執行它。`--no` 讓 npx 在本機沒有時直接失敗。從 GitHub 安裝的套件不會被 `npm update -g` 更新，要更新請以新的 tag 或 commit 重新執行上面的安裝指令。
 
 - 指令：`reviewer review`、`reviewer state`、`reviewer retro` 的選項分別與 `node bin/review.js`、`node bin/review-state.js`、`node bin/retro.js` 相同；`reviewer doctor` 檢查執行環境；`reviewer --version` 顯示版本。
 - TS/JS：analyzer 的依賴（`typescript` 5.9.3）是 npm 依賴，安裝時自動裝好，與專案自己使用的 TypeScript 版本無關。
 - PHP：analyzer 的依賴（`nikic/php-parser`）**不隨套件提供**，有 PHP 檔的專案要自己安裝（需要 PATH 上的 PHP ≥ 8.3 與 Composer 2）。路徑以 `reviewer doctor` 印出的指令為準，全域安裝時通常是：
 
   ```bash
-  composer install --working-dir="$(npm root -g)/reviewer/analyzers/php" --no-interaction
+  composer install --working-dir="$(npm root -g)/@chenhom/reviewer/analyzers/php" --no-interaction
   ```
 
   沒有安裝時 CLI 仍可執行，但每個 PHP 檔都判為 `FULL`（`COV-PHP-001:PHP_ANALYZER_DEPENDENCY_MISSING`）。

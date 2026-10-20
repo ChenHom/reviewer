@@ -4,9 +4,9 @@ import process from 'node:process';
 import { packageVersion } from '../src/cli/doctor.js';
 
 const COMMANDS = {
-  review: () => import('./review.js'),
-  state: () => import('./review-state.js'),
-  retro: () => import('./retro.js'),
+  review: () => import('../src/cli/review.js'),
+  state: () => import('../src/cli/review-state.js'),
+  retro: () => import('../src/cli/retro.js'),
   doctor: () => import('../src/cli/doctor.js'),
 };
 

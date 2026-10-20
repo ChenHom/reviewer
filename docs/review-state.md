@@ -6,7 +6,7 @@
 
 實作位置：
 
-- `bin/review-state.js`：參數解析與輸出。
+- `src/cli/review-state.js`：參數解析與輸出（`bin/review-state.js` 與 `reviewer state` 都只是呼叫它）。
 - `src/review-state/index.js`：`updateReviewState()`，串起下面幾個模組。
 - `src/review-state/machine.js`：追蹤的項目（`buildItems()`）、狀態機（`computeState()`）、Check（`checkResult()`）。
 - `src/review-state/commands.js`：確認指令的解析與驗證。

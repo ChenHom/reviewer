@@ -6,8 +6,8 @@
 
 實作位置：
 
-- `bin/review.js`：參數解析、輸出與 exit code（匯出 `run(args)`，安裝成指令時由 `bin/reviewer.js` 以 `reviewer review` 呼叫，見「安裝成指令」）。
-- `bin/reviewer.js`、`src/cli/`：`reviewer` 指令的子指令分派、`reviewer doctor` 與入口判斷。
+- `src/cli/review.js`：參數解析、輸出與 exit code（`run(args)`）。`bin/review.js` 與 `reviewer review`（`bin/reviewer.js` 的子指令分派，見「安裝成指令」）都只是呼叫它。
+- `src/cli/doctor.js`：`reviewer doctor`。
 - `src/review/git.js`：解析 ref、merge base、`git diff`、讀取 blob。
 - `src/review/review.js`：逐檔決策（`classifyEntry` / `reviewEntry`）、PR 層級彙整（`summarizeFiles`）、`reviewRange()`。
 - `src/review/format.js`：文字輸出。
@@ -24,7 +24,7 @@
 ## 前置需求
 
 - `git`，在 PATH 上。
-- Node.js。CLI 用到 `os.availableParallelism`，至少需要 Node 18.14；`package.json` 沒有宣告 `engines`，只有 CI 使用的 Node 24 經過測試。開發（`npm ci` 後的 lint）需要 Node ≥ 20.19（ESLint 的 `engines` 為 `^20.19.0 || ^22.13.0 || >=24`）；但 `eslint.config.js` 載入的 `eslint-plugin-jsdoc` 宣告 `^22.13.0 || >=24`，所以實際應使用 Node ≥ 22.13。CLI 本身只用 Node 內建模組與本 repo 的 `src/`；npm 依賴只有 TS/JS analyzer 的 `typescript` 與 `--ai` 的 `@anthropic-ai/sdk`（另需環境變數 `ANTHROPIC_API_KEY`，見「AI 審查」），兩者都由 `npm ci`（或安裝成指令時由 npm）安裝。
+- Node.js。CLI 用到 `os.availableParallelism`，至少需要 Node 18.14（`package.json` 的 `engines.node`，`reviewer doctor` 也以它檢查）；實際測試過的只有 CI 的 Node 24 與 Node 22。開發（`npm ci` 後的 lint）需要 Node ≥ 20.19（ESLint 的 `engines` 為 `^20.19.0 || ^22.13.0 || >=24`）；但 `eslint.config.js` 載入的 `eslint-plugin-jsdoc` 宣告 `^22.13.0 || >=24`，所以實際應使用 Node ≥ 22.13。CLI 本身只用 Node 內建模組與本 repo 的 `src/`；npm 依賴只有 TS/JS analyzer 的 `typescript` 與 `--ai` 的 `@anthropic-ai/sdk`（另需環境變數 `ANTHROPIC_API_KEY`，見「AI 審查」），兩者都由 `npm ci`（或安裝成指令時由 npm）安裝。
 - PHP CLI 8.3 以上，以 `php` 的名稱放在 PATH 上（`analyzers/php/composer.json` 要求 `php >= 8.3`；CI 使用 PHP 8.4）。
 - Composer 2，用來安裝 analyzer 依賴（[nikic/php-parser](https://github.com/nikic/PHP-Parser) 5.9.0，版本鎖定在 `analyzers/php/composer.lock`）：
 
@@ -33,7 +33,7 @@
   ```
 
   安裝成 `reviewer` 指令時，這個依賴不隨套件提供，要自己對安裝位置的 `analyzers/php` 執行 `composer install`（`reviewer doctor` 會印出完整指令，見「安裝成指令」）。
-- TypeScript / JavaScript 檔案的 analyzer（`analyzers/ts`）以執行 CLI 的同一個 Node.js 執行，依賴 `typescript` 5.9.3（根目錄 `package.json` 的依賴，版本鎖定在 `package-lock.json`），由 `npm ci` 安裝；安裝成指令時由 npm 自動安裝。沒有安裝時每個送進 TS analyzer 的檔案為 `FULL`（`COV-TS-001:TS_ANALYZER_DEPENDENCY_MISSING`）。
+- TypeScript / JavaScript 檔案的 analyzer（`analyzers/ts`）以執行 CLI 的同一個 Node.js 執行，依賴 `typescript` 5.9.3（根目錄 `package.json` 的依賴，版本鎖定在 `package-lock.json`），由 `npm ci` 安裝；安裝成指令時由 npm 自動安裝。以前的安裝方式（`npm ci --prefix analyzers/ts`）留下的 `analyzers/ts/node_modules` 離 analyzer 比較近、會優先被載入，請刪除；它的版本與鎖定的不同時，`reviewer doctor` 會指出。沒有安裝時每個送進 TS analyzer 的檔案為 `FULL`（`COV-TS-001:TS_ANALYZER_DEPENDENCY_MISSING`）。
 
 - 要 review 的 repository 必須同時有 base 與 head 的歷史，才找得到 merge base（見「比較範圍」）。
 
@@ -49,14 +49,14 @@ PHP 相關的前置需求不滿足時，CLI **不會**以錯誤結束，而是�
 
 ## 安裝成指令
 
-`npm i -g github:ChenHom/reviewer`（或在專案中 `npm i -D github:ChenHom/reviewer`）之後，以 `reviewer <子指令>` 執行，選項與 exit code 都與對應的 bin 相同（安裝方式與 PHP analyzer 依賴的處理見 [README](../README.md#安裝成-reviewer-指令在其他專案使用)）：
+`npm i -g github:ChenHom/reviewer`（或在專案中 `npm i -D github:ChenHom/reviewer`，以 `npx --no reviewer ...` 執行）之後，以 `reviewer <子指令>` 執行，選項與 exit code 都與對應的 bin 相同（安裝方式與 PHP analyzer 依賴的處理見 [README](../README.md#安裝成-reviewer-指令在其他專案使用)）：
 
 | 指令 | 對應 | 說明 |
 |---|---|---|
 | `reviewer review` | `node bin/review.js` | 本文 |
 | `reviewer state` | `node bin/review-state.js` | [二次 review 狀態](review-state.md) |
 | `reviewer retro` | `node bin/retro.js` | [Retro](retro.md) |
-| `reviewer doctor` | — | 檢查 git、Node.js、TS/JS analyzer 的 `typescript`、PHP 與 PHP analyzer 的依賴，以及 `ANTHROPIC_API_KEY` / `REVIEWER_STATE_KEY` 有沒有設定（不顯示內容）；缺少時印出安裝方式。缺少 git 或 `typescript` 時 exit 1，PHP 相關只警告（只有 PHP 檔需要） |
+| `reviewer doctor` | — | 檢查 Node.js（`engines.node`）、git、TS/JS analyzer 的 `typescript`（必須是 `package.json` 鎖定的版本）、PHP（`analyzers/php/composer.json` 的 `require.php`）與 PHP analyzer 的依賴，以及 `ANTHROPIC_API_KEY` / `REVIEWER_STATE_KEY` 有沒有設定（不顯示內容）；缺少時印出安裝方式。Node.js 版本不足、沒有 git，或找不到鎖定版本的 `typescript` 時 exit 1；PHP 相關只警告（只有 PHP 檔需要）；參數錯誤時 exit 2 |
 | `reviewer --version` | — | 版本（`package.json`） |
 
 沒有子指令或子指令不認得時 exit 2（`COMMAND_UNKNOWN:<名稱>`）。
@@ -317,7 +317,7 @@ analyzer process 沒有正常產生結果。訊息最多 200 字元：
 | `UNRECOGNIZED_TS_CHANGE` | 有差異無法以 fact 解釋（例如型別註記、`as` 轉型、property key 改變、運算子優先順序、`function` 與箭頭函式互換、modifier 增減） |
 | `TS_PARSE_ERROR` | 任一側有語法錯誤（包含 TypeScript parser 回報的文法錯誤） |
 | `TS_FILE_DELETION_UNSUPPORTED` | head 版本是空檔 |
-| `TS_ANALYZER_DEPENDENCY_MISSING` | `analyzers/ts/node_modules` 沒有 `typescript`；先執行 `npm run analyzer:install` |
+| `TS_ANALYZER_DEPENDENCY_MISSING` | TS analyzer 找不到 `typescript`（從 `analyzers/ts` 往上找 `node_modules`）；在 reviewer 的 checkout 執行 `npm ci`，安裝成指令時重新安裝，可用 `reviewer doctor` 檢查 |
 
 ### `FILE_RENAMED` / `FILE_MODE_CHANGED`
 
@@ -788,7 +788,7 @@ analyzer 的問題（找不到 `php`、沒有安裝依賴、逾時）**不是** 
 ## 在 CI 中使用
 
 ```bash
-# 在 Reviewer 的 checkout 中執行（第一次先 npm run analyzer:install）。
+# 在 Reviewer 的 checkout 中執行（第一次先 npm ci 與 npm run analyzer:install）。
 # PROJECT_DIR 是要 review 的專案，已 checkout 在 PR head，並有 base 的完整歷史。
 # CI 的 shell 通常開著 errexit（bash -e），exit code 必須用 `|| status=$?` 取得。
 status=0
@@ -810,7 +810,7 @@ if ! jq -e '[.files[].reasons[]
                       or . == "COV-PHP-001:PHP_ANALYZER_DEPENDENCY_MISSING"
                       or . == "COV-TS-001:TS_ANALYZER_DEPENDENCY_MISSING")]
            | length == 0' review/report.json > /dev/null; then
-  echo "analyzer 無法執行，請確認 php、node 與 npm run analyzer:install" >&2
+  echo "analyzer 無法執行，請確認 php、node、npm ci 與 npm run analyzer:install（或執行 reviewer doctor）" >&2
   exit 2
 fi
 

@@ -1,9 +1,12 @@
 {
-  "name": "reviewer",
+  "name": "@chenhom/reviewer",
   "version": "0.1.0",
   "description": "Deterministic, fail-closed review decision engine: decides which changed files can skip human review.",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=18.14"
+  },
   "bin": {
     "reviewer": "bin/reviewer.js"
   },

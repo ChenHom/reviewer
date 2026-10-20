@@ -35,7 +35,7 @@ Reviewer 是 deterministic、fail-closed 的 Review Decision Engine（Node ESM�
 - `eslint.config.js` 對 `src/**` 與 `analyzers/ts/**` 強制 JSDoc：每個 function declaration 都要有 JSDoc 與描述，寫了 `@param` / `@returns` 就要有描述。`tests/`、`bin/`、`evaluation/` 不強制。
 - JSDoc、行內註解與測試名稱（`test('…')`）用正體中文；識別字、原因代碼與 fact 種類用英文（如 `FACT_UNHANDLED`）。既有 commit 訊息是英文。
 - review CLI 只用 Node 內建模組與 `src/`；runtime 依賴只有 TS analyzer 子 process 載入的 `typescript`，以及只在 `--ai` 時動態載入的 `@anthropic-ai/sdk`（`src/ai/client.js`）。
-- 套件以 `reviewer` 指令散布（`npm i -g github:ChenHom/reviewer`）：`bin/reviewer.js` 依子指令載入 `bin/review.js`、`bin/review-state.js`、`bin/retro.js` 與 `src/cli/doctor.js` 匯出的 `run(args)`；各 bin 只在自己是入口時執行（`src/cli/entry.js` 的 `isEntry()`，以 realpath 比較，npm 的指令是 symlink）。套件內容由 `package.json` 的 `files` 白名單決定，執行時需要的新檔案若不在 `bin`、`src`、`analyzers/*/bin|src` 下要加進去（`tests/cli/reviewer.test.js` 檢查）。PHP analyzer 的 `vendor/` 依使用者決定不打包，由使用者自己 `composer install`。
+- 套件 `@chenhom/reviewer` 以 `reviewer` 指令散布（`npm i -g github:ChenHom/reviewer`；`reviewer` 這個 npm 名稱是別人的套件，不要改回去，文件也不要建議沒有 `--no` 的 `npx reviewer`）。各指令的程式在 `src/cli/*.js` 的 `run(args)`：`bin/review.js`、`bin/review-state.js`、`bin/retro.js` 只呼叫它，`bin/reviewer.js` 依子指令載入。套件內容由 `package.json` 的 `files` 白名單決定，執行時需要的新檔案若不在 `bin`、`src`、`analyzers/*/bin|src` 下要加進去：`tests/cli/reviewer.test.js` 會打包、解開，並以解開的內容實際執行 `review`（TS 與 PHP analyzer）、`state`、`retro`、`doctor`。PHP analyzer 的 `vendor/` 依使用者決定不打包，由使用者自己 `composer install`。
 
 ## 不要隨意改動
 

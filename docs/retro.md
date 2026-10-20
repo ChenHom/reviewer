@@ -4,7 +4,7 @@
 
 實作位置：
 
-- `bin/retro.js`：參數解析與輸出。
+- `src/cli/retro.js`：參數解析與輸出（`bin/retro.js` 與 `reviewer retro` 都只是呼叫它）。
 - `src/retro/metrics.js`：讀取報表、留言與規範條目，計算 deterministic 指標。
 - `src/retro/proposals.js`：AI 建議（`--ai`）、規則驗證與 mutation case 草案的驗證。
 - `src/retro/format.js`：markdown 報告。

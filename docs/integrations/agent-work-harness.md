@@ -267,7 +267,7 @@ node <reviewer>/bin/review.js \
 
 ### 前置需求
 
-執行 Reviewer 的環境（Harness worker 或 GitHub runner）需要 `git`、Node.js、PATH 上的 `php`（PHP CLI ≥ 8.3；CI 使用 8.4），並在 Reviewer 的 checkout 先執行 `npm run analyzer:install`（以 Composer 2 安裝鎖定版本的 `nikic/php-parser` 5.9.0）。完整說明見 [PR Review CLI](../review-cli.md)「前置需求」。
+執行 Reviewer 的環境（Harness worker 或 GitHub runner）需要 `git`、Node.js、PATH 上的 `php`（PHP CLI ≥ 8.3；CI 使用 8.4），並在 Reviewer 的 checkout 先執行 `npm ci`（TS analyzer 的 `typescript`）與 `npm run analyzer:install`（以 Composer 2 安裝鎖定版本的 `nikic/php-parser` 5.9.0）。也可以安裝成 `reviewer` 指令（`npm i -g github:ChenHom/reviewer`），PHP analyzer 的依賴同樣要自己安裝，`reviewer doctor` 會檢查並印出指令。完整說明見 [PR Review CLI](../review-cli.md)「前置需求」。
 
 PHP 環境不完整時 CLI **不會**以錯誤結束：每個送進 analyzer 的 PHP 檔都變成 `FULL`，原因是 `ANALYZER_ERROR:*`（例如找不到 `php` 時的 `ANALYZER_ERROR:spawn php ENOENT`，或依賴已安裝但 `php` 低於 8.3 時的 `ANALYZER_ERROR:PHP_ANALYZER_EXIT_<code>:…`）或 `COV-PHP-001:PHP_ANALYZER_DEPENDENCY_MISSING`（沒有執行 `npm run analyzer:install`；以 PHP 8.0–8.2 執行它會因 `php >= 8.3` 的要求失敗，也是這種情況），exit code 仍是 0。報表看起來像正常結果，只是 Not Selected 為 0。
 
@@ -292,7 +292,7 @@ JSON 報表的完整格式見 [PR Review CLI](../review-cli.md)「JSON 報表」
 
 ### 尚未提供
 
-- 可安裝的 `reviewer` 指令與 `plan` subcommand。`package.json` 沒有 `bin`，目前只能以 `node <reviewer>/bin/review.js` 呼叫。`reviewer plan` 是將來可能包裝成的名稱。
+- `reviewer plan` subcommand。目前可安裝的 `reviewer` 指令（見 [README](../../README.md#安裝成-reviewer-指令在其他專案使用)）只有 `review`、`state`、`retro`、`doctor`；`reviewer plan` 是將來可能包裝成的名稱。
 - working-tree 模式。Harness 必須先把 attempt 的結果 commit，才能交給 Reviewer。
 - 有版本的 Review Scope JSON schema。目前的報表：
   - 沒有 `schemaVersion`，欄位可能隨版本改變。
@@ -406,7 +406,7 @@ pull_request opened / synchronize / reopened
         ↓
 checkout 專案（fetch-depth: 0）與 Reviewer
         ↓
-setup PHP ≥ 8.3 + npm run analyzer:install
+setup PHP ≥ 8.3 + npm ci + npm run analyzer:install
         ↓
 node <reviewer>/bin/review.js --repo <專案目錄> --base <目標分支> --head <PR head SHA> --out review.json
         ↓
