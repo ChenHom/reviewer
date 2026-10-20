@@ -18,7 +18,7 @@
 - 決策單位是**檔案**（file-level review scope reduction）。每個檔案只會是 `NOT_SELECTED_FOR_HUMAN_REVIEW`，或是 `HUMAN_REVIEW_REQUIRED` 加上 `TARGETED` / `FULL` 其中之一。
 - 只有 PHP 與 TypeScript / JavaScript 檔的修改與 rename 會送進 analyzer（binary 除外）；其他變更一律 `FULL`。
 - 輸出中的行號（「變更位置」與 fact 位置）是 review 的**起點**，不是 review 範圍。blocker 尚未建立 `blocker → factId → provenance` 的 region-level contract（見 [README「目前能力邊界」](../README.md#目前能力邊界)），所以不能解讀成「只有標示的行需要看」：需要 review 的檔案都要看整個檔案。
-- CLI 只讀取 git 物件，結果輸出到 stdout（與 `--out` 指定的檔案），不會發布到 GitHub（不留言、不建立 check）。`--ai` 會把需要 review 的檔案的 diff 與內容送到 Anthropic API；`--ai-apply` 會改寫 worktree 中的檔案（不 commit）。
+- CLI 只讀取 git 物件，結果輸出到 stdout（與 `--out` 指定的檔案），不會發布到 GitHub（不留言、不建立 check）。二次 review 的狀態（人工確認、置頂儀表板與 Check 的內容）由 [`bin/review-state.js`](review-state.md) 以這份報表計算，它同樣不呼叫 GitHub API。`--ai` 會把需要 review 的檔案的 diff 與內容送到 Anthropic API；`--ai-apply` 會改寫 worktree 中的檔案（不 commit）。
 
 ## 前置需求
 
@@ -515,7 +515,8 @@ AI 審查後必須人工確認（ESCALATED，單向門）：
 | `facts[].startLine` / `endLine` | number | 該版本中的行號（從 1 起算） |
 | `facts[].description` | string | 中文描述，與文字輸出的 `·` 行相同 |
 | `facts[].blockers` | string[] | 這個 fact 自己產生的原因代碼（`reasons` 是整個檔案的彙總）；沒有 domain 規則時為 `FACT_UNHANDLED:<fact id>` |
-| `facts[].anchor` | object | fact 中不隨位置改變的內容（例如移除的 callee 的名稱與 receiver），用於 finding id |
+| `facts[].blockerSources` | object | 每個原因代碼由哪些 interpreter 產生：`{ "<原因>": ["<interpreter id>@<version>", …] }`。沒有 interpreter 處理（`FACT_UNHANDLED`）時為整組 interpreter 的 digest（`["set:<sha256 前 16 碼>"]`）。用於 finding 的 `policyDigest` |
+| `facts[].anchor` | object | fact 中不隨位置、也不隨 head 側的值改變的內容（例如移除的 callee 的名稱與 receiver、改變前的運算子與運算式；不含 `after`、改變後的運算子、新增的值），用於 finding id |
 | `facts[].scopeHash` | string \| null | head 版本中所屬 method / function 的 canonical AST hash（`php:<hash>`）；排版、註解與一致的區域變數改名不會改變它。不在 method / function 內、或 head 中已沒有該 method 時為整個檔案的 canonical hash；沒有輸出 scope 的 analyzer 為 `null` |
 | `findings` | object[] | 需要人工處理的項目：`ESCALATED` 檔案的單向門，以及 AI 判斷需要人工的項目，見「Findings」 |
 | `needsHuman` | boolean | 這個檔案是否需要人工：`ESCALATED` 一律是；`AI_TRACK` 在 AI 判斷需要人工、AI 失敗或沒有 `--ai` 時是 |
@@ -524,7 +525,7 @@ AI 審查後必須人工確認（ESCALATED，單向門）：
 
 ### Findings
 
-`files[].findings` 是必須人工確認的項目，也是二次 review 的追蹤單位（`src/findings.js`），之後的 GitHub 整合以它記錄「看過了」或「修好了」。機械審查的單向門：
+`files[].findings` 是必須人工確認的項目，也是二次 review 的追蹤單位（`src/findings.js`）；[`bin/review-state.js`](review-state.md) 以它記錄「看過了」或「修好了」。機械審查的單向門：
 
 - 每個帶單向門原因的 fact，每個原因一個 finding（`kind` 為 fact 種類）；
 - 檔案層級的單向門原因（`PROTECTED_PATH`、`POLICY_FILE_CHANGED`、`POLICY_CONFIG_INVALID`）各一個（`kind: "FILE"`）。
@@ -535,7 +536,7 @@ AI 審查後必須人工確認（ESCALATED，單向門）：
 - `ESCALATED` 檔案上 AI 提出的 `high` / `medium` 疑慮也各一個 `AI_CONCERN`，與單向門一起交給人工。
 - AI 審查失敗的 `AI_TRACK` 檔案：一個 `AI_REVIEW_FAILED`（`anchor` 為失敗原因）。
 
-AI finding 的 `scopeHash` 一律是整個檔案的 `contentHash`；AI 的輸出不是 deterministic 的，id 不保證在重跑時相同。
+AI finding 的 `scopeHash` 一律是整個檔案的 `contentHash`；AI 的輸出不是 deterministic 的，id 不保證在重跑時相同（`bin/review-state.js` 因此以檔案為單位確認 AI 的項目）。
 
 | 欄位 | 型別 | 說明 |
 |---|---|---|
@@ -543,6 +544,7 @@ AI finding 的 `scopeHash` 一律是整個檔案的 `contentHash`；AI 的輸出
 | `path` / `subject` / `kind` / `blocker` / `anchor` | | 組成 id 的內容；檔案層級的 finding 的 `subject` 為檔案路徑、`anchor` 為原因代碼 |
 | `ordinal` | number | 同一個 subject 中 `kind`、`blocker`、`anchor` 都相同的 finding 依出現順序編號（從 0 起），避免兩件事被合併成一件 |
 | `scopeHash` | string | 人工豁免要綁定的內容：fact 的 `scopeHash`，檔案層級或沒有 scope 時為 `contentHash`。豁免後這個值改變，就代表被看過的程式碼又改了 |
+| `policyDigest` | string | 人工豁免也要綁定的規則：`sha256("blocker", 原因, blockerSources[原因])`；檔案層級的原因為 `sha256("file", 原因, 設定的 digest)`。只有產生這個原因的 interpreter（或專案設定）改變時才會改變，其他規則升級不影響。AI finding 沒有這個欄位 |
 | `location` | object \| null | fact 的位置 `{ side, startLine, endLine }`；檔案層級為 `null` |
 | `description` | string \| null | fact 的描述；檔案層級為 `null` |
 
@@ -611,6 +613,11 @@ TypeScript / JavaScript 的 finding 與 PHP 相同，由 fact 產生（`scopeHas
           "blockers": [
             "AUTHORIZATION_GUARD_REMOVED"
           ],
+          "blockerSources": {
+            "AUTHORIZATION_GUARD_REMOVED": [
+              "php-laravel-authorization-guard@2.0.0"
+            ]
+          },
           "anchor": {
             "callee": {
               "name": "authorize",
@@ -651,6 +658,7 @@ TypeScript / JavaScript 的 finding 與 PHP 相同，由 fact 產生（`scopeHas
             }
           },
           "scopeHash": "php:747b177afa33d6ce552e8ca3161f4121",
+          "policyDigest": "0ecd762a64f9d90e177d6e77f1b1c1c25e014d20ac07228f44a0c2c94f4b2bdb",
           "location": {
             "side": "base",
             "startLine": 9,
@@ -682,8 +690,13 @@ TypeScript / JavaScript 的 finding 與 PHP 相同，由 fact 產生（`scopeHas
           "blockers": [
             "COMPARISON_OPERATOR_CHANGED"
           ],
+          "blockerSources": {
+            "COMPARISON_OPERATOR_CHANGED": [
+              "php-operator-change@1.0.0"
+            ]
+          },
           "anchor": {
-            "operator": "<→<=",
+            "operator": "<",
             "before": "$cash->amount < $amount"
           },
           "scopeHash": "php:40bab854fa49c35a6ff61336b3b97707"
@@ -811,6 +824,7 @@ exit "$status"   # 0：不需要 Human Review；1：需要（清單見 review/re
 ## 相關文件
 
 - [README](../README.md)：專案概觀、已實作的 facts 與 interpreters、目前能力邊界。
+- [二次 review 狀態（`bin/review-state.js`）](review-state.md)：以報表計算人工確認、置頂儀表板與 Check。
 - [目前能力整理](current-state.md)
 - [Safety MVP / Review Decision Engine 架構](safety-mvp-architecture.md)
 - [與 Agent Work Harness 的合作方式](integrations/agent-work-harness.md)

@@ -14,12 +14,14 @@ import { TRACK, baseCode } from './routing.js';
  * 由 AI 審查；AI 判斷需要人工的項目由 `aiFindingsFor()` 加入。
  *
  * finding id = sha256(path, subject, kind, blocker, anchor, ordinal)，不含行號與 byte offset，
- * 所以在上方插入程式碼不會讓 finding 變成新的。`anchor` 是 fact 中不隨位置改變的內容；
+ * 所以在上方插入程式碼不會讓 finding 變成新的。`anchor` 是 fact 中不隨位置改變、也不隨 head 側的值改變的內容
+ * （改了什麼位置、什麼類型的變更）；作者微調變更後的值時 id 不變，由 `scopeHash` 的改變讓豁免失效。
  * 同一個 subject 內 anchor 相同的 finding 依出現順序編 `ordinal`，避免兩件事被合併成一件。
  *
  * `scopeHash` 是人工豁免要綁定的內容：fact 所屬 method / function 的 canonical AST hash
  * （analyzer 輸出的 `properties.scope`），沒有時（檔案層級的 finding、沒有 scope 的 analyzer）
- * 為整個檔案的 git blob id。
+ * 為整個檔案的 git blob id。`policyDigest` 是產生這個 blocker 的規則（interpreter id 與版本，
+ * 檔案層級的原因則是專案設定的 digest）：只有這些規則改變時，豁免才失效。
  */
 
 /**
@@ -61,14 +63,19 @@ function containerAnchor(value) {
   };
 }
 
+/** 新增類的 fact：`value`、`condition` 是 head 側的內容。 */
+const ADDED_KINDS = /_ADDED$/;
+
 /**
- * fact 中不隨位置改變的內容。
+ * fact 中不隨位置與 head 側的值改變的內容：base 側的值（被移除或被改掉的內容）與位置（callee、container、key），
+ * 不含變更後的值（`after`、`operatorAfter`、新增的 `value` / `condition`）。
  *
  * @param {object} fact - semantic fact。
  * @returns {object} anchor。
  */
 export function factAnchor(fact) {
   const p = fact.properties ?? {};
+  const added = ADDED_KINDS.test(String(fact.kind));
   switch (fact.kind) {
     case 'CALL_REMOVED':
     case 'CALL_ADDED':
@@ -78,19 +85,27 @@ export function factAnchor(fact) {
     case 'CALL_ARGUMENT_ADDED':
       return { callee: calleeAnchor(p.callee), argument: p.argument ?? null };
     case 'BINARY_OPERATOR_CHANGED':
-      return { operator: `${p.operatorBefore}→${p.operatorAfter}`, before: compact(p.before) };
+      return { operator: String(p.operatorBefore ?? ''), before: compact(p.before) };
     case 'ARRAY_ITEM_REMOVED':
     case 'ARRAY_ITEM_ADDED':
-      return { container: containerAnchor(p.container), key: compact(p.key), value: compact(p.value) };
+      return { container: containerAnchor(p.container), key: compact(p.key), ...(added ? {} : { value: compact(p.value) }) };
     case 'LITERAL_CHANGED':
-      return { container: containerAnchor(p.container), before: compact(p.before), after: compact(p.after) };
+      return { container: containerAnchor(p.container), before: compact(p.before) };
     case 'GUARD_REMOVED':
     case 'GUARD_ADDED':
-      return { condition: compact(p.condition), exit: p.exit ?? null };
+      return { ...(added ? {} : { condition: compact(p.condition) }), exit: p.exit ?? null };
     default: {
-      // 其他 fact：去掉位置相關與 scope 資訊後的 properties。
-      const { scope, changeSide, ...rest } = p;
-      return Object.fromEntries(Object.entries(rest).map(([key, value]) => [key, typeof value === 'string' ? compact(value) : value]));
+      // 其他 fact：去掉位置相關、scope 與 head 側的值後的 properties；callee / container 只取結構。
+      const { scope, changeSide, after, operatorAfter, ...rest } = p;
+      if (added) {
+        delete rest.value;
+        delete rest.condition;
+      }
+      return Object.fromEntries(Object.entries(rest).map(([key, value]) => {
+        if (key === 'callee') return [key, calleeAnchor(value) ?? value];
+        if (key === 'container') return [key, containerAnchor(value) ?? value];
+        return [key, typeof value === 'string' ? compact(value) : value];
+      }));
     }
   }
 }
@@ -108,12 +123,13 @@ function digest(value) {
 /**
  * 計算單一檔案的 findings。
  *
- * @param {object} file - review file result（含 `track`、`reasons`、`facts[].blockers`）。
+ * @param {object} file - review file result（含 `track`、`reasons`、`facts[].blockers`、`facts[].blockerSources`）。
  * @param {object} options - 選項。
  * @param {Iterable<string>} options.oneWayDoors - 單向門代碼。
+ * @param {string|null} [options.configDigest=null] - 專案設定的 digest（檔案層級原因的 policy）。
  * @returns {object[]} findings（依出現順序；檔案層級的在最後）。
  */
-export function findingsFor(file, { oneWayDoors }) {
+export function findingsFor(file, { oneWayDoors, configDigest = null }) {
   if (file.track !== TRACK.ESCALATED) return [];
 
   const doors = new Set(oneWayDoors);
@@ -130,6 +146,8 @@ export function findingsFor(file, { oneWayDoors }) {
         blocker,
         anchor: fact.anchor ?? null,
         scopeHash: fact.scopeHash ?? fileHash,
+        // 產生這個 blocker 的 interpreter（沒有紀錄時為 null）。
+        policyDigest: digest(['blocker', blocker, fact.blockerSources?.[blocker] ?? null]),
         location: { side: fact.side, startLine: fact.startLine, endLine: fact.endLine },
         description: fact.description,
       });
@@ -145,6 +163,7 @@ export function findingsFor(file, { oneWayDoors }) {
       blocker: reason,
       anchor: reason,
       scopeHash: fileHash,
+      policyDigest: digest(['file', baseCode(reason), configDigest]),
       location: null,
       description: null,
     });

@@ -182,11 +182,39 @@
    - PHP 的鏈變更只有被消耗的 call fact（例如 `$q->fee`）帶 container；配對 key 改變而多出來的 `->round` / `$q->round` 沒有被消耗，不帶 container，但至少有一個 fact 會命中規則。
 19. **TS 檔的 `@internal` 沒有追蹤**（P2，確認為真）：TS 檔原本完全不看 JSDoc，`stripInternal` 時新增或移除 `/** @internal */` 會改變輸出的宣告檔，結果是 `AUTO_PASS`。修正：TS 檔列入 `@internal`（JS 檔也列入）。
 
+## 步驟 7a：二次 review 狀態（CLI）
+
+**做了什麼**：`bin/review-state.js` 與 `src/review-state/`（`codec.js`、`commands.js`、`machine.js`、`dashboard.js`、`index.js`），文件 `docs/review-state.md`。輸入目前 head 的報表、上一版儀表板留言、PR 的留言與權限，輸出新的儀表板、Check、指令回覆與行內 thread 的目標狀態；不呼叫 GitHub API。另外改了 `src/findings.js`（anchor、`policyDigest`）、`src/facts/interpreter.js`（`blockerSources()`）與 `src/review/review.js`（報表的 `facts[].blockerSources`）。
+
+**順序**：使用者問先做 CLI 還是 GitHub。建議先做 CLI：關係到安全的判斷（簽章、狀態機、確認綁定的版本）都是不碰 GitHub 的純邏輯，可以在本機完整測試；它的輸出也是兩段式 workflow 之間的介面。
+
+**實作前列出的風險與處理**（使用者決定第 1、2 點，其餘照建議做）：
+
+1. **AI 的 finding 在重跑時換 id**：AI 的輸出不是 deterministic 的，逐條確認會在每次 push 後失效。處理（使用者決定）：AI 的項目以檔案為單位確認，綁定檔案內容。需要人工但沒有任何 finding 的檔案（沒有執行 AI 審查、不認得的路由）也以檔案為單位產生項目（fail-closed）。單向門仍是每個 finding 一項。
+2. **狀態遺失後，以短編號重播會綁錯項目**：短編號存在狀態中，狀態被丟棄後重新配發，舊留言的 `F1` 可能指到另一個項目。處理（使用者決定）：指令帶 finding id 前綴（`F1-3fa2@…`），以前綴找項目，短編號只用來防止打錯（重播時不檢查）。另外，設計中負責寫入的 workflow 不 checkout 程式碼，算不出舊 head 的 hash，所以狀態保存最近 10 個 head 的 fingerprint，並可用 `--history` 提供之前的報表；兩者都沒有時，重播的確認一律需要重新確認。
+3. **小修改讓 finding 換 id**：anchor 含變更後的值（例如 `LITERAL_CHANGED` 的 `after`），作者微調那一行就變成「已修正 + 新的待確認」。處理：anchor 只放 base 側的值與位置（不含 `after`、改變後的運算子、新增的 `value` / `condition`），其他 kind 的 callee / container 只取結構；值改變由 `scopeHash` 讓確認失效。既有報表的 finding id 會因此改變（之前沒有保存任何確認，不影響使用）。
+4. **工具升級讓所有確認一起失效**：設計以整組 policy digest 綁定確認。處理：報表的每個 fact 記錄每個原因由哪些 interpreter 產生（`blockerSources`），finding 的 `policyDigest` 只涵蓋這些 interpreter（`FACT_UNHANDLED` 為整組 interpreter 的 digest，只記一個 `set:<hash>`，避免沒有規則的 fact 很多時報表變大；檔案層級的原因為專案設定的 digest）。
+5. **中文輸入法的全形符號**：每一行先做 NFKC 正規化；格式錯誤的 `/reviewer` 行回覆正確格式，不靜默忽略。
+6. **舊的報表算出新 head 的結果**：PR 的 `head.sha` 與報表不同時拒絕執行（`REVIEW_STATE_STALE_REPORT`），Check 只綁定報表的 head。
+7. **引用回覆被當成確認**：引用（`>`）、程式碼區塊與縮排程式碼中的指令不算。
+8. **確認理由依賴範圍外的程式碼**：機械判斷無法處理，記在文件的限制與儀表板的說明中（確認只保證所在的 method 或檔案沒有再變過）。
+
+**其他取捨**：
+
+- 狀態機每次從頭重算（新狀態 = f(最新報表, 所有有效的確認)），狀態只保存短編號、head 的 fingerprint 與已驗證的確認，事件處理順序不影響結果。
+- 狀態不保存 thread id：thread 內容帶 `<!-- reviewer:finding <id> -->`，workflow 以標記找到 thread，不需要建立 thread 後再寫一次狀態。
+- 簽章帶 key id（key 的 sha256 前 8 碼），可設定多把舊 key 驗證，換 key 不會讓開著的 PR 失去確認。
+- 有儀表板但沒有狀態區塊（超過長度上限或被刪掉）時視為無法驗證，重播確認但不逐則回覆，避免把所有舊的指令再回覆一次。
+- 確認權限沿用設計預設的 write（`--ack-permission` 可提高到 maintain / admin）；設計 §9 的「必須是 CODEOWNERS」沒有實作。
+- 儀表板中來自程式碼與 AI 的文字一律跳脫（`<`、`>`、`&`、`|`、`` ` ``、`@`），不能插入 HTML、mention 或偽造狀態區塊；狀態區塊也必須在留言最後。
+
+**驗證**：`tests/review-state/` 的單元測試（codec、指令、狀態機、儀表板），以及以真實 git repo 執行 `reviewRange()` 與 CLI 的端對端測試：移除 `authorize` → 待確認 → 確認 → 上方插入另一個 method 仍有效 → 同一個 method 的邏輯改變後重新開啟 → 狀態被竄改時以 `--history` 重播。
+
 ## 跨步驟的注意事項
 
 1. **real-repo evaluation 的 `compare`**：`--baseline-ref` 指向 fact schema v2 之前的 commit 時，每筆有 fact 的結果在 `facts` 欄位都會不同（`callee` / `container` 的形狀改變，且多了 `properties.scope`）。這是預期的；比較時請看 `decision`、`fallback`、`reasons` 與 gate。`evaluation/real-repo/run.js` 以 baseline snapshot 自己的 `PHP_LARAVEL_DOMAIN_INTERPRETERS` 執行，所以保留了這個相容入口。
 2. **real-repo evaluation 沒有在本機重跑**：目標專案不在 repo 內（見 `docs/current-state.md`）。步驟 1、2 是行為不變的重構，mutation corpus 結果相同；但 `CALL_ARGUMENT_REMOVED` / `ADDED` 會讓部分真實檔案從 `FULL` 變成 `TARGETED`，建議合併前在本機對目標專案執行 `npm run eval:real-repo -- evaluate --baseline-ref <修改前>`，確認 `RISKY_REDUCED` 仍為 0。
-3. **尚未實作**（設計 §8 步驟 7）：GitHub 留言中的狀態與 ack 指令、置頂儀表板、Check、PR 自我宣告的風險。使用者決定步驟 7 最後處理，先完成步驟 8、9。
+3. **尚未實作**（設計 §8 步驟 7 的 GitHub 部分，7b）：讀取留言與權限、寫回置頂儀表板 / 指令回覆 / thread / Check 的 workflow，以及 PR 自我宣告的風險。使用者決定步驟 7 最後處理、先做 CLI 部分（7a，見「步驟 7a」）。
 4. **待決事項**（設計 §9）中仍未決定的：`FULL` 中「未分析」檔案的預設路由（當時依建議為 `ESCALATED`，可用 `aiTrackPaths` 放寬；後來改為 `AI_TRACK` 並移除該設定，見下方〈流程調整（2026-10-19，步驟 1–6 完成後）〉）、AI 是否直接 commit、豁免權限、TS 型別變更的路由。
 
 ## 流程調整（2026-10-19，步驟 1–6 完成後）

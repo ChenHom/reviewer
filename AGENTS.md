@@ -15,7 +15,7 @@ Reviewer 是 deterministic、fail-closed 的 Review Decision Engine（Node ESM�
 - Node.js：CI 用 24；開發（lint）需要 `^22.13.0 || >=24`（`eslint-plugin-jsdoc` 的 engines，比 ESLint 本身的 `^20.19.0` 更嚴）。CLI 執行期的需求見 [docs/review-cli.md](docs/review-cli.md#前置需求)。
 - PHP CLI ≥ 8.3（`analyzers/php/composer.json`；CI 用 8.4）、Composer 2、`git`；release gate 另需 `tar`，且 repo 必須是有 commit 的 git checkout。
 - 先 `npm ci`，再 `npm run analyzer:install`：它依序執行 `composer install --working-dir=analyzers/php`（PHP analyzer）與 `npm ci --prefix analyzers/ts`（TS analyzer）。`npm ci` 會經 `prepare` 安裝 pre-commit hook（內容是 `npm run lint`）。
-- `ANTHROPIC_API_KEY` 只有 `--ai`（`bin/review.js`、`bin/retro.js`）需要；測試用假的 client，不需要它。
+- `ANTHROPIC_API_KEY` 只有 `--ai`（`bin/review.js`、`bin/retro.js`）需要；測試用假的 client，不需要它。`bin/review-state.js` 需要 `REVIEWER_STATE_KEY`（狀態的 HMAC key；本機預覽可用 `--unsigned`），測試以固定的 key 執行。
 
 ## 指令（package.json scripts）
 
@@ -49,9 +49,9 @@ Reviewer 是 deterministic、fail-closed 的 Review Decision Engine（Node ESM�
 - CLI 選項、exit code、原因代碼 → [docs/review-cli.md](docs/review-cli.md)；其他文件只摘要並連過去。
 - 預設單向門 → `src/routing.js` 的 `DEFAULT_ONE_WAY_DOORS`；預設受保護路徑 → `src/config/project-config.js` 的 `DEFAULT_PROTECTED_PATHS`；docs/review-cli.md「路由」有完整清單，[docs/project-config.md](docs/project-config.md)「單向門」列出規則產生的代碼。
 - 驗證數字 → README「目前驗證基準」；其他文件連過去，不複製數字。
-- 沒有測試檢查文件與程式是否一致，要手動同步：旗標變更 → `bin/*.js` 的 `USAGE` 與 docs/review-cli.md（retro 為 [docs/retro.md](docs/retro.md)）；新增原因代碼 → docs/review-cli.md「原因代碼」，要顯示說明時加到 `src/review/reasons.js`；`.reviewer.json` schema → docs/project-config.md；新增 fact 或 interpreter → README「已實作」；功能面的變化 → docs/features.md。
+- 沒有測試檢查文件與程式是否一致，要手動同步：旗標變更 → `bin/*.js` 的 `USAGE` 與 docs/review-cli.md（retro 為 [docs/retro.md](docs/retro.md)，二次 review 狀態為 [docs/review-state.md](docs/review-state.md)）；新增原因代碼 → docs/review-cli.md「原因代碼」，要顯示說明時加到 `src/review/reasons.js`；`.reviewer.json` schema → docs/project-config.md；新增 fact 或 interpreter → README「已實作」；功能面的變化 → docs/features.md。
 
 ## 目前未實作
 
-- 三層架構設計 §8 的步驟 7（GitHub 整合）：CLI 只讀 git 物件，輸出到 stdout 與 `--out`，不留言、不建立 check；`src/integrations/github/` 只有 port 與 payload 驗證，沒有真實 transport。見[實作紀錄](docs/superpowers/notes/2026-10-19-three-tier-implementation-notes.md)。
+- 三層架構設計 §8 的步驟 7（GitHub 整合）的 GitHub 部分：`bin/review-state.js` 只計算狀態（狀態機、ack 指令、儀表板、簽章），不呼叫 GitHub API；讀取留言與權限、寫回儀表板 / 回覆 / thread / Check 的 workflow 尚未實作。`bin/review.js` 只讀 git 物件，不留言、不建立 check；`src/integrations/github/` 只有 port 與 payload 驗證，沒有真實 transport。見[實作紀錄](docs/superpowers/notes/2026-10-19-three-tier-implementation-notes.md)。
 - AI 層（`--ai`、`--ai-apply`）與 retro 的 AI 建議只以假的 client 測試，實作時沒有 API 憑證，未對真實 API 做過 smoke test（之後是否有人驗證過：未查證）。不要在文件中寫成已驗證。
