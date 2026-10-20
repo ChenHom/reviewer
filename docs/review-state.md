@@ -41,7 +41,7 @@ node bin/review-state.js --report report.json --pr pr.json --unsigned
 | `--report <file>` | 必填。目前 head 的報表（`bin/review.js --out`） |
 | `--pr <file>` | 必填。PR，GitHub REST 的 pull request JSON（使用 `number`、`user.login`、`head.sha`）。`head.sha` 與報表的 head 不同時以 `REVIEW_STATE_STALE_REPORT` 結束：舊的報表晚到時不能拿來更新狀態或 Check |
 | `--dashboard <file>` | 上一版儀表板留言的內容：純文字，或含 `body` 的 JSON（GitHub comment）。第一次執行時省略 |
-| `--comments <file>` | PR 的 issue comments，GitHub REST 的 JSON 陣列（使用 `id`、`body`、`user.login`、`user.id`、`user.type`、`created_at`、`updated_at`） |
+| `--comments <file>` | PR 的**全部** issue comments，GitHub REST 的 JSON 陣列（使用 `id`、`body`、`user.login`、`user.id`、`user.type`、`created_at`、`updated_at`）。保存的確認每次都與它核對，缺少的留言視為已刪除 |
 | `--permissions <file>` | 留言者的權限：`{ "<login>": "<權限>" }`，值為 `admin`、`maintain`、`write`、`triage`、`read`、`none`，或 GitHub collaborator permission API 的 `{ role_name, permission }`。沒有列出的留言者，確認一律不採用 |
 | `--history <path>` | 之前 head 的報表（檔案或目錄，目錄中所有 `.json`）；可重複。只在狀態無法驗證時用來驗證確認指令的 `@head`（見「狀態的保存」）。無法解析的檔案在 stderr 警告後略過 |
 | `--ack-permission <level>` | 確認所需的最低權限：`write`（預設）、`maintain`、`admin` |
@@ -114,6 +114,8 @@ Check 結論：有 `OPEN` 或 `REOPENED` 時為 `failure`，否則 `success`。C
 
 通過時回覆 `ACK_ACCEPTED`（✅）。bot 的留言（`user.type` 為 `Bot` 或 login 以 `[bot]` 結尾）一律忽略；格式錯誤的 `/reviewer` 行回覆正確格式。每則留言只處理一次（狀態記錄 `lastProcessedCommentId`），回覆不會重複。
 
+已接受的確認在之後的每次執行都會與目前的留言核對：指令留言被刪除、被編輯過或作者不符時，這個確認不再採用（項目回到待確認），儀表板說明有幾個確認因此失效。確認者要撤回確認，編輯或刪除指令留言即可。
+
 `@head` 的檢查是為了「人看的是 A，推了 B 之後才送出確認，結果確認綁到 B」：確認綁定的是確認者看到的版本，不是送出確認時的最新版本。
 
 ## 狀態的保存
@@ -144,7 +146,7 @@ Check 結論：有 `OPEN` 或 `REOPENED` 時為 `failure`，否則 `success`。C
 | `replies` | 確認指令的回覆：`[{ commentId, body }]` |
 | `threads` | 單向門的行內 thread 目標狀態：`[{ findingId, label, state: "open" \| "resolved", location, body }]`。`location` 為 `{ path, side: "LEFT" \| "RIGHT", startLine, line }`（已修正的項目為 `null`）；`body` 的最後一行是 `<!-- reviewer:finding <id> -->`，workflow 以它找到既有的 thread，沒有就建立（只建立 open 的），有就 resolve / unresolve。檔案層級的項目沒有 thread |
 | `items` | 所有項目：`id`、`label`、`kind`、`state`、`blocker`、`path`、`location`、`reopenedBecause` |
-| `notes` | 說明：`STATE_RESET`（狀態無法驗證，含 `reason`、`replayed`、`rejected`） |
+| `notes` | 說明：`STATE_RESET`（狀態無法驗證，含 `reason`、`replayed`、`rejected`）、`ACKS_WITHDRAWN`（指令留言被刪除或編輯而不再採用的確認數，含 `count`） |
 
 ## 與設計的差異
 

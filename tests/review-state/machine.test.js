@@ -153,6 +153,32 @@ test('流程：待確認 → 確認 → 程式碼改變後重新開啟 → 再�
   assert.equal(stateOf(stillBack, 'F1'), 'REOPENED');
 });
 
+test('確認的指令留言之後被編輯、刪除或作者不符時，確認不再採用', () => {
+  const first = step(report(sha(1)), null);
+  const original = comment(3, '/reviewer ack F1-d00d@1111111 已確認');
+  const acked = step(report(sha(1)), first.dashboard.body, [original]);
+  assert.equal(stateOf(acked, 'F1'), 'ACKNOWLEDGED');
+  // 留言不變：仍是已確認，沒有說明。
+  const same = step(report(sha(1)), acked.dashboard.body, [original]);
+  assert.equal(stateOf(same, 'F1'), 'ACKNOWLEDGED');
+  assert.deepEqual(same.notes, []);
+
+  for (const [label, comments] of [
+    ['編輯過', [{ ...original, body: '算了，還沒看完', updated_at: 't9' }]],
+    ['刪除', []],
+    ['作者不符', [{ ...original, user: { login: 'mallory', type: 'User' } }]],
+    ['變成 bot', [{ ...original, user: { login: 'alice[bot]', type: 'Bot' } }]],
+  ]) {
+    const result = step(report(sha(1)), acked.dashboard.body, comments);
+    assert.equal(stateOf(result, 'F1'), 'OPEN', label);
+    assert.equal(result.check.conclusion, 'failure', label);
+    assert.deepEqual(result.notes, [{ code: 'ACKS_WITHDRAWN', count: 1 }], label);
+    assert.match(result.dashboard.body, /1 個確認的指令留言已被刪除或編輯/, label);
+    // 下一次執行：確認已從狀態移除，不再重複說明。
+    assert.deepEqual(step(report(sha(1)), result.dashboard.body, comments).notes, [], label);
+  }
+});
+
 test('修正後再次出現、從未確認過的項目也是重新開啟', () => {
   const first = step(report(sha(1)), null);
   const fixed = step(report(sha(2), { files: report(sha(2)).files.slice(1) }), first.dashboard.body);

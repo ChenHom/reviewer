@@ -10,7 +10,8 @@ import { STATE_VERSION } from './codec.js';
  * > 新狀態 = f(最新報表, 所有有效的確認)
  *
  * 狀態留言只保存短編號、各 head 的 fingerprint（驗證 `@sha` 用）與已驗證的確認，所以事件的處理順序
- * （push 與確認留言交錯）不影響結果。
+ * （push 與確認留言交錯）不影響結果。保存的確認每次都與目前的留言核對（留言被刪除或編輯過就不再採用），
+ * 所以 `comments` 必須是 PR 的全部 issue comments。
  *
  * 追蹤的項目（item）：
  * - `DOOR`：機械審查的單向門 finding（`files[].findings` 中 `kind` 不是 `AI` 的），各自確認，
@@ -162,7 +163,7 @@ export function itemLabel(item) {
  * @param {object} options - 輸入。
  * @param {object} options.report - 目前 head 的報表（`bin/review.js --out`）。
  * @param {{status: string, state: object|null}} options.previous - decodeState() 的結果。
- * @param {object[]} [options.comments=[]] - PR 的 issue comments（GitHub REST 形狀）。
+ * @param {object[]} [options.comments=[]] - PR 的全部 issue comments（GitHub REST 形狀）。
  * @param {{number: number, login: string}} options.pr - PR 編號與作者。
  * @param {object} [options.permissions={}] - login → 權限。
  * @param {string} [options.minPermission='write'] - 確認所需的最低權限。
@@ -196,7 +197,18 @@ export function computeState({ report, previous, comments = [], pr, permissions 
   heads.set(headSha, snapshot(current));
 
   const known = new Map([...shortIds].map(([id, shortId]) => [id, { shortId }]));
-  const acks = [...(prior?.acks ?? [])];
+  const ordered = [...comments].filter((comment) => Number.isInteger(comment?.id)).sort((left, right) => left.id - right.id);
+  // 保存的確認每次都與目前的留言核對：指令留言被刪除、被編輯過或作者不符時，這個確認不再採用。
+  const byId = new Map(ordered.map((comment) => [comment.id, comment]));
+  const standing = (ack) => {
+    const source = byId.get(ack.commentId);
+    return Boolean(source)
+      && !isBotComment(source)
+      && (source.updated_at === undefined || source.updated_at === source.created_at)
+      && String(source.user?.login ?? '').toLowerCase() === String(ack.login ?? '').toLowerCase();
+  };
+  const acks = (prior?.acks ?? []).filter(standing);
+  const withdrawn = (prior?.acks?.length ?? 0) - acks.length;
   const replies = [];
   const lastProcessed = prior?.lastProcessedCommentId ?? null;
   let maxCommentId = lastProcessed;
@@ -204,7 +216,6 @@ export function computeState({ report, previous, comments = [], pr, permissions 
   let replayRejected = 0;
   const context = { pr, permissions, minPermission, known, current: snapshot(current), heads, checkShortId: !replay };
 
-  const ordered = [...comments].filter((comment) => Number.isInteger(comment?.id)).sort((left, right) => left.id - right.id);
   for (const comment of ordered) {
     if (lastProcessed !== null && comment.id <= lastProcessed) continue;
     maxCommentId = Math.max(maxCommentId ?? 0, comment.id);
@@ -282,6 +293,7 @@ export function computeState({ report, previous, comments = [], pr, permissions 
   items.sort(compareItems);
 
   const notes = [];
+  if (withdrawn > 0) notes.push({ code: 'ACKS_WITHDRAWN', count: withdrawn });
   if (replay) {
     notes.push({
       code: 'STATE_RESET',

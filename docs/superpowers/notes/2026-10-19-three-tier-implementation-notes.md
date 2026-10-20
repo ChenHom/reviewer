@@ -208,6 +208,10 @@
 - 確認權限沿用設計預設的 write（`--ack-permission` 可提高到 maintain / admin）；設計 §9 的「必須是 CODEOWNERS」沒有實作。
 - 儀表板中來自程式碼與 AI 的文字一律跳脫（`<`、`>`、`&`、`|`、`` ` ``、`@`），不能插入 HTML、mention 或偽造狀態區塊；狀態區塊也必須在留言最後。
 
+**PR #12 review 的修正**：
+
+1. **確認留言被編輯或刪除後確認仍有效**（P1，確認為真）：確認被接受後保存在狀態中，之後的執行以 `lastProcessedCommentId` 跳過原本的留言；確認者把指令留言改掉或刪掉，項目仍是已確認，Check 繼續通過。修正：保存的確認每次都與目前的留言核對，留言不在、被編輯過、作者不符或變成 bot 時不再採用（儀表板以 `ACKS_WITHDRAWN` 說明）。因此 `--comments` 必須是 PR 的全部 issue comments。
+
 **驗證**：`tests/review-state/` 的單元測試（codec、指令、狀態機、儀表板），以及以真實 git repo 執行 `reviewRange()` 與 CLI 的端對端測試：移除 `authorize` → 待確認 → 確認 → 上方插入另一個 method 仍有效 → 同一個 method 的邏輯改變後重新開啟 → 狀態被竄改時以 `--history` 重播。
 
 ## 跨步驟的注意事項
