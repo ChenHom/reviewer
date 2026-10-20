@@ -239,7 +239,7 @@ CI（`.github/workflows/review-reduction-safety.yml`，PHP 8.4）在 `npm run te
 - Retro（`bin/retro.js`）：彙整 review 報表的 deterministic 指標；`--ai` 時提出規範增刪、`.reviewer.json` 規則與 mutation case 草案，規則以設定驗證器檢查、草案以機械審查確認。
 - 專案設定 `.reviewer.json`（從 merge base 讀取，只能新增攔截），見 [專案設定](project-config.md)。
 - TypeScript / JavaScript adapter：AST 等價判定（第 1 階段），以及結構比對輸出與 PHP 相同的 facts、decorator 與指示註解的 facts、scope hash（第 2、3 階段）；`node` preset（transaction、row lock、授權、middleware、token 驗證、validation、資料刪除），`.reviewer.json` 的規則也適用於 TS。
-- 二次 review 的輸入：每個 fact 的 scope hash（所屬 method 的 canonical AST hash）與 finding 指紋（`files[].findings`）。狀態機與 GitHub 整合（設計的步驟 7）尚未實作。
+- 二次 review：每個 fact 的 scope hash（所屬 method 的 canonical AST hash）、finding 指紋與 policy digest（`files[].findings`）；`bin/review-state.js` 以報表重算確認狀態、處理 `/reviewer ack` 指令，輸出置頂儀表板、Check 與 thread 的目標狀態（見 [二次 review 狀態](review-state.md)）。寫回 GitHub 的 workflow（設計步驟 7 的 GitHub 部分）尚未實作。
 
 目前 mutation evaluation（`npm run eval:mutations`）的 case 組成與各項指標見 [README「目前驗證基準」](../README.md#目前驗證基準)。其中沒有 direct fact 的只剩 optional chain 加括號的 TS case；沒有命中單向門、只靠 AI 審查判斷是否需要人工的 critical case 是 4 個 PHP case，以及 TS 的 `@ts-ignore`、物件簡寫 key、optional chain、zod 規則放寬。
 

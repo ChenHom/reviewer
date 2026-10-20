@@ -159,6 +159,7 @@ project  origin/master (6af59df90c81) → HEAD (56fd3599cc75)，比較起點為 
 - 三層審查路由（`src/routing.js`）：機械審查之後每個檔案分為 `AUTO_PASS` / `AI_TRACK` / `ESCALATED`（命中單向門），預設單向門清單為 `DEFAULT_ONE_WAY_DOORS`；路由不改變 `decision`，也不會讓需要 review 的檔案變成不需要。必須人工確認的項目另有穩定的 finding id 與 scope hash（`src/findings.js`）
 - 專案設定（`.reviewer.json`、`codingstandards.md`，見 [專案設定](docs/project-config.md)）：兩者都從 merge base 讀取，修改它們本身是單向門（`POLICY_FILE_CHANGED`）；設定只能新增攔截（preset、規則、單向門），設定無效時每個檔案為 `FULL` 加 `POLICY_CONFIG_INVALID`；CI 本身（`.github/workflows/**`、`.github/actions/**`）不論有沒有設定都是受保護路徑（`PROTECTED_PATH`）
 - 第 2 層 AI 審查（`--ai`，`src/ai/`）：Anthropic Messages API（`@anthropic-ai/sdk`，只在啟用時載入）、structured outputs、server-side fallback、prompt cache；AI 判斷需要人工的項目成為 `kind: AI` 的 finding；AI 不能放行單向門，也不改變 `decision`。測試只用假的 client，實作時沒有 API 憑證，未對真實 API 做過 smoke test（見「目前能力邊界」）
+- 二次 review 狀態（`bin/review-state.js`，見 [二次 review 狀態](docs/review-state.md)）：以報表重算單向門與檔案層級人工確認的狀態（`OPEN` / `ACKNOWLEDGED` / `REOPENED` / `FIXED`），處理 `/reviewer ack F1-3fa2@<head> <理由>` 指令（確認綁定所在 method 的局部 AST hash 與產生該原因的規則；看完之後又改了就要重看），輸出置頂儀表板、Check 結論、指令回覆與行內 thread 的目標狀態；狀態以 HMAC 簽章存在儀表板留言中。不呼叫 GitHub API（設計步驟 7 的 CLI 部分）
 - Retro（`bin/retro.js`，見 [Retro](docs/retro.md)）：彙整一段期間的 review 報表（路由比例、單向門、FULL 原因、沒有規則的 fact、AI 結果、規範引用），`--ai` 時提出 `codingstandards.md` 增刪、`.reviewer.json` 規則（以設定驗證器檢查）與 mutation case 草案（以機械審查確認）；建議都只是草案，retro 不修改任何檔案，AI 建議同樣只以假的 client 測試
 - provider-neutral GitHub sink boundary（`src/integrations/github/`：注入 transport 的 `upsertSummary` / `upsertCheck` port 與 payload 驗證；沒有真實的 GitHub transport，`bin/review.js` 不使用，見「目前能力邊界」的未實作範圍）
 
@@ -211,7 +212,7 @@ Historical 數字目前來自明確標示的 controlled fixture pilot，只驗�
 - [PR Review CLI：用法、merge base、選項、exit code、原因代碼與 JSON 報表](docs/review-cli.md)
 - [專案設定：`.reviewer.json`](docs/project-config.md)
 - [Retro：彙整 review 報表並提出改進草案](docs/retro.md)
-- [三層審查架構設計](docs/superpowers/specs/2026-10-18-three-tier-review-design.md)與[實作紀錄](docs/superpowers/notes/2026-10-19-three-tier-implementation-notes.md)（設計 §8 的步驟 7「GitHub 整合」尚未實作，其他步驟已完成）
+- [三層審查架構設計](docs/superpowers/specs/2026-10-18-three-tier-review-design.md)與[實作紀錄](docs/superpowers/notes/2026-10-19-three-tier-implementation-notes.md)（設計 §8 的步驟 7「GitHub 整合」只完成 CLI 部分：`bin/review-state.js`；workflow 與 GitHub API 尚未實作，其他步驟已完成）
 - [Review Reduction Next Phase 任務與已知偏差](docs/tasks/2026-08-12-review-reduction-next-phase.md)（狀態以檔案內為準）
 - [目前能力與四階段實作整理](docs/current-state.md)
 - [Safety MVP / Review Decision Engine 架構](docs/safety-mvp-architecture.md)
@@ -317,7 +318,7 @@ blocker → factId → provenance
 
 尚未實作的範圍：
 
-- 三層架構設計 §8 的步驟 7（GitHub 整合）：狀態留言、ack 指令、置頂儀表板、Check、PR 自我宣告的風險（`Merge-Risk`）。`bin/review.js` 只讀 git 物件，輸出到 stdout 與 `--out`，不留言、不建立 check；`src/integrations/github/` 只有 port 與 payload 驗證，沒有真實的 transport。因此 retro 需要 GitHub 狀態的指標（豁免率、REOPENED 次數等）列為不可用。
+- 三層架構設計 §8 的步驟 7（GitHub 整合）的 GitHub 部分：讀取留言與權限、寫回置頂儀表板、指令回覆、行內 thread 與 Check 的 workflow，以及 PR 自我宣告的風險（`Merge-Risk`）。狀態的計算（狀態機、ack 指令、儀表板內容、簽章）已由 `bin/review-state.js` 完成，但它不呼叫 GitHub API；`bin/review.js` 只讀 git 物件，不留言、不建立 check；`src/integrations/github/` 只有 port 與 payload 驗證，沒有真實的 transport。因此 retro 需要 GitHub 狀態的指標（豁免率、REOPENED 次數等）列為不可用。
 - AI 層（`--ai`、`--ai-apply`）與 retro 的 AI 建議（`bin/retro.js --ai`）只以假的 client 測試，實作時沒有 API 憑證，未對真實 API 做過 smoke test。AI 的輸出不是 deterministic，「目前驗證基準」的數字都只來自機械審查，不含 AI 層。
 
 後續優先方向：

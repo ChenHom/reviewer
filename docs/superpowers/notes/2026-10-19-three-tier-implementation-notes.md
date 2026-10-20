@@ -182,11 +182,66 @@
    - PHP 的鏈變更只有被消耗的 call fact（例如 `$q->fee`）帶 container；配對 key 改變而多出來的 `->round` / `$q->round` 沒有被消耗，不帶 container，但至少有一個 fact 會命中規則。
 19. **TS 檔的 `@internal` 沒有追蹤**（P2，確認為真）：TS 檔原本完全不看 JSDoc，`stripInternal` 時新增或移除 `/** @internal */` 會改變輸出的宣告檔，結果是 `AUTO_PASS`。修正：TS 檔列入 `@internal`（JS 檔也列入）。
 
+## 步驟 7a：二次 review 狀態（CLI）
+
+**做了什麼**：`bin/review-state.js` 與 `src/review-state/`（`codec.js`、`commands.js`、`machine.js`、`dashboard.js`、`index.js`），文件 `docs/review-state.md`。輸入目前 head 的報表、上一版儀表板留言、PR 的留言與權限，輸出新的儀表板、Check、指令回覆與行內 thread 的目標狀態；不呼叫 GitHub API。另外改了 `src/findings.js`（anchor、`policyDigest`）、`src/facts/interpreter.js`（`blockerSources()`）與 `src/review/review.js`（報表的 `facts[].blockerSources`）。
+
+**順序**：使用者問先做 CLI 還是 GitHub。建議先做 CLI：關係到安全的判斷（簽章、狀態機、確認綁定的版本）都是不碰 GitHub 的純邏輯，可以在本機完整測試；它的輸出也是兩段式 workflow 之間的介面。
+
+**實作前列出的風險與處理**（使用者決定第 1、2 點，其餘照建議做）：
+
+1. **AI 的 finding 在重跑時換 id**：AI 的輸出不是 deterministic 的，逐條確認會在每次 push 後失效。處理（使用者決定）：AI 的項目以檔案為單位確認，綁定檔案內容。需要人工但沒有任何 finding 的檔案（沒有執行 AI 審查、不認得的路由）也以檔案為單位產生項目（fail-closed）。單向門仍是每個 finding 一項。
+2. **狀態遺失後，以短編號重播會綁錯項目**：短編號存在狀態中，狀態被丟棄後重新配發，舊留言的 `F1` 可能指到另一個項目。處理（使用者決定）：指令帶 finding id 前綴（`F1-3fa2@…`），以前綴找項目，短編號只用來防止打錯（重播時不檢查）。另外，設計中負責寫入的 workflow 不 checkout 程式碼，算不出舊 head 的 hash，所以狀態保存最近 10 個 head 的 fingerprint，並可用 `--history` 提供之前的報表；兩者都沒有時，重播的確認一律需要重新確認。
+3. **小修改讓 finding 換 id**：anchor 含變更後的值（例如 `LITERAL_CHANGED` 的 `after`），作者微調那一行就變成「已修正 + 新的待確認」。處理：anchor 只放 base 側的值與位置（不含 `after`、改變後的運算子、新增的 `value` / `condition`），其他 kind 的 callee / container 只取結構；值改變由 `scopeHash` 讓確認失效。既有報表的 finding id 會因此改變（之前沒有保存任何確認，不影響使用）。
+4. **工具升級讓所有確認一起失效**：設計以整組 policy digest 綁定確認。處理：報表的每個 fact 記錄每個原因由哪些 interpreter 產生（`blockerSources`），finding 的 `policyDigest` 只涵蓋這些 interpreter（`FACT_UNHANDLED` 為整組 interpreter 的 digest，只記一個 `set:<hash>`，避免沒有規則的 fact 很多時報表變大；檔案層級的原因為專案設定的 digest）。
+5. **中文輸入法的全形符號**：每一行先做 NFKC 正規化；格式錯誤的 `/reviewer` 行回覆正確格式，不靜默忽略。
+6. **舊的報表算出新 head 的結果**：PR 的 `head.sha` 與報表不同時拒絕執行（`REVIEW_STATE_STALE_REPORT`），Check 只綁定報表的 head。
+7. **引用回覆被當成確認**：引用（`>`）、程式碼區塊與縮排程式碼中的指令不算。
+8. **確認理由依賴範圍外的程式碼**：機械判斷無法處理，記在文件的限制與儀表板的說明中（確認只保證所在的 method 或檔案沒有再變過）。
+
+**其他取捨**：
+
+- 狀態機每次從頭重算（新狀態 = f(最新報表, 所有有效的確認)），狀態只保存短編號、head 的 fingerprint 與已驗證的確認，事件處理順序不影響結果。
+- 狀態不保存 thread id：thread 內容帶 `<!-- reviewer:finding <id> -->`，workflow 以標記找到 thread，不需要建立 thread 後再寫一次狀態。
+- 簽章帶 key id（key 的 sha256 前 8 碼），可設定多把舊 key 驗證，換 key 不會讓開著的 PR 失去確認。
+- 有儀表板但沒有狀態區塊（超過長度上限或被刪掉）時視為無法驗證，重播確認但不逐則回覆，避免把所有舊的指令再回覆一次。
+- 確認權限沿用設計預設的 write（`--ack-permission` 可提高到 maintain / admin）；設計 §9 的「必須是 CODEOWNERS」沒有實作。
+- 儀表板中來自程式碼與 AI 的文字一律跳脫（`<`、`>`、`&`、`|`、`` ` ``、`@`），不能插入 HTML、mention 或偽造狀態區塊；狀態區塊也必須在留言最後。
+
+**PR #12 review 的修正**：
+
+1. **確認留言被編輯或刪除後確認仍有效**（P1，確認為真）：確認被接受後保存在狀態中，之後的執行以 `lastProcessedCommentId` 跳過原本的留言；確認者把指令留言改掉或刪掉，項目仍是已確認，Check 繼續通過。修正：保存的確認每次都與目前的留言核對，留言不在、被編輯過、作者不符或變成 bot 時不再採用（儀表板以 `ACKS_WITHDRAWN` 說明）。因此 `--comments` 必須是 PR 的全部 issue comments。
+2. **不認得的路由被當成不需要人工**（P1，確認為真）：檔案層級的項目以 `needsHuman !== false` 判斷，路由不認得、`needsHuman: false` 又沒有 finding 的檔案不產生項目，Check 通過。修正：只有兩種已知的組合可以不產生項目（`AUTO_PASS` 且決策是 `NOT_SELECTED_FOR_HUMAN_REVIEW`；`AI_TRACK`、`needsHuman: false` 且 AI 結果是 `PASS` / `FIXED`），其他沒有單向門的檔案一律產生檔案層級的項目。
+3. **保存的確認沒有重新檢查權限**（P1，確認為真）：確認者之後失去權限，或 `--ack-permission` 提高後，舊的確認仍有效。修正：保存的確認每次都以目前的 `permissions` 與門檻重新檢查（也重新檢查不是 PR 作者），不符時不再採用。因此 `--permissions` 必須涵蓋所有確認者。
+4. **有單向門的檔案，AI 沒有審查單向門以外的部分卻不需要人工看整個檔案**（P1，確認為真）：有單向門時不產生檔案層級的項目；沒有 `--ai`，或 AI 失敗時（`aiFindingsFor()` 對 `ESCALATED` 不產生 `AI_REVIEW_FAILED`），確認完單向門 Check 就通過，單向門以外的部分沒有人看過。修正：有單向門、但 AI 的結果不是 `PASS` 時，另外產生檔案層級的項目（`AI_REVIEW_MISSING` / `AI_REVIEW_FAILED` / `AI_NEEDS_HUMAN`）。同一個檔案中單向門排在檔案層級項目前面。
+5. **編號的 4 碼前綴可能重複**（P2，確認為真）：兩個項目的 id 前 4 碼相同時，前綴對應到多個項目，儀表板產生的兩個指令都被拒絕，Check 無法通過。修正：前綴對應到多個項目時以短編號縮小範圍；儀表板的前綴加長到所有已知項目都不重複。
+6. **報表缺少 `contentHash` 時確認永遠有效**（P1，確認為真）：缺欄位時 fingerprint 的是字串 `"undefined"`，之後同樣缺欄位的 head 都相同，檔案改了確認仍有效。修正：`reportError()` 檢查確認要綁定的欄位（檔案的 `contentHash`、單向門 finding 的 `id`、`blocker`、`policyDigest`、非空的 `scopeHash`），不齊全時以 `REVIEW_STATE_REPORT_INVALID:<原因>` 拒絕；這樣的歷史報表不用來驗證 `@head`。`policyDigest` 也一併要求：缺少時原本以固定值代替，規則改變也不會讓確認失效。
+7. **自訂角色的權限被當成不認得**（P2，確認為真）：GitHub 的 `role_name` 是自訂角色名稱時，標準權限在 `permission`。修正：`role_name` 不是標準權限時改用 `permission`。查證時另外發現 `value in PERMISSION_RANK` 會把 `constructor`、`toString` 等 prototype 上的名稱當成權限，rank 不是數字，`NaN < 3` 為 false，權限檢查會放行；改用 `Object.hasOwn()`。
+
+使用者在這裡決定：之後只修 P1，P2 留到 7b 一起處理（已修的 P2 不回退）。
+
+8. **`--ai-apply` 的修正被當成通過**（P1，確認為真）：AI 結果 `FIXED` 代表修正只寫入 worktree，報表與 Check 的 head 仍是沒有修正的版本（`summarizeHuman()` 也記為 `pendingFixes`），卻被當成「AI 審查通過」。修正：只有 `PASS` 算通過；`FIXED` 產生檔案層級的 `AI_FIX_UNCOMMITTED`（說明為 AI 的修正內容），commit 後在新的 head 重新審查。
+9. **檔案層級的確認沒有綁定 `codingstandards.md`**（P1，確認為真）：merge base 的 `codingstandards.md` 改變後，AI 依不同的規範審查，舊的確認仍有效。修正：檔案層級項目的 policy 加入報表的 `ai.standards.digest`。
+10. **確認過的項目修正後再次出現時沿用舊確認**（P1，確認為真）：項目消失（`FIXED`）後又以相同的 fingerprint 出現，舊確認讓它直接回到已確認。設計的狀態表是「`FIXED` → 再次出現 → `REOPENED`」。修正：從 `FIXED` 再次出現時，之前的確認不再採用（從狀態移除），狀態為 `REOPENED`（`REAPPEARED`），要重新確認。
+11. **報表缺少 `config.digest` / `ai.standards.digest` 時以 `null` 代替**（P1，確認為真）：設定或規範改變後，缺欄位的報表 policy 不變，確認仍有效。修正：`reportError()` 要求 `config.digest` 欄位存在（字串或明確的 `null`）；有 AI 摘要時要求 `ai.standards.digest`；檔案有 AI 結果但報表沒有 AI 摘要時也拒絕。
+12. **合法簽章的舊狀態可以被還原**（P1，確認為真）：簽章只保證狀態是 reviewer 產生的，不保證是最新的。有寫入權限的人把儀表板改回項目修正前、已確認的內容後，項目再次出現時直接是已確認，Check 通過。修正：保存的狀態只在儀表板留言由 bot 建立、而且最後一次編輯（GraphQL 的 `editor`）也是 bot 自己時採用，否則丟棄並從確認留言重播（`STATE_NOT_FROM_BOT` / `STATE_EDITED_BY_OTHER` / `STATE_EDITOR_UNKNOWN`）；因此 `--dashboard` 改為傳入 GitHub 留言的 JSON，7b 的 workflow 要另外以 GraphQL 取得 `editor`。重播時也不知道項目是否曾經修正後再出現，所以 `--history` 中有任何一個 head 沒有這一項時，只採用目前 head 的確認（`ACK_REPLAY_UNVERIFIABLE`）。儀表板留言被刪除、但已經有確認指令時同樣重播（`DASHBOARD_MISSING`），不當成第一次執行。
+13. **缺少時間的確認留言被接受**（P1，確認為真）：留言沒有 `created_at` / `updated_at` 時無法偵測編輯，指令仍被接受；之後以 `lastProcessedCommentId` 跳過，保存的確認也把缺少 `updated_at` 視為未編輯，內容被換掉仍有效。修正：兩個時間都要有而且相同，否則新的確認以 `ACK_EDIT_UNKNOWN` 拒絕，保存的確認不再採用。
+14. **`AI_TRACK` 搭配不認得的決策時，AI 通過就放行**（P1，確認為真）：路由只對 `HUMAN_REVIEW_REQUIRED` 產生 `AI_TRACK`，不認得的決策要升級，AI 不能放行；但 `clearedFile()` 只看路由、`needsHuman` 與 AI 結果，不一致的報表（`AI_TRACK` 加上不認得、缺少或 `NOT_SELECTED` 的決策）會被當成 AI 審查通過，Check 通過。修正：AI 審查通過還要求決策是 `HUMAN_REVIEW_REQUIRED`，否則產生檔案層級的項目。
+15. **有單向門的檔案，決策不認得時 AI 通過仍省略檔案層級的項目**（P1，確認為真）：有單向門時只看 AI 結果是否為 `PASS`，不認得的決策（路由升級正是因為審查範圍不可信）在確認單向門後 Check 就通過。修正：只有路由是 `ESCALATED`、決策是 `HUMAN_REVIEW_REQUIRED`、AI 結果是 `PASS` 時才省略，否則產生檔案層級的項目。
+
+PR #12 留到 7b 的 P2：
+
+- 儀表板「AI 審查通過」的數量與清單包含 AI 結果是 `FIXED`（修正尚未 commit）的檔案，與同一個檔案的 `AI_FIX_UNCOMMITTED` 待確認項目矛盾；應只列出 `PASS`。
+- 項目在還沒處理過任何留言時（`lastProcessedCommentId` 為 `null`）變成 `FIXED`，之後再次出現的同一次執行收到第一個確認：確認被接受、也回覆了 ✅，卻因為保留條件要求之前的留言 id 不是 `null` 而被丟掉，項目維持 `REOPENED`，要再確認一次。應把這次執行處理的確認都當成新的。
+- 確認過的項目修正後以相同的 fingerprint 再次出現時，同一個確認者在這次執行送出的新確認被當成與舊確認重複而沒有加入，舊確認接著被「再次出現」的規則移除，項目維持 `REOPENED`（回覆卻是 ✅），要再確認一次。應先移除再次出現項目的舊確認，再檢查重複。
+
+**驗證**：`tests/review-state/` 的單元測試（codec、指令、狀態機、儀表板），以及以真實 git repo 執行 `reviewRange()` 與 CLI 的端對端測試：移除 `authorize` → 待確認 → 確認 → 上方插入另一個 method 仍有效 → 同一個 method 的邏輯改變後重新開啟 → 狀態被竄改時以 `--history` 重播 → 只有儀表板內容（沒有作者與編輯者）時不採用狀態。
+
 ## 跨步驟的注意事項
 
 1. **real-repo evaluation 的 `compare`**：`--baseline-ref` 指向 fact schema v2 之前的 commit 時，每筆有 fact 的結果在 `facts` 欄位都會不同（`callee` / `container` 的形狀改變，且多了 `properties.scope`）。這是預期的；比較時請看 `decision`、`fallback`、`reasons` 與 gate。`evaluation/real-repo/run.js` 以 baseline snapshot 自己的 `PHP_LARAVEL_DOMAIN_INTERPRETERS` 執行，所以保留了這個相容入口。
 2. **real-repo evaluation 沒有在本機重跑**：目標專案不在 repo 內（見 `docs/current-state.md`）。步驟 1、2 是行為不變的重構，mutation corpus 結果相同；但 `CALL_ARGUMENT_REMOVED` / `ADDED` 會讓部分真實檔案從 `FULL` 變成 `TARGETED`，建議合併前在本機對目標專案執行 `npm run eval:real-repo -- evaluate --baseline-ref <修改前>`，確認 `RISKY_REDUCED` 仍為 0。
-3. **尚未實作**（設計 §8 步驟 7）：GitHub 留言中的狀態與 ack 指令、置頂儀表板、Check、PR 自我宣告的風險。使用者決定步驟 7 最後處理，先完成步驟 8、9。
+3. **尚未實作**（設計 §8 步驟 7 的 GitHub 部分，7b）：讀取留言與權限、寫回置頂儀表板 / 指令回覆 / thread / Check 的 workflow，以及 PR 自我宣告的風險。使用者決定步驟 7 最後處理、先做 CLI 部分（7a，見「步驟 7a」）。
 4. **待決事項**（設計 §9）中仍未決定的：`FULL` 中「未分析」檔案的預設路由（當時依建議為 `ESCALATED`，可用 `aiTrackPaths` 放寬；後來改為 `AI_TRACK` 並移除該設定，見下方〈流程調整（2026-10-19，步驟 1–6 完成後）〉）、AI 是否直接 commit、豁免權限、TS 型別變更的路由。
 
 ## 流程調整（2026-10-19，步驟 1–6 完成後）

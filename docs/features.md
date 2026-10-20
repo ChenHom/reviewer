@@ -76,6 +76,15 @@ node bin/review.js --repo /path/to/project --base origin/master --ai --fail-on-h
 - 邊界：AI 輸出不是 deterministic、每個檔案單獨審查、diff 與規範當成資料處理（prompt injection 防護）。AI 層只以假的 client 測試，沒有對真實 API 做過 smoke test。
 - 細節見 [PR Review CLI「AI 審查」](review-cli.md#ai-審查第-2-層--ai)。
 
+## 二次 review 狀態（`bin/review-state.js`）
+
+- 以 `bin/review.js --out` 的報表重算人工確認的狀態：🚪 單向門每個 finding 一項；🤖 AI 的疑慮、AI 失敗、沒有 AI 審查等以檔案為單位一項（AI 的輸出不是 deterministic，逐條確認會在重跑時失效）。
+- 狀態：`OPEN`（待確認）、`ACKNOWLEDGED`（已確認）、`REOPENED`（確認後程式碼或規則改變，或修正後再次出現）、`FIXED`（已修正）。有 `OPEN` / `REOPENED` 時 Check 為 `failure`。
+- 確認指令 `/reviewer ack F1-3fa2@<head> <理由>`：需要 write 以上權限、不能是 PR 作者、留言不能被編輯過；`@head` 是確認者看到的版本，看完之後程式碼或規則又改了就拒絕。全形符號視為半形，引用與程式碼區塊中的指令不算。
+- 狀態以 HMAC 簽章存在置頂儀表板留言的最後；被竄改、換 key 或遺失時丟棄並從確認留言重算（結果只會更嚴格）。
+- 輸出儀表板 Markdown、Check 結論、指令回覆與行內 thread 的目標狀態；**不呼叫 GitHub API**，寫回 PR 的 workflow 尚未實作。
+- 用法與規則見 [二次 review 狀態](review-state.md)。
+
 ## Retro（`bin/retro.js`）
 
 - 彙整一段期間內 `bin/review.js --out` 留下的 JSON 報表，計算 deterministic 指標：路由比例、各單向門的觸發與未觸發、`FULL` 的原因、沒有規則的 fact、AI 結果與成本、`codingstandards.md` 條目被引用的次數、人工留言。
@@ -86,7 +95,7 @@ node bin/review.js --repo /path/to/project --base origin/master --ai --fail-on-h
 ## 輸出格式與 exit code
 
 - 預設是文字報表：機械審查後依路由分段列出檔案、原因與變更位置；`--json` 改輸出 JSON，`--out <file>` 另外寫一份 JSON。有 `--ai` 時報表改為「需要人工確認」「AI 已修正」「AI 審查通過」三段。
-- JSON 頂層有 `decision`、`routing`、`ai`、`human`、`config` 與逐檔的 `files[]`（`facts`、`findings`、`needsHuman`、`ai`）。報表沒有 `schemaVersion`。
+- JSON 頂層有 `decision`、`routing`、`ai`、`human`、`config` 與逐檔的 `files[]`（`facts`、`findings`、`needsHuman`、`ai`）。finding 帶 `scopeHash` 與 `policyDigest`（人工確認綁定的程式碼與規則）。報表沒有 `schemaVersion`。
 - exit code：0 完成；1 只在加上 `--fail-on-review`、`--fail-on-escalation` 或 `--fail-on-human` 且條件成立時出現；2 錯誤。analyzer 缺依賴或找不到 `php` 不是 2，而是讓檔案變成 `FULL`，CI 需要另外檢查。
 - 欄位、原因代碼與 CI 範例見 [PR Review CLI](review-cli.md#json-報表)。
 
@@ -108,7 +117,7 @@ node bin/review.js --repo /path/to/project --base origin/master --ai --fail-on-h
 
 ## 尚未實作與已知限制
 
-- 三層架構設計 §8 的步驟 7（GitHub 整合）未實作：CLI 不留言、不建立 check，沒有狀態留言、ack 指令、置頂儀表板，也沒有 PR 自我宣告的風險（`Merge-Risk`）。因此 retro 的豁免率、REOPENED 次數列為不可用。
+- 三層架構設計 §8 的步驟 7（GitHub 整合）只完成 CLI 部分（`bin/review-state.js`）：沒有讀取留言、寫回儀表板 / 回覆 / thread / Check 的 workflow，也沒有 PR 自我宣告的風險（`Merge-Risk`）。因此 retro 的豁免率、REOPENED 次數列為不可用。
 - AI 層與 retro 的 AI 建議只以假的 client 測試，從實作紀錄看沒有對真實 API 做過 smoke test。
 - 決策是 file-level；只分析 PHP 與 TS / JS；只比較 commit，不看 working tree；需要 base 與 head 的共同歷史（shallow clone 常缺）。
 - PHP 的等價判定只檢查 PHP 8 與 PHP 7 的解讀，不檢查 PHP 5 的語意，也不檢查目標版本是否支援新語法。

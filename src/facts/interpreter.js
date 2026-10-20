@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { stableStrings } from '../contracts.js';
 
 /**
@@ -179,4 +181,33 @@ export function interpretSemanticFacts(facts = [], interpreters = [], context = 
     unhandledFactIds: stableStrings(unhandledFactIds),
     blockers: stableStrings(blockers),
   };
+}
+
+/**
+ * 每個 blocker 由哪些 interpreter 產生（`id@version`），供人工豁免綁定「產生這個 blocker 的規則」。
+ * 沒有 interpreter 處理（`FACT_UNHANDLED`）或 interpreter set 無效時，來源是整組 interpreter
+ * （新增或修改任何一個 interpreter 都可能改變結果），以 `set:<整組 identity 的 sha256 前 16 碼>` 表示，
+ * 避免沒有規則的 fact 很多時報表變大。
+ *
+ * @param {object} fact - normalized semantic fact。
+ * @param {object[]} [interpreters=[]] - 受信任 interpreter descriptors。
+ * @returns {Object<string, string[]>} blocker → 排序後的 interpreter identity。
+ */
+export function blockerSources(fact, interpreters = []) {
+  const identity = (interpreter) => `${interpreter?.id}@${interpreter?.version}`;
+  const sources = new Map();
+  const add = (blocker, identities) => sources.set(blocker, stableStrings([...(sources.get(blocker) ?? []), ...identities]));
+  const combined = interpretSemanticFacts([fact], interpreters);
+  if (!validateFactInterpreters(interpreters).valid || combined.unhandledFactIds.length > 0) {
+    const all = stableStrings(Array.isArray(interpreters) ? interpreters.map(identity) : []);
+    const set = `set:${createHash('sha256').update(JSON.stringify(all)).digest('hex').slice(0, 16)}`;
+    for (const blocker of combined.blockers) add(blocker, [set]);
+    return Object.fromEntries(sources);
+  }
+  for (const interpreter of interpreters) {
+    for (const blocker of interpretSemanticFacts([fact], [interpreter]).blockers) {
+      if (!blocker.startsWith('FACT_UNHANDLED')) add(blocker, [identity(interpreter)]);
+    }
+  }
+  return Object.fromEntries(sources);
 }

@@ -5,7 +5,7 @@ import { createAnalysisContextBinding } from '../adapters/contracts.js';
 import { CONFIG_FILE, POLICY_FILES, createProjectPolicy, parseProjectConfig } from '../config/project-config.js';
 import { createPhpLaravelAdapter } from '../adapters/php-laravel/adapter.js';
 import { createTypeScriptAdapter } from '../adapters/typescript/adapter.js';
-import { interpretSemanticFacts } from '../facts/interpreter.js';
+import { blockerSources, interpretSemanticFacts } from '../facts/interpreter.js';
 import { displayArgument, displayText } from '../facts/structured.js';
 import { needsHuman, runAiReview, summarizeHuman } from '../ai/review.js';
 import { factAnchor, findingsFor } from '../findings.js';
@@ -338,6 +338,8 @@ async function classifyEntry(context, entry) {
       description: describeFact(fact),
       // 這個 fact 自己產生的原因代碼（`reasons` 是整個檔案的彙總）。
       blockers: interpretSemanticFacts([fact], language.interpreters).blockers,
+      // 每個 blocker 由哪些 interpreter 產生（人工豁免只在這些規則改變時失效）。
+      blockerSources: blockerSources(fact, language.interpreters),
       anchor: factAnchor(fact),
       scopeHash: typeof fact.properties?.scope?.hash === 'string' ? fact.properties.scope.hash : null,
     };
@@ -435,7 +437,7 @@ export async function reviewRange({ repo, base, head, concurrency = 4, timeoutMs
   const reviewed = await mapWithConcurrency(entries, concurrency, (entry) => reviewEntry(context, entry));
   const routingOptions = { oneWayDoors: policy.oneWayDoors };
   const routed = reviewed.map((file) => ({ ...file, ...routeFile(file, routingOptions) }));
-  let files = routed.map((file) => ({ ...file, findings: findingsFor(file, { oneWayDoors: policy.oneWayDoors }) }));
+  let files = routed.map((file) => ({ ...file, findings: findingsFor(file, { oneWayDoors: policy.oneWayDoors, configDigest: config.digest }) }));
 
   let aiSummary = null;
   if (ai) {
