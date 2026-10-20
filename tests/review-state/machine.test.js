@@ -33,7 +33,7 @@ const report = (head, overrides = {}) => ({
   ai: { model: 'm', standards: { digest: null } },
   files: [
     { path: 'app/WalletService.php', track: 'ESCALATED', contentHash: 'git:w1', needsHuman: true, ai: { status: 'PASS' }, findings: [door()] },
-    { path: 'src/ok.ts', track: 'AI_TRACK', contentHash: 'git:ok', needsHuman: false, ai: { status: 'PASS' }, findings: [] },
+    { path: 'src/ok.ts', track: 'AI_TRACK', decision: 'HUMAN_REVIEW_REQUIRED', contentHash: 'git:ok', needsHuman: false, ai: { status: 'PASS' }, findings: [] },
     { path: 'src/skip.ts', track: 'AUTO_PASS', decision: 'NOT_SELECTED_FOR_HUMAN_REVIEW', contentHash: 'git:s', needsHuman: false, findings: [] },
   ],
   ...overrides,
@@ -65,7 +65,7 @@ test('buildItems：單向門各自一項；AI 的 finding 與沒有 finding 但�
       { path: 'src/d.ts', track: 'AI_TRACK', contentHash: 'git:5', needsHuman: true, findings: [] },
       // 不認得的路由（fail-closed 成 ESCALATED）但沒有 finding：仍要有項目可以確認。
       { path: 'src/e.ts', track: 'WEIRD', contentHash: 'git:6', findings: [] },
-      { path: 'src/f.ts', track: 'AI_TRACK', contentHash: 'git:7', needsHuman: false, ai: { status: 'PASS' }, findings: [] },
+      { path: 'src/f.ts', track: 'AI_TRACK', decision: 'HUMAN_REVIEW_REQUIRED', contentHash: 'git:7', needsHuman: false, ai: { status: 'PASS' }, findings: [] },
       // --ai-apply 的修正只寫入 worktree：仍需確認。
       { path: 'src/h.ts', track: 'AI_TRACK', contentHash: 'git:9', needsHuman: false, ai: { status: 'FIXED', fix: { description: '補上 null 檢查' } }, findings: [] },
       { path: 'src/g.ts', track: 'AUTO_PASS', decision: 'NOT_SELECTED_FOR_HUMAN_REVIEW', contentHash: 'git:8', findings: [] },
@@ -101,13 +101,17 @@ test('buildItems：只有機械審查略過與 AI 審查通過可以不產生項
   const kinds = (file) => [...buildItems(report(sha(1), { files: [{ path: 'x', contentHash: 'git:x', findings: [], ...file }] })).values()]
     .map(({ blocker }) => blocker);
   assert.deepEqual(kinds({ track: 'AUTO_PASS', decision: 'NOT_SELECTED_FOR_HUMAN_REVIEW', needsHuman: false }), []);
-  assert.deepEqual(kinds({ track: 'AI_TRACK', needsHuman: false, ai: { status: 'PASS' } }), []);
+  assert.deepEqual(kinds({ track: 'AI_TRACK', decision: 'HUMAN_REVIEW_REQUIRED', needsHuman: false, ai: { status: 'PASS' } }), []);
   // 不認得的路由，即使 needsHuman 為 false。
   assert.deepEqual(kinds({ track: 'SOMETHING_NEW', needsHuman: false }), ['HUMAN_REVIEW_REQUIRED']);
   // AUTO_PASS 但決策不是 NOT_SELECTED，或 needsHuman 為 true。
   assert.deepEqual(kinds({ track: 'AUTO_PASS', decision: 'HUMAN_REVIEW_REQUIRED', needsHuman: false }), ['HUMAN_REVIEW_REQUIRED']);
   assert.deepEqual(kinds({ track: 'AUTO_PASS', needsHuman: false }), ['HUMAN_REVIEW_REQUIRED']);
   assert.deepEqual(kinds({ track: 'AUTO_PASS', decision: 'NOT_SELECTED_FOR_HUMAN_REVIEW', needsHuman: true }), ['HUMAN_REVIEW_REQUIRED']);
+  // AI_TRACK 且 AI 通過，但決策不是 HUMAN_REVIEW_REQUIRED（不認得、缺少或 NOT_SELECTED）：路由不會產生這種組合，AI 不能放行。
+  for (const decision of ['SOMETHING_NEW', undefined, 'NOT_SELECTED_FOR_HUMAN_REVIEW']) {
+    assert.deepEqual(kinds({ track: 'AI_TRACK', decision, needsHuman: false, ai: { status: 'PASS' } }), ['HUMAN_REVIEW_REQUIRED'], String(decision));
+  }
   // AI_TRACK 的 needsHuman 為 false，但沒有 AI 結果或結果不是通過。
   assert.deepEqual(kinds({ track: 'AI_TRACK', needsHuman: false }), ['AI_REVIEW_MISSING']);
   assert.deepEqual(kinds({ track: 'AI_TRACK', needsHuman: false, ai: { status: 'NEEDS_HUMAN' } }), ['AI_NEEDS_HUMAN']);

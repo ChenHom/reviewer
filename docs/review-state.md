@@ -65,7 +65,7 @@ exit code：0 完成；1 有待確認的項目（`--fail-on-pending`）；2 錯�
 | 🤖 檔案層級（`FILE`） | 每個檔案一項：AI 的 finding（`AI_CONCERN`、`AI_NEEDS_HUMAN`、`AI_REVIEW_FAILED`）；沒有單向門、又不確定不需要人工的檔案；以及有單向門、但 AI 沒有放行單向門以外部分的檔案（沒有 AI 結果時為 `AI_REVIEW_MISSING`，AI 失敗為 `AI_REVIEW_FAILED`，AI 判斷需要人工為 `AI_NEEDS_HUMAN`，`--ai-apply` 的修正只寫入 worktree 時為 `AI_FIX_UNCOMMITTED`，其他為 `HUMAN_REVIEW_REQUIRED`） | 檔案內容（`contentHash`），以及 AI 審查的依據：專案設定與 merge base 的 `codingstandards.md` 的 digest（報表的 `ai.standards.digest`） |
 
 - AI 的輸出不是 deterministic 的，同一個問題在兩次審查中的標題可能不同，逐條確認會在每次重跑時失效；所以 AI 的項目**以檔案為單位**確認一次，確認的是整個檔案目前的內容，檔案一改就重新開啟。
-- 只有兩種已知的組合可以不產生項目：機械審查略過（`AUTO_PASS` 且決策是 `NOT_SELECTED_FOR_HUMAN_REVIEW`），以及 AI 審查通過（`AI_TRACK`、`needsHuman: false`、AI 結果是 `PASS`）。AI 結果是 `FIXED`（`--ai-apply`）時不算：修正只寫入 worktree，報表的 head 是沒有修正的版本，要 commit 後在新的 head 重新審查。其他檔案（不認得的路由、欄位不一致或缺少、沒有執行 AI 審查）只要沒有單向門，就產生檔案層級的項目（fail-closed）。
+- 只有兩種已知的組合可以不產生項目：機械審查略過（`AUTO_PASS` 且決策是 `NOT_SELECTED_FOR_HUMAN_REVIEW`），以及 AI 審查通過（`AI_TRACK`、決策是 `HUMAN_REVIEW_REQUIRED`、`needsHuman: false`、AI 結果是 `PASS`；路由只對這個決策產生 `AI_TRACK`，其他決策要升級，AI 不能放行）。AI 結果是 `FIXED`（`--ai-apply`）時不算：修正只寫入 worktree，報表的 head 是沒有修正的版本，要 commit 後在新的 head 重新審查。其他檔案（不認得的路由、欄位不一致或缺少、沒有執行 AI 審查）只要沒有單向門，就產生檔案層級的項目（fail-closed）。
 - 有單向門的檔案：確認單向門只代表看過那個 method，不代表看過整個檔案。單向門以外的部分由 AI 審查；AI 的結果不是 `PASS` 時（沒有 `--ai`、AI 失敗、AI 判斷需要人工），另外產生一個檔案層級的項目。所以沒有 `--ai` 時，每個單向門檔案除了單向門之外還要確認整個檔案。
 - 編號是 `F<n>-<id 前綴>`（例如 `F1-3fa2`）。`F<n>` 依路徑、種類（單向門在前）與行號配發、永不重用（修正後也不會給別的項目）；id 前綴讓狀態遺失後仍能找到正確的項目。前綴至少 4 碼，與其他已知項目重複時自動加長（例如 `F1-abcd1`）。
 - finding id 不含行號、也不含 head 側的值（見 [PR Review CLI「Findings」](review-cli.md#findings)），所以在上方插入程式碼、或作者微調變更後的值時仍是同一項；被看過的程式碼是否又改了，由 `scopeHash` 判斷。

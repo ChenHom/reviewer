@@ -226,6 +226,7 @@
 11. **報表缺少 `config.digest` / `ai.standards.digest` 時以 `null` 代替**（P1，確認為真）：設定或規範改變後，缺欄位的報表 policy 不變，確認仍有效。修正：`reportError()` 要求 `config.digest` 欄位存在（字串或明確的 `null`）；有 AI 摘要時要求 `ai.standards.digest`；檔案有 AI 結果但報表沒有 AI 摘要時也拒絕。
 12. **合法簽章的舊狀態可以被還原**（P1，確認為真）：簽章只保證狀態是 reviewer 產生的，不保證是最新的。有寫入權限的人把儀表板改回項目修正前、已確認的內容後，項目再次出現時直接是已確認，Check 通過。修正：保存的狀態只在儀表板留言由 bot 建立、而且最後一次編輯（GraphQL 的 `editor`）也是 bot 自己時採用，否則丟棄並從確認留言重播（`STATE_NOT_FROM_BOT` / `STATE_EDITED_BY_OTHER` / `STATE_EDITOR_UNKNOWN`）；因此 `--dashboard` 改為傳入 GitHub 留言的 JSON，7b 的 workflow 要另外以 GraphQL 取得 `editor`。重播時也不知道項目是否曾經修正後再出現，所以 `--history` 中有任何一個 head 沒有這一項時，只採用目前 head 的確認（`ACK_REPLAY_UNVERIFIABLE`）。儀表板留言被刪除、但已經有確認指令時同樣重播（`DASHBOARD_MISSING`），不當成第一次執行。
 13. **缺少時間的確認留言被接受**（P1，確認為真）：留言沒有 `created_at` / `updated_at` 時無法偵測編輯，指令仍被接受；之後以 `lastProcessedCommentId` 跳過，保存的確認也把缺少 `updated_at` 視為未編輯，內容被換掉仍有效。修正：兩個時間都要有而且相同，否則新的確認以 `ACK_EDIT_UNKNOWN` 拒絕，保存的確認不再採用。
+14. **`AI_TRACK` 搭配不認得的決策時，AI 通過就放行**（P1，確認為真）：路由只對 `HUMAN_REVIEW_REQUIRED` 產生 `AI_TRACK`，不認得的決策要升級，AI 不能放行；但 `clearedFile()` 只看路由、`needsHuman` 與 AI 結果，不一致的報表（`AI_TRACK` 加上不認得、缺少或 `NOT_SELECTED` 的決策）會被當成 AI 審查通過，Check 通過。修正：AI 審查通過還要求決策是 `HUMAN_REVIEW_REQUIRED`，否則產生檔案層級的項目。
 
 PR #12 留到 7b 的 P2：
 

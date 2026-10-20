@@ -69,7 +69,8 @@ function fileBlocker(file, aiFindings) {
  * 檔案是否確定不需要人工：只有兩種已知的組合，其他（不認得的路由、欄位不一致或缺少）一律需要（fail-closed）。
  *
  * - 機械審查略過：`AUTO_PASS` 且決策是 `NOT_SELECTED_FOR_HUMAN_REVIEW`；
- * - AI 審查通過：`AI_TRACK`、`needsHuman: false`，且 AI 的結果是 `PASS`。`FIXED`（`--ai-apply`）不算：
+ * - AI 審查通過：`AI_TRACK`、決策是 `HUMAN_REVIEW_REQUIRED`（路由只對這個決策產生 `AI_TRACK`；其他決策要
+ *   升級，AI 不能放行）、`needsHuman: false`，且 AI 的結果是 `PASS`。`FIXED`（`--ai-apply`）不算：
  *   修正只寫入 worktree，報表的 head 是沒有修正的版本，要 commit 後在新的 head 重新審查。
  *
  * @param {object} file - review file result。
@@ -77,7 +78,7 @@ function fileBlocker(file, aiFindings) {
  */
 export function clearedFile(file) {
   if (file.track === 'AUTO_PASS') return file.decision === DECISION.NOT_SELECTED_FOR_HUMAN_REVIEW && file.needsHuman !== true;
-  if (file.track === 'AI_TRACK') return file.needsHuman === false && file.ai?.status === 'PASS';
+  if (file.track === 'AI_TRACK') return file.decision === DECISION.HUMAN_REVIEW_REQUIRED && file.needsHuman === false && file.ai?.status === 'PASS';
   return false;
 }
 
