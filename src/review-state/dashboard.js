@@ -21,6 +21,7 @@ const BLOCKER_LABELS = Object.freeze({
   AI_NEEDS_HUMAN: '🤖 AI 判斷需要人工',
   AI_REVIEW_FAILED: '🤖 AI 審查失敗',
   AI_REVIEW_MISSING: '🤖 沒有 AI 審查',
+  AI_FIX_UNCOMMITTED: '🤖 AI 修正尚未 commit',
   HUMAN_REVIEW_REQUIRED: '需要人工',
 });
 
@@ -97,6 +98,7 @@ function locationLabel(item) {
 function descriptionLabel(item) {
   if (item.kind === 'FILE' && !item.description) {
     if (item.blocker === 'AI_REVIEW_MISSING') return '沒有執行 AI 審查，請人工看過整個檔案';
+    if (item.blocker === 'AI_FIX_UNCOMMITTED') return 'AI 的修正只寫入 worktree，請 commit 後重新審查';
     return '請人工看過整個檔案';
   }
   return escapeText(item.description ?? (item.kind === 'FILE' ? '' : '檔案層級的單向門'));

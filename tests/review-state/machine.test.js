@@ -57,7 +57,9 @@ test('buildItems：單向門各自一項；AI 的 finding 與沒有 finding 但�
       { path: 'src/d.ts', track: 'AI_TRACK', contentHash: 'git:5', needsHuman: true, findings: [] },
       // 不認得的路由（fail-closed 成 ESCALATED）但沒有 finding：仍要有項目可以確認。
       { path: 'src/e.ts', track: 'WEIRD', contentHash: 'git:6', findings: [] },
-      { path: 'src/f.ts', track: 'AI_TRACK', contentHash: 'git:7', needsHuman: false, ai: { status: 'FIXED' }, findings: [] },
+      { path: 'src/f.ts', track: 'AI_TRACK', contentHash: 'git:7', needsHuman: false, ai: { status: 'PASS' }, findings: [] },
+      // --ai-apply 的修正只寫入 worktree：仍需確認。
+      { path: 'src/h.ts', track: 'AI_TRACK', contentHash: 'git:9', needsHuman: false, ai: { status: 'FIXED', fix: { description: '補上 null 檢查' } }, findings: [] },
       { path: 'src/g.ts', track: 'AUTO_PASS', decision: 'NOT_SELECTED_FOR_HUMAN_REVIEW', contentHash: 'git:8', findings: [] },
     ],
   }));
@@ -71,7 +73,9 @@ test('buildItems：單向門各自一項；AI 的 finding 與沒有 finding 但�
     ['FILE', 'src/c.ts', 'AI_REVIEW_FAILED', 2],
     ['FILE', 'src/d.ts', 'AI_REVIEW_MISSING', 0],
     ['FILE', 'src/e.ts', 'HUMAN_REVIEW_REQUIRED', 0],
+    ['FILE', 'src/h.ts', 'AI_FIX_UNCOMMITTED', 0],
   ]);
+  assert.equal([...items.values()].find((item) => item.path === 'src/h.ts').description, '補上 null 檢查');
   const doorItem = items.get(DOOR);
   assert.equal(doorItem.scope, fingerprint('php:scope-1'));
   assert.equal(doorItem.policy, fingerprint('policy-1'));
@@ -151,6 +155,29 @@ test('編號的 id 前綴：與其他項目重複時加長；舊的 4 碼指令�
   assert.deepEqual(acked.items.map(({ state }) => state), ['ACKNOWLEDGED', 'ACKNOWLEDGED']);
   assert.match(acked.replies[0].body, /^✅ 已確認 F1-abcd1/);
   assert.match(acked.replies[2].body, /id 前綴對應到多個項目/);
+});
+
+test('AI 修正尚未 commit 時 Check 不通過；檔案層級的確認綁定 codingstandards.md', () => {
+  const fixed = report(sha(1), { files: [{ path: 'src/a.ts', track: 'AI_TRACK', contentHash: 'git:a', needsHuman: false, ai: { status: 'FIXED' }, findings: [] }] });
+  const pending = step(fixed, null);
+  assert.equal(pending.check.conclusion, 'failure');
+  assert.match(pending.dashboard.body, /AI 修正尚未 commit/);
+  assert.match(pending.dashboard.body, /請 commit 後重新審查/);
+
+  // codingstandards.md（merge base）改變時，AI 審查的依據不同，檔案層級的確認重新開啟。
+  const withStandards = (head, standards) => report(head, {
+    ai: { model: 'm', standards: { digest: standards } },
+    files: [{ path: 'src/a.ts', track: 'AI_TRACK', contentHash: 'git:a', needsHuman: true, ai: { status: 'NEEDS_HUMAN' }, findings: [aiFinding('AI_NEEDS_HUMAN')] }],
+  });
+  const first = step(withStandards(sha(1), 's1'), null);
+  const label = first.items[0].label;
+  const comments = [comment(1, `/reviewer ack ${label}@1111111 看過了`)];
+  const acked = step(withStandards(sha(1), 's1'), first.dashboard.body, comments);
+  assert.equal(acked.items[0].state, 'ACKNOWLEDGED');
+  assert.equal(step(withStandards(sha(2), 's1'), acked.dashboard.body, comments).items[0].state, 'ACKNOWLEDGED');
+  const changed = step(withStandards(sha(3), 's2'), acked.dashboard.body, comments);
+  assert.equal(changed.items[0].state, 'REOPENED');
+  assert.equal(changed.items[0].reopenedBecause, 'POLICY_CHANGED');
 });
 
 test('保存的確認每次都重新檢查權限：權限被移除或門檻提高時不再採用', () => {

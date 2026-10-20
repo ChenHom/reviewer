@@ -218,6 +218,11 @@
 6. **報表缺少 `contentHash` 時確認永遠有效**（P1，確認為真）：缺欄位時 fingerprint 的是字串 `"undefined"`，之後同樣缺欄位的 head 都相同，檔案改了確認仍有效。修正：`reportError()` 檢查確認要綁定的欄位（檔案的 `contentHash`、單向門 finding 的 `id`、`blocker`、`policyDigest`、非空的 `scopeHash`），不齊全時以 `REVIEW_STATE_REPORT_INVALID:<原因>` 拒絕；這樣的歷史報表不用來驗證 `@head`。`policyDigest` 也一併要求：缺少時原本以固定值代替，規則改變也不會讓確認失效。
 7. **自訂角色的權限被當成不認得**（P2，確認為真）：GitHub 的 `role_name` 是自訂角色名稱時，標準權限在 `permission`。修正：`role_name` 不是標準權限時改用 `permission`。查證時另外發現 `value in PERMISSION_RANK` 會把 `constructor`、`toString` 等 prototype 上的名稱當成權限，rank 不是數字，`NaN < 3` 為 false，權限檢查會放行；改用 `Object.hasOwn()`。
 
+使用者在這裡決定：之後只修 P1，P2 留到 7b 一起處理（已修的 P2 不回退）。
+
+8. **`--ai-apply` 的修正被當成通過**（P1，確認為真）：AI 結果 `FIXED` 代表修正只寫入 worktree，報表與 Check 的 head 仍是沒有修正的版本（`summarizeHuman()` 也記為 `pendingFixes`），卻被當成「AI 審查通過」。修正：只有 `PASS` 算通過；`FIXED` 產生檔案層級的 `AI_FIX_UNCOMMITTED`（說明為 AI 的修正內容），commit 後在新的 head 重新審查。
+9. **檔案層級的確認沒有綁定 `codingstandards.md`**（P1，確認為真）：merge base 的 `codingstandards.md` 改變後，AI 依不同的規範審查，舊的確認仍有效。修正：檔案層級項目的 policy 加入報表的 `ai.standards.digest`。
+
 **驗證**：`tests/review-state/` 的單元測試（codec、指令、狀態機、儀表板），以及以真實 git repo 執行 `reviewRange()` 與 CLI 的端對端測試：移除 `authorize` → 待確認 → 確認 → 上方插入另一個 method 仍有效 → 同一個 method 的邏輯改變後重新開啟 → 狀態被竄改時以 `--history` 重播。
 
 ## 跨步驟的注意事項

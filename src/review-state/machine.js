@@ -60,6 +60,8 @@ function fileBlocker(file, aiFindings) {
   if (file.ai?.status === 'FAILED' || aiFindings.some((finding) => finding.blocker === 'AI_REVIEW_FAILED')) return 'AI_REVIEW_FAILED';
   if (aiFindings.some((finding) => finding.blocker === 'AI_CONCERN')) return 'AI_CONCERN';
   if (aiFindings.length > 0 || file.ai?.status === 'NEEDS_HUMAN') return 'AI_NEEDS_HUMAN';
+  // `--ai-apply` 的修正只寫入 worktree：報表的 head 仍是沒有修正的版本。
+  if (file.ai?.status === 'FIXED') return 'AI_FIX_UNCOMMITTED';
   return ['AI_TRACK', 'ESCALATED'].includes(file.track) && !file.ai ? 'AI_REVIEW_MISSING' : 'HUMAN_REVIEW_REQUIRED';
 }
 
@@ -67,14 +69,15 @@ function fileBlocker(file, aiFindings) {
  * 檔案是否確定不需要人工：只有兩種已知的組合，其他（不認得的路由、欄位不一致或缺少）一律需要（fail-closed）。
  *
  * - 機械審查略過：`AUTO_PASS` 且決策是 `NOT_SELECTED_FOR_HUMAN_REVIEW`；
- * - AI 審查通過：`AI_TRACK`、`needsHuman: false`，且 AI 的結果是 `PASS` 或 `FIXED`。
+ * - AI 審查通過：`AI_TRACK`、`needsHuman: false`，且 AI 的結果是 `PASS`。`FIXED`（`--ai-apply`）不算：
+ *   修正只寫入 worktree，報表的 head 是沒有修正的版本，要 commit 後在新的 head 重新審查。
  *
  * @param {object} file - review file result。
  * @returns {boolean} 是否不需要人工。
  */
 export function clearedFile(file) {
   if (file.track === 'AUTO_PASS') return file.decision === DECISION.NOT_SELECTED_FOR_HUMAN_REVIEW && file.needsHuman !== true;
-  if (file.track === 'AI_TRACK') return file.needsHuman === false && ['PASS', 'FIXED'].includes(file.ai?.status);
+  if (file.track === 'AI_TRACK') return file.needsHuman === false && file.ai?.status === 'PASS';
   return false;
 }
 
@@ -86,7 +89,8 @@ export function clearedFile(file) {
  */
 export function buildItems(report) {
   const items = new Map();
-  const filePolicy = fingerprint(digest(['file-review', report?.config?.digest ?? null]));
+  // 檔案層級的確認也綁定 AI 審查的依據：專案設定與 merge base 的 `codingstandards.md`。
+  const filePolicy = fingerprint(digest(['file-review', report?.config?.digest ?? null, report?.ai?.standards?.digest ?? null]));
   for (const file of report?.files ?? []) {
     const findings = file.findings ?? [];
     const doors = findings.filter((finding) => finding.kind !== 'AI');
@@ -109,7 +113,7 @@ export function buildItems(report) {
     // - 沒有單向門、又不確定不需要人工的檔案；
     // - 有單向門，但 AI 沒有放行單向門以外的部分（沒有 AI 審查、AI 失敗、AI 判斷需要人工）：確認單向門不代表
     //   看過整個檔案。
-    const aiPassed = ['PASS', 'FIXED'].includes(file.ai?.status);
+    const aiPassed = file.ai?.status === 'PASS';
     if (aiFindings.length > 0 || (doors.length === 0 ? !clearedFile(file) : !aiPassed)) {
       const id = digest(['file-review', file.path]);
       items.set(id, {
@@ -119,7 +123,7 @@ export function buildItems(report) {
         subject: file.path,
         blocker: fileBlocker(file, aiFindings),
         description: aiFindings.map((finding) => finding.description).filter(Boolean).join('；')
-          || (file.ai?.status === 'FAILED' ? file.ai.error : file.ai?.summary) || null,
+          || (file.ai?.status === 'FAILED' ? file.ai.error : (file.ai?.fix?.description || file.ai?.summary)) || null,
         concerns: aiFindings.length,
         location: null,
         scope: fingerprint(file.contentHash),
