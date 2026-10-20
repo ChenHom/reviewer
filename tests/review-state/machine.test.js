@@ -41,9 +41,17 @@ const report = (head, overrides = {}) => ({
 const comment = (id, body, login = 'alice', overrides = {}) => ({ id, body, user: { login, id: id * 10, type: 'User' }, created_at: `t${id}`, updated_at: `t${id}`, ...overrides });
 const permissions = { alice: 'write', bob: 'maintain', reader: 'read' };
 
-/** 以上一版儀表板為輸入跑一次（模擬 workflow）。 */
+/** bot 建立、沒有被編輯過的儀表板留言。 */
+const botDashboard = (body, overrides = {}) => ({ body, user: { login: 'reviewer[bot]', type: 'Bot' }, editor: null, ...overrides });
+/** 以上一版儀表板為輸入跑一次（模擬 workflow）；字串視為 bot 自己的留言內容。 */
 const step = (current, dashboard, comments = [], extra = {}) => updateReviewState({
-  report: current, pr: { ...PR, head: { sha: current.head.sha } }, dashboard, comments, permissions, keys, ...extra,
+  report: current,
+  pr: { ...PR, head: { sha: current.head.sha } },
+  dashboard: typeof dashboard === 'string' ? botDashboard(dashboard) : dashboard,
+  comments,
+  permissions,
+  keys,
+  ...extra,
 });
 const stateOf = (result, label) => result.items.find((item) => item.label.startsWith(label))?.state;
 
@@ -301,6 +309,8 @@ test('確認的指令留言之後被編輯、刪除或作者不符時，確認�
     ['刪除', []],
     ['作者不符', [{ ...original, user: { login: 'mallory', type: 'User' } }]],
     ['變成 bot', [{ ...original, user: { login: 'alice[bot]', type: 'Bot' } }]],
+    // 缺少更新時間：無法偵測編輯（內容可能被換掉），不再採用。
+    ['缺少更新時間', [{ ...original, updated_at: undefined }]],
   ]) {
     const result = step(report(sha(1)), acked.dashboard.body, comments);
     assert.equal(stateOf(result, 'F1'), 'OPEN', label);
@@ -310,6 +320,70 @@ test('確認的指令留言之後被編輯、刪除或作者不符時，確認�
     // 下一次執行：確認已從狀態移除，不再重複說明。
     assert.deepEqual(step(report(sha(1)), result.dashboard.body, comments).notes, [], label);
   }
+});
+
+test('儀表板留言不是 bot 自己建立與最後編輯，或只有內容時，不採用保存的狀態，從確認留言重播', () => {
+  const first = step(report(sha(1)), null);
+  const comments = [comment(1, '/reviewer ack F1-d00d@1111111 看過了')];
+  const acked = step(report(sha(1)), first.dashboard.body, comments);
+  const body = acked.dashboard.body;
+  const run = (dashboard) => step(report(sha(1)), dashboard, comments);
+  // bot 自己編輯過（GraphQL 的 login 不帶 [bot]）：採用。
+  assert.equal(run(botDashboard(body, { editor: { login: 'reviewer' } })).previousState.status, 'valid');
+  assert.equal(run(botDashboard(body, { editor: { login: 'Reviewer[bot]' } })).previousState.status, 'valid');
+  for (const [dashboard, reason] of [
+    [body, 'STATE_EDITOR_UNKNOWN'],
+    [botDashboard(body, { editor: undefined }), 'STATE_EDITOR_UNKNOWN'],
+    [{ body, user: { login: 'reviewer[bot]', type: 'Bot' } }, 'STATE_EDITOR_UNKNOWN'],
+    [botDashboard(body, { user: { login: 'mallory', type: 'User' } }), 'STATE_NOT_FROM_BOT'],
+    [botDashboard(body, { user: { login: '', type: 'Bot' } }), 'STATE_NOT_FROM_BOT'],
+    [botDashboard(body, { editor: { login: 'mallory' } }), 'STATE_EDITED_BY_OTHER'],
+    [botDashboard(body, { editor: { login: 'other-app[bot]' } }), 'STATE_EDITED_BY_OTHER'],
+    [botDashboard(body, { editor: {} }), 'STATE_EDITED_BY_OTHER'],
+  ]) {
+    const result = updateReviewState({ report: report(sha(1)), pr: { ...PR, head: { sha: sha(1) } }, dashboard, comments, permissions, keys });
+    assert.deepEqual(result.previousState, { status: 'invalid', reason }, reason);
+    // 重播：目前 head 的確認仍然有效，但不逐則回覆。
+    assert.equal(stateOf(result, 'F1'), 'ACKNOWLEDGED', reason);
+    assert.deepEqual(result.replies, [], reason);
+  }
+});
+
+test('把儀表板改回項目修正前的合法狀態：不採用，修正後再次出現的項目仍要重新確認', () => {
+  const head1 = report(sha(1));
+  const head2 = report(sha(2), { files: report(sha(2)).files.slice(1) });
+  const first = step(head1, null);
+  const comments = [comment(1, '/reviewer ack F1-d00d@1111111 看過了')];
+  const acked = step(head1, first.dashboard.body, comments);
+  const fixed = step(head2, acked.dashboard.body, comments);
+  assert.equal(stateOf(fixed, 'F1'), 'FIXED');
+
+  // 有寫入權限的人把儀表板改回修正前（簽章合法）的內容，項目以相同的 fingerprint 再次出現。
+  const rolledBack = botDashboard(acked.dashboard.body, { editor: { login: 'mallory' } });
+  for (const history of [[], [head1, head2]]) {
+    const back = step(report(sha(3)), rolledBack, comments, { history });
+    assert.equal(back.previousState.reason, 'STATE_EDITED_BY_OTHER');
+    assert.notEqual(stateOf(back, 'F1'), 'ACKNOWLEDGED', `history ${history.length}`);
+    assert.equal(back.check.conclusion, 'failure');
+  }
+  // 重播時，所有已知的 head 都有這個項目，舊 head 的確認仍可採用。
+  assert.equal(stateOf(step(report(sha(3)), rolledBack, comments, { history: [head1] }), 'F1'), 'ACKNOWLEDGED');
+  // 以目前的 head 重新確認後通過。
+  const reAck = [...comments, comment(2, '/reviewer ack F1-d00d@3333333 再看過一次')];
+  assert.equal(stateOf(step(report(sha(3)), rolledBack, reAck, { history: [head1, head2] }), 'F1'), 'ACKNOWLEDGED');
+});
+
+test('沒有儀表板卻已經有確認指令（儀表板被刪除）：之前的狀態不明，重播', () => {
+  const head1 = report(sha(1));
+  const head2 = report(sha(2), { files: report(sha(2)).files.slice(1) });
+  const comments = [comment(1, '/reviewer ack F1-d00d@1111111 看過了')];
+  const result = step(report(sha(3)), null, comments, { history: [head1, head2] });
+  assert.deepEqual(result.previousState, { status: 'invalid', reason: 'DASHBOARD_MISSING' });
+  assert.equal(stateOf(result, 'F1'), 'OPEN');
+  assert.deepEqual(result.replies, []);
+  // 只有一般留言、bot 的留言或引用的指令時，仍是第一次執行。
+  const quiet = [comment(1, 'LGTM'), comment(2, '> /reviewer ack F1-d00d@1111111 看過了'), comment(3, '/reviewer ack F1-d00d@1111111 x', 'reviewer[bot]', { user: { login: 'reviewer[bot]', type: 'Bot' } })];
+  assert.equal(step(report(sha(1)), null, quiet).previousState.status, 'absent');
 });
 
 test('修正後再次出現、從未確認過的項目也是重新開啟', () => {

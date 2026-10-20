@@ -91,15 +91,23 @@ const code = (command = ack(), from = comment(), ctx = context()) => evaluateAck
 
 test('evaluateAck：通過時回傳項目與完整的 head', () => {
   assert.deepEqual(evaluateAck(ack(), comment(), context()), { accepted: true, code: 'ACK_ACCEPTED', itemId: ITEM, sha: SHA });
-  // 權限比較大小寫不分；admin 高於 write；沒有 updated_at 也可以。
-  assert.equal(code(ack(), comment({ user: { login: 'ALICE' }, updated_at: undefined })), 'ACK_ACCEPTED');
+  // 權限比較大小寫不分；admin 高於 write。
+  assert.equal(code(ack(), comment({ user: { login: 'ALICE' } })), 'ACK_ACCEPTED');
   assert.equal(code(ack(), comment(), context({ permissions: { alice: 'admin' }, minPermission: 'maintain' })), 'ACK_ACCEPTED');
   // 重播（狀態遺失）時短編號重新配發，不檢查。
   assert.equal(code(ack({ shortId: 'F7' }), comment(), context({ checkShortId: false })), 'ACK_ACCEPTED');
+  // 重播時，目前 head 的確認，以及所有已知的 head 都有這個項目時舊 head 的確認，都可以採用。
+  const replay = { checkShortId: false, replay: true };
+  assert.equal(code(ack(), comment(), context({ ...replay, headSha: SHA })), 'ACK_ACCEPTED');
+  assert.equal(code(ack(), comment(), context({ ...replay, headSha: 'f'.repeat(40), heads: new Map([[SHA, new Map([[ITEM, { scope: 's1', policy: 'p1' }]])]]) })), 'ACK_ACCEPTED');
 });
 
 test('evaluateAck：依序拒絕各種不合法的確認', () => {
   assert.equal(code(ack(), comment({ updated_at: 't2' })), 'ACK_EDITED');
+  // 缺少建立或更新時間：無法偵測編輯，不採用。
+  for (const missing of [{ updated_at: undefined }, { created_at: undefined }, { created_at: undefined, updated_at: undefined }, { created_at: '', updated_at: '' }, { updated_at: null }]) {
+    assert.equal(code(ack(), comment(missing)), 'ACK_EDIT_UNKNOWN', JSON.stringify(missing));
+  }
   assert.equal(code(ack(), comment({ user: { login: 'Author' } })), 'ACK_BY_AUTHOR');
   assert.equal(code(ack(), comment({ user: {} })), 'ACK_BY_AUTHOR');
   assert.equal(code(ack(), comment({ user: { login: 'stranger' } })), 'ACK_PERMISSION_UNKNOWN');
@@ -119,12 +127,14 @@ test('evaluateAck：依序拒絕各種不合法的確認', () => {
   assert.equal(code(ack({ shortId: 'F9', idPrefix: '3fa9' })), 'ACK_ITEM_NOT_AT_SHA');
   assert.equal(code(ack(), comment(), context({ current: new Map([[ITEM, { scope: 's2', policy: 'p1' }]]) })), 'ACK_CODE_CHANGED');
   assert.equal(code(ack(), comment(), context({ current: new Map([[ITEM, { scope: 's1', policy: 'p2' }]]) })), 'ACK_POLICY_CHANGED');
+  // 重播時，已知的 head 中有沒有這個項目的（可能是修正後再出現）：舊 head 的確認不採用。
+  assert.equal(code(ack(), comment(), context({ checkShortId: false, replay: true, headSha: 'f'.repeat(40) })), 'ACK_REPLAY_UNVERIFIABLE');
 });
 
 test('ackMessage：每個代碼都有說明', () => {
   const codes = ['ACK_ACCEPTED', 'ACK_FORMAT_INVALID', 'ACK_EDITED', 'ACK_BY_AUTHOR', 'ACK_PERMISSION_UNKNOWN', 'ACK_PERMISSION_DENIED',
     'ACK_REASON_MISSING', 'ACK_ID_AMBIGUOUS', 'ACK_ITEM_UNKNOWN', 'ACK_SHORT_ID_MISMATCH', 'ACK_ITEM_FIXED', 'ACK_SHA_AMBIGUOUS',
-    'ACK_SHA_UNKNOWN', 'ACK_ITEM_NOT_AT_SHA', 'ACK_CODE_CHANGED', 'ACK_POLICY_CHANGED'];
+    'ACK_SHA_UNKNOWN', 'ACK_ITEM_NOT_AT_SHA', 'ACK_CODE_CHANGED', 'ACK_POLICY_CHANGED', 'ACK_EDIT_UNKNOWN'];
   const messages = codes.map((value) => ackMessage(value, { label: 'F1-3fa2', sha: SHA, minPermission: 'maintain' }));
   assert.equal(new Set(messages).size, codes.length - 1, 'SHA_AMBIGUOUS 與 SHA_UNKNOWN 共用說明');
   assert.match(messages[0], /^✅ 已確認 F1-3fa2（head `a1b2c3d`）/);

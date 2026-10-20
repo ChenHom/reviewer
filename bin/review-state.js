@@ -15,7 +15,9 @@ const USAGE = `用法：node bin/review-state.js --report <file> --pr <file> [op
   --report <file>          目前 head 的報表（bin/review.js --out）
   --pr <file>              PR（GitHub REST 的 pull request JSON：number、user.login、head.sha）；
                            head.sha 與報表不同時拒絕執行（REVIEW_STATE_STALE_REPORT）
-  --dashboard <file>       上一版儀表板留言的內容（純文字，或含 body 的 JSON）
+  --dashboard <file>       上一版儀表板留言：GitHub 留言的 JSON（body、user，加上 GraphQL 的 editor）。
+                           作者不是 bot、最後編輯者不是 bot 自己，或只有純文字內容時，不採用保存的狀態，
+                           改從確認留言重播
   --comments <file>        PR 的 issue comments（GitHub REST 的 JSON 陣列）
   --permissions <file>     留言者的權限（JSON：{ "login": "write" | "maintain" | "admin" | ... }）
   --history <path>         之前 head 的報表（檔案或目錄）；狀態遺失時用來驗證確認指令的 @head。可重複
@@ -47,10 +49,10 @@ async function readJson(path, code) {
 }
 
 /**
- * 讀取儀表板留言：純文字，或含 `body` 的 JSON（GitHub comment）。
+ * 讀取儀表板留言：含 `body` 的 JSON（GitHub comment）原樣傳回，其他當成純文字。
  *
  * @param {string|undefined} path - 路徑。
- * @returns {Promise<string|null>} 內容。
+ * @returns {Promise<object|string|null>} 留言或內容。
  */
 async function readDashboard(path) {
   if (path === undefined) return null;
@@ -58,7 +60,8 @@ async function readDashboard(path) {
   if (text.trimStart().startsWith('{')) {
     try {
       const value = JSON.parse(text);
-      if (typeof value?.body === 'string') return value.body;
+      // GitHub 留言的 JSON：保留作者與編輯者，用來判斷保存的狀態能不能採用。
+      if (typeof value?.body === 'string') return value;
     } catch {
       // 不是 JSON：當成純文字。
     }

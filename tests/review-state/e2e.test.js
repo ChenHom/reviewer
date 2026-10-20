@@ -24,6 +24,8 @@ const commit = async (content, message) => {
   await git('commit', '-q', '-m', message);
   return (await git('rev-parse', 'HEAD')).stdout.trim();
 };
+/** bot 建立、沒有被編輯過的儀表板留言（GitHub REST 的 comment 加上 GraphQL 的 editor）。 */
+const dashboardComment = (body) => ({ id: 1, body, user: { login: 'reviewer[bot]', type: 'Bot' }, editor: null });
 const json = async (name, value) => {
   const path = join(work, name);
   await writeFile(path, typeof value === 'string' ? value : JSON.stringify(value));
@@ -75,14 +77,14 @@ test('端對端：真實報表 → 待確認 → 確認 → 上方插入程式�
   assert.equal(out1.dashboard.body, first.stdout.trimEnd());
   assert.match(first.stdout, new RegExp(`/reviewer ack ${label}@${head1.slice(0, 7)}`));
 
-  // 確認（儀表板以 GitHub comment JSON 傳入）。
+  // 確認（儀表板以 GitHub comment JSON 傳入，含作者與編輯者）。
   const comments = [
     { id: 100, body: `/reviewer ack ${label}@${head1.slice(0, 7)} 呼叫端已檢查權限`, user: { login: 'alice', type: 'User' }, created_at: 't', updated_at: 't' },
     { id: 101, body: `/reviewer ack ${fileLabel}@${head1.slice(0, 7)} 整個檔案看過了`, user: { login: 'alice', type: 'User' }, created_at: 't', updated_at: 't' },
   ];
   const second = await cli([
     '--report', files.report, '--pr', files.pr, '--permissions', files.permissions,
-    '--dashboard', await json('dashboard1.json', { body: out1.dashboard.body }),
+    '--dashboard', await json('dashboard1.json', dashboardComment(out1.dashboard.body)),
     '--comments', await json('comments.json', comments), '--json', '--fail-on-pending',
   ]);
   assert.equal(second.code, 0, second.stderr);
@@ -95,7 +97,7 @@ test('端對端：真實報表 → 待確認 → 確認 → 上方插入程式�
   const head2 = await commit(service('        return $order->refund($order->amount);', '    public function audit($order)\n    {\n        return $order->id;\n    }\n\n'), 'insert above');
   const third = await cli([
     '--report', await json('report2.json', await reviewRange({ repo, base, head: head2 })), '--pr', await json('pr2.json', pr(head2)),
-    '--permissions', files.permissions, '--dashboard', await json('dashboard2.md', out2.dashboard.body), '--comments', await json('comments.json', comments), '--json',
+    '--permissions', files.permissions, '--dashboard', await json('dashboard2.json', dashboardComment(out2.dashboard.body)), '--comments', await json('comments.json', comments), '--json',
   ]);
   const out3 = JSON.parse(third.stdout);
   assert.equal(byKind(out3, 'DOOR').state, 'ACKNOWLEDGED');
@@ -106,7 +108,7 @@ test('端對端：真實報表 → 待確認 → 確認 → 上方插入程式�
   const head3 = await commit(service('        return $order->refund($order->amount - 1);', '    public function audit($order)\n    {\n        return $order->id;\n    }\n\n'), 'change logic');
   const fourth = await cli([
     '--report', await json('report3.json', await reviewRange({ repo, base, head: head3 })), '--pr', await json('pr3.json', pr(head3)),
-    '--permissions', files.permissions, '--dashboard', await json('dashboard3.md', out3.dashboard.body), '--comments', await json('comments.json', comments), '--json',
+    '--permissions', files.permissions, '--dashboard', await json('dashboard3.json', dashboardComment(out3.dashboard.body)), '--comments', await json('comments.json', comments), '--json',
   ]);
   const out4 = JSON.parse(fourth.stdout);
   assert.deepEqual(byKind(out4, 'DOOR'), { ...byKind(out3, 'DOOR'), state: 'REOPENED', reopenedBecause: 'CODE_CHANGED', location: byKind(out4, 'DOOR').location });
@@ -117,13 +119,20 @@ test('端對端：真實報表 → 待確認 → 確認 → 上方插入程式�
   await writeFile(join(work, 'history', 'report1.json'), JSON.stringify(report1));
   const tampered = out2.dashboard.body.replace(/sig=[0-9a-f]{64}/, `sig=${'f'.repeat(64)}`);
   const replay = await cli([
-    '--report', files.report, '--pr', files.pr, '--permissions', files.permissions, '--dashboard', await json('tampered.md', tampered),
+    '--report', files.report, '--pr', files.pr, '--permissions', files.permissions, '--dashboard', await json('tampered.json', dashboardComment(tampered)),
     '--comments', await json('comments.json', comments), '--history', join(work, 'history'), '--json',
   ]);
   const replayed = JSON.parse(replay.stdout);
   assert.equal(replayed.previousState.reason, 'STATE_SIGNATURE_MISMATCH');
   assert.deepEqual(replayed.items.map(({ state }) => state), ['ACKNOWLEDGED', 'ACKNOWLEDGED']);
   assert.deepEqual(replayed.replies, []);
+
+  // 只有儀表板的內容（不知道作者與編輯者）：不採用保存的狀態，從確認留言重播。
+  const plain = await cli([
+    '--report', files.report, '--pr', files.pr, '--permissions', files.permissions, '--dashboard', await json('dashboard-plain.md', out2.dashboard.body),
+    '--comments', await json('comments.json', comments), '--json',
+  ]);
+  assert.equal(JSON.parse(plain.stdout).previousState.reason, 'STATE_EDITOR_UNKNOWN');
 });
 
 test('CLI：缺少選項、沒有 key、舊的報表與無效輸入時 exit 2', async () => {

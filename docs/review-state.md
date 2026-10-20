@@ -20,7 +20,7 @@
 # 1. 機械審查（與 AI 審查）產生報表
 node bin/review.js --repo . --base origin/main --head "$HEAD_SHA" --ai --out report.json
 
-# 2. 重算狀態（workflow 先以 GitHub API 取得 PR、儀表板留言、留言與權限）
+# 2. 重算狀態（workflow 先以 GitHub API 取得 PR、儀表板留言（含 GraphQL 的 editor）、留言與權限）
 REVIEWER_STATE_KEY="$KEY" node bin/review-state.js \
   --report report.json --pr pr.json \
   --dashboard dashboard.json --comments comments.json --permissions permissions.json \
@@ -40,8 +40,8 @@ node bin/review-state.js --report report.json --pr pr.json --unsigned
 |---|---|
 | `--report <file>` | 必填。目前 head 的報表（`bin/review.js --out`）。確認要綁定的欄位必須齊全：`config.digest`（沒有 `.reviewer.json` 時為 `null`）、有 AI 審查時的 `ai.standards.digest`（沒有 `codingstandards.md` 時為 `null`），每個檔案的 `contentHash`、每個單向門 finding 的 `id`、`blocker`、`policyDigest`（`scopeHash` 可以是 `null`，這時以 `contentHash` 綁定）。缺少時以 `REVIEW_STATE_REPORT_INVALID:<原因>` 結束：無法判斷程式碼或規則有沒有改變 |
 | `--pr <file>` | 必填。PR，GitHub REST 的 pull request JSON（使用 `number`、`user.login`、`head.sha`）。`head.sha` 與報表的 head 不同時以 `REVIEW_STATE_STALE_REPORT` 結束：舊的報表晚到時不能拿來更新狀態或 Check |
-| `--dashboard <file>` | 上一版儀表板留言的內容：純文字，或含 `body` 的 JSON（GitHub comment）。第一次執行時省略 |
-| `--comments <file>` | PR 的**全部** issue comments，GitHub REST 的 JSON 陣列（使用 `id`、`body`、`user.login`、`user.id`、`user.type`、`created_at`、`updated_at`）。保存的確認每次都與它核對，缺少的留言視為已刪除 |
+| `--dashboard <file>` | 上一版儀表板留言：GitHub REST 的 comment JSON（使用 `body`、`user.login`、`user.type`），加上 GraphQL 的 `editor`（最後一次編輯的人；沒有編輯過為 `null`）。保存的狀態只在留言的作者是 bot、而且 `editor` 為 `null` 或 bot 自己時採用（見「狀態的保存」）；只有純文字內容時不採用，改從確認留言重播。第一次執行時省略 |
+| `--comments <file>` | PR 的**全部** issue comments，GitHub REST 的 JSON 陣列（使用 `id`、`body`、`user.login`、`user.id`、`user.type`、`created_at`、`updated_at`）。保存的確認每次都與它核對，缺少的留言視為已刪除；缺少 `created_at` 或 `updated_at` 的留言無法偵測編輯，其中的確認不採用 |
 | `--permissions <file>` | 留言者目前的權限：`{ "<login>": "<權限>" }`，值為 `admin`、`maintain`、`write`、`triage`、`read`、`none`，或 GitHub collaborator permission API 的 `{ role_name, permission }`（`role_name` 是自訂角色時改用 `permission` 的標準權限）。沒有列出或不認得的權限，確認一律不採用；之前接受的確認也每次重新檢查，所以要涵蓋所有確認者 |
 | `--history <path>` | 之前 head 的報表（檔案或目錄，目錄中所有 `.json`）；可重複。只在狀態無法驗證時用來驗證確認指令的 `@head`（見「狀態的保存」）。無法解析的檔案在 stderr 警告後略過；欄位不齊全的報表（同 `--report` 的條件）不用來驗證 |
 | `--ack-permission <level>` | 確認所需的最低權限：`write`（預設）、`maintain`、`admin` |
@@ -100,6 +100,7 @@ Check 結論：有 `OPEN` 或 `REOPENED` 時為 `failure`，否則 `success`。C
 
 | 條件 | 不符合時的回覆代碼 |
 |---|---|
+| 有 `created_at` 與 `updated_at`（缺少時無法偵測編輯） | `ACK_EDIT_UNKNOWN` |
 | 留言沒有被編輯過（`updated_at` = `created_at`） | `ACK_EDITED` |
 | 留言者不是 PR 作者 | `ACK_BY_AUTHOR` |
 | 有留言者的權限資料 | `ACK_PERMISSION_UNKNOWN` |
@@ -112,10 +113,11 @@ Check 結論：有 `OPEN` 或 `REOPENED` 時為 `failure`，否則 `success`。C
 | 這一項在 `@head` 時就存在 | `ACK_ITEM_NOT_AT_SHA` |
 | `@head` 時的 scope fingerprint 等於目前的 | `ACK_CODE_CHANGED`：看完之後程式碼又改了，要求重看 |
 | `@head` 時的 policy fingerprint 等於目前的 | `ACK_POLICY_CHANGED`：規則已更新，要求重看 |
+| 重播時：`@head` 是目前的 head，或所有已知的 head 都有這一項 | `ACK_REPLAY_UNVERIFIABLE`：沒有狀態時無法判斷這一項是否修正後再次出現 |
 
 通過時回覆 `ACK_ACCEPTED`（✅）。bot 的留言（`user.type` 為 `Bot` 或 login 以 `[bot]` 結尾）一律忽略；格式錯誤的 `/reviewer` 行回覆正確格式。每則留言只處理一次（狀態記錄 `lastProcessedCommentId`），回覆不會重複。
 
-已接受的確認在之後的每次執行都會重新檢查：指令留言被刪除、被編輯過或作者不符，或確認者目前的權限低於現在的門檻（權限被移除、`--ack-permission` 提高）時，這個確認不再採用（項目回到待確認），儀表板說明有幾個確認因此失效。確認者要撤回確認，編輯或刪除指令留言即可。
+已接受的確認在之後的每次執行都會重新檢查：指令留言被刪除、被編輯過（或缺少時間而無法判斷）或作者不符，或確認者目前的權限低於現在的門檻（權限被移除、`--ack-permission` 提高）時，這個確認不再採用（項目回到待確認），儀表板說明有幾個確認因此失效。確認者要撤回確認，編輯或刪除指令留言即可。
 
 `@head` 的檢查是為了「人看的是 A，推了 B 之後才送出確認，結果確認綁到 B」：確認綁定的是確認者看到的版本，不是送出確認時的最新版本。
 
@@ -129,9 +131,10 @@ Check 結論：有 `OPEN` 或 `REOPENED` 時為 `failure`，否則 `success`。C
 ```
 
 - 有 write 權限的人都能編輯 bot 的留言，所以狀態以 HMAC 簽章（涵蓋版本、key id 與內容）。簽章在解壓縮之前檢查；解壓縮後的上限是 1 MB。
+- 簽章只保證狀態是 reviewer 產生的，不保證是最新的：有人可以把留言改回之前合法簽章的內容（例如項目修正前、已確認的狀態）。所以狀態只在儀表板留言由 bot 建立、而且最後一次編輯也是 bot 自己時採用：作者不是 bot 為 `STATE_NOT_FROM_BOT`，被其他人編輯過為 `STATE_EDITED_BY_OTHER`，沒有作者或 `editor` 資訊為 `STATE_EDITOR_UNKNOWN`，這些情況都丟棄狀態。REST 的 bot login 帶 `[bot]`、GraphQL 的不帶，比較時忽略這個後綴。這假設只有 workflow 能以 bot 的身分寫入留言、拿到 key。
 - 區塊必須在留言的最後；說明文字中出現的類似字串不算。儀表板中來自程式碼與 AI 的文字一律跳脫 `<`、`>`、`&`、`|`、`` ` ``、`@`，不能插入 HTML、mention 別人或偽造區塊。
-- 以下情況**丟棄狀態**，從頭重算（結果只會更嚴格）：有儀表板但沒有區塊（`STATE_MISSING`，例如上次超過長度上限或區塊被刪掉）、沒有區塊但留言中有 `reviewer:state`（`STATE_MALFORMED`）、版本不認得、未簽章、key 不認得、簽章不符、解不開、形狀不對、屬於其他 PR（`STATE_PULL_REQUEST_MISMATCH`，防止複製別的 PR 的狀態）。
-- 丟棄時，所有確認留言從頭重播：狀態中保存的 head 也一起丟了，所以只有能以 `--history` 的報表驗證 `@head` 的確認會保留，其他的回到待確認。重播時不逐則回覆（避免洗版），改在儀表板說明重新驗證了幾個、幾個需要重新確認。
+- 以下情況**丟棄狀態**，從頭重算（結果只會更嚴格）：上述的作者與編輯者不符、有儀表板但沒有區塊（`STATE_MISSING`，例如上次超過長度上限或區塊被刪掉）、沒有儀表板卻已經有確認指令（`DASHBOARD_MISSING`，例如儀表板留言被刪除）、沒有區塊但留言中有 `reviewer:state`（`STATE_MALFORMED`）、版本不認得、未簽章、key 不認得、簽章不符、解不開、形狀不對、屬於其他 PR（`STATE_PULL_REQUEST_MISMATCH`，防止複製別的 PR 的狀態）。
+- 丟棄時，所有確認留言從頭重播：狀態中保存的 head 也一起丟了，所以只有能以 `--history` 的報表驗證 `@head` 的確認會保留，其他的回到待確認。重播時也不知道哪些項目曾經修正後再次出現，所以 `--history` 中有任何一個 head 沒有這一項時，只採用目前 head 的確認（與一般執行相同，只能偵測看過的 head 之間的變化；`--history` 應包含之前所有 head 的報表）。重播時不逐則回覆（避免洗版），改在儀表板說明重新驗證了幾個、幾個需要重新確認。
 - 換 key：新的 key 放 `REVIEWER_STATE_KEY`，舊的放 `REVIEWER_STATE_PREVIOUS_KEYS`；舊狀態仍可驗證，下次寫出時改用新的 key。
 - 保存的內容：短編號、各項目的狀態、最近 10 個 head 的 fingerprint（scope 與 policy 各取 sha256 前 32 碼，以短編號為 key）、已驗證的確認（理由保留前 200 字元）。
 - 留言上限 65,536 字元。太長時依序省略檔案清單、減少保存的 head、移除已修正項目的確認；仍然太長時這次不保存狀態，在儀表板說明（下次從確認留言重算）。

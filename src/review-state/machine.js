@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { DECISION } from '../contracts.js';
 import { canonicalizeJsonValue } from '../facts/contracts.js';
-import { MAX_REASON_CHARS, PERMISSION_RANK, ackMessage, evaluateAck, isBotComment, parseCommands, permissionOf } from './commands.js';
+import { MAX_REASON_CHARS, PERMISSION_RANK, ackMessage, editProblem, evaluateAck, isBotComment, parseCommands, permissionOf } from './commands.js';
 import { STATE_VERSION } from './codec.js';
 
 /**
@@ -250,7 +250,7 @@ export function computeState({ report, previous, comments = [], pr, permissions 
     const permission = permissionOf(permissions, login);
     return Boolean(source)
       && !isBotComment(source)
-      && (source.updated_at === undefined || source.updated_at === source.created_at)
+      && editProblem(source) === null
       && String(source.user?.login ?? '').toLowerCase() === login
       && login !== String(pr.login ?? '').toLowerCase()
       && permission !== null && PERMISSION_RANK[permission] >= PERMISSION_RANK[minPermission];
@@ -262,7 +262,7 @@ export function computeState({ report, previous, comments = [], pr, permissions 
   let maxCommentId = lastProcessed;
   let replayed = 0;
   let replayRejected = 0;
-  const context = { pr, permissions, minPermission, known, current: snapshot(current), heads, checkShortId: !replay };
+  const context = { pr, permissions, minPermission, known, current: snapshot(current), heads, checkShortId: !replay, replay, headSha };
 
   for (const comment of ordered) {
     if (lastProcessed !== null && comment.id <= lastProcessed) continue;

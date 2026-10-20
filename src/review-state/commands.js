@@ -77,6 +77,19 @@ export function permissionOf(permissions, login) {
 }
 
 /**
+ * 留言是否確定沒有被編輯過：`created_at` 與 `updated_at` 都要有，而且相同。缺少任何一個時無法偵測編輯，
+ * 視為無法驗證（之後的執行以 `lastProcessedCommentId` 跳過這則留言，內容被換掉也看不出來）。
+ *
+ * @param {object} comment - GitHub issue comment。
+ * @returns {string|null} 沒有編輯過時為 null；否則為 `ACK_EDIT_UNKNOWN`（缺少時間）或 `ACK_EDITED`。
+ */
+export function editProblem(comment) {
+  const created = comment?.created_at;
+  if (typeof created !== 'string' || created === '' || typeof comment.updated_at !== 'string') return 'ACK_EDIT_UNKNOWN';
+  return comment.updated_at === created ? null : 'ACK_EDITED';
+}
+
+/**
  * 以前綴找出唯一的值。
  *
  * @param {Iterable<string>} values - 候選。
@@ -89,7 +102,7 @@ function uniquePrefix(values, prefix) {
 }
 
 /**
- * 驗證一個 ack 指令。依序檢查：留言未被編輯、不是 PR 作者、權限、理由、項目、head、程式碼與規則沒有改變。
+ * 驗證一個 ack 指令。依序檢查：留言確定未被編輯、不是 PR 作者、權限、理由、項目、head、程式碼與規則沒有改變。
  *
  * @param {object} command - parseCommands() 的 ack 指令。
  * @param {object} comment - GitHub issue comment（`id`、`user`、`created_at`、`updated_at`）。
@@ -101,12 +114,15 @@ function uniquePrefix(values, prefix) {
  * @param {Map<string, object>} context.current - 目前 head 的項目：id → `{ scope, policy }`。
  * @param {Map<string, Map<string, {scope: string, policy: string}>>} context.heads - head → 項目 id → 當時的 fingerprint。
  * @param {boolean} context.checkShortId - 是否檢查短編號（狀態遺失後重播時不檢查）。
+ * @param {boolean} [context.replay=false] - 是否為狀態遺失後的重播。
+ * @param {string} [context.headSha] - 目前的 head（重播時用）。
  * @returns {{accepted: boolean, code: string, itemId: string|null, sha: string|null}} 結果。
  */
 export function evaluateAck(command, comment, context) {
   const reject = (code, itemId = null, sha = null) => ({ accepted: false, code, itemId, sha });
   const login = String(comment?.user?.login ?? '');
-  if (comment.updated_at !== undefined && comment.updated_at !== comment.created_at) return reject('ACK_EDITED');
+  const edited = editProblem(comment);
+  if (edited) return reject(edited);
   if (login === '' || login.toLowerCase() === String(context.pr.login ?? '').toLowerCase()) return reject('ACK_BY_AUTHOR');
   const permission = permissionOf(context.permissions, login);
   if (permission === null) return reject('ACK_PERMISSION_UNKNOWN');
@@ -132,6 +148,11 @@ export function evaluateAck(command, comment, context) {
   if (!seen) return reject('ACK_ITEM_NOT_AT_SHA', itemId, head.value);
   if (seen.scope !== current.scope) return reject('ACK_CODE_CHANGED', itemId, head.value);
   if (seen.policy !== current.policy) return reject('ACK_POLICY_CHANGED', itemId, head.value);
+  // 狀態遺失後重播：不知道項目是否曾經修正後再出現（設計：FIXED → 再次出現 → REOPENED）。已知的 head 中
+  // 有任何一個沒有這個項目時，只採用目前 head 的確認。
+  if (context.replay && head.value !== context.headSha && [...context.heads.values()].some((items) => !items.has(itemId))) {
+    return reject('ACK_REPLAY_UNVERIFIABLE', itemId, head.value);
+  }
   return { accepted: true, code: 'ACK_ACCEPTED', itemId, sha: head.value };
 }
 
@@ -154,6 +175,8 @@ export function ackMessage(code, { label = '', sha = '', minPermission = 'write'
       return `⚠️ 指令格式不對，請用：${ACK_USAGE}`;
     case 'ACK_EDITED':
       return '⚠️ 指令留言被編輯過，不採用。請重新留言。';
+    case 'ACK_EDIT_UNKNOWN':
+      return '⚠️ 無法確認指令留言是否被編輯過（缺少建立或更新時間），不採用。';
     case 'ACK_BY_AUTHOR':
       return '⚠️ PR 作者不能確認自己的變更，請由其他人確認。';
     case 'ACK_PERMISSION_UNKNOWN':
