@@ -33,15 +33,16 @@ git diff（head 相對於 base 與 head 的 merge base）
 ```bash
 npm ci && npm run analyzer:install   # 需要 Node.js、PHP CLI ≥ 8.3、Composer 2、git
 node bin/review.js --repo /path/to/project --base origin/master --head HEAD
+reviewer review --repo /path/to/project --base origin/master                    # 安裝成指令（npm i -g github:ChenHom/reviewer）時
 node bin/review.js --repo /path/to/project --base origin/master --ai --fail-on-human   # 加上 AI 審查（需要 ANTHROPIC_API_KEY）
 ```
 
-前置需求與完整選項見 [PR Review CLI](review-cli.md#前置需求)。
+前置需求與完整選項見 [PR Review CLI](review-cli.md#前置需求)。要在其他專案使用，可以安裝成 `reviewer` 指令（子指令 `review`、`state`、`retro`、`doctor`）：TS/JS analyzer 的依賴隨 npm 安裝，PHP analyzer 的依賴不隨套件提供、要自己以 Composer 安裝，見 [README](../README.md#安裝成-reviewer-指令在其他專案使用)。
 
 ## 機械審查與兩個 adapter
 
 - 送進 analyzer 的只有 PHP（`.php`）與 TypeScript / JavaScript（`.ts`、`.tsx`、`.mts`、`.cts`、`.js`、`.jsx`、`.mjs`、`.cjs`，不含 `.d.ts`）檔案的修改與 rename。新增、刪除、其他語言、binary、symlink、submodule 一律 `FULL`。
-- PHP analyzer 以 nikic/php-parser 解析 AST（需要 PHP CLI ≥ 8.3 與 Composer 依賴）；TS / JS analyzer 以 TypeScript compiler API 解析，用執行 CLI 的同一個 Node。版本鎖定在各 analyzer 的 lockfile。
+- PHP analyzer 以 nikic/php-parser 解析 AST（需要 PHP CLI ≥ 8.3 與 Composer 依賴）；TS / JS analyzer 以 TypeScript compiler API 解析，用執行 CLI 的同一個 Node。版本分別鎖定在 `analyzers/php/composer.lock` 與根目錄的 `package-lock.json`。
 - 兩者都做 AST 等價判定（排版、註解、引號、一致的區域變數改名等不算差異），並把無法視為等價的差異表示成 semantic facts，例如 `CALL_REMOVED`、`BINARY_OPERATOR_CHANGED`、`GUARD_REMOVED`。
 - fact 交給 `src/interpreters/` 的 deterministic 規則：preset `php-laravel`、`payments`（PHP 預設）與 `node`（TS / JS 預設）。有規則的 fact 產生具體原因（如 `TRANSACTION_BOUNDARY_REMOVED`），沒有的是 `FACT_UNHANDLED`。
 - 無法解釋的變更不猜：回報 `COV-PHP-001:*` / `COV-TS-001:*` 並判為 `FULL`。fact 與 interpreter 的完整清單見 [README「已實作」](../README.md#已實作)。

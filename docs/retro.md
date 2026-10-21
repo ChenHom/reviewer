@@ -4,7 +4,7 @@
 
 實作位置：
 
-- `bin/retro.js`：參數解析與輸出。
+- `src/cli/retro.js`：參數解析與輸出（`bin/retro.js` 與 `reviewer retro` 都只是呼叫它）。
 - `src/retro/metrics.js`：讀取報表、留言與規範條目，計算 deterministic 指標。
 - `src/retro/proposals.js`：AI 建議（`--ai`）、規則驗證與 mutation case 草案的驗證。
 - `src/retro/format.js`：markdown 報告。
@@ -23,6 +23,8 @@ node bin/retro.js --reports reports/ \
   --comments human-comments.jsonl \
   --out-dir retro/
 ```
+
+安裝成 `reviewer` 指令時，`node bin/review.js` 與 `node bin/retro.js` 分別換成 `reviewer review` 與 `reviewer retro`（選項相同，見 [PR Review CLI「安裝成指令」](review-cli.md#安裝成指令)）。
 
 | 選項 | 說明 |
 |---|---|

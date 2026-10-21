@@ -6,7 +6,7 @@
 
 實作位置：
 
-- `bin/review-state.js`：參數解析與輸出。
+- `src/cli/review-state.js`：參數解析與輸出（`bin/review-state.js` 與 `reviewer state` 都只是呼叫它）。
 - `src/review-state/index.js`：`updateReviewState()`，串起下面幾個模組。
 - `src/review-state/machine.js`：追蹤的項目（`buildItems()`）、狀態機（`computeState()`）、Check（`checkResult()`）。
 - `src/review-state/commands.js`：確認指令的解析與驗證。
@@ -28,6 +28,8 @@ REVIEWER_STATE_KEY="$KEY" node bin/review-state.js \
 
 # 3. workflow 依 state.json 更新儀表板留言、回覆確認指令、開或 resolve thread、建立 Check（7b）
 ```
+
+安裝成 `reviewer` 指令時，`node bin/review.js` 與 `node bin/review-state.js` 分別換成 `reviewer review` 與 `reviewer state`（選項相同，見 [PR Review CLI「安裝成指令」](review-cli.md#安裝成指令)）。
 
 本機預覽（沒有 key，狀態不簽章，下次執行不會採用）：
 

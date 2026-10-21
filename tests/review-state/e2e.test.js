@@ -142,7 +142,7 @@ test('CLI：缺少選項、沒有 key、舊的報表與無效輸入時 exit 2', 
 
   const help = await cli(['--help']);
   assert.equal(help.code, 0);
-  assert.match(help.stdout, /用法：node bin\/review-state\.js/);
+  assert.match(help.stdout, /用法：reviewer state/);
 
   for (const [args, pattern] of [
     [['--pr', prPath], /OPTION_MISSING:--report/],
