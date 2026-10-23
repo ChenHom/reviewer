@@ -3,11 +3,11 @@ import jsdoc from 'eslint-plugin-jsdoc';
 
 export default [
   {
-    ignores: ['docs/**', 'fixtures/**', 'node_modules/**'],
+    ignores: ['docs/**', 'fixtures/**', 'node_modules/**', 'analyzers/ts/node_modules/**'],
   },
   js.configs.recommended,
   {
-    files: ['src/**/*.js', 'tests/**/*.js'],
+    files: ['src/**/*.js', 'tests/**/*.js', 'analyzers/ts/**/*.js'],
     languageOptions: {
       ecmaVersion: 'latest',
       globals: {
@@ -24,7 +24,7 @@ export default [
     },
   },
   {
-    files: ['src/**/*.js'],
+    files: ['src/**/*.js', 'analyzers/ts/**/*.js'],
     plugins: {
       jsdoc,
     },

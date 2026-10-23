@@ -1,8 +1,10 @@
 # Current State — Review Reduction Decision Engine
 
-本文整理 2026-10-06 完成並合入 `master` 的四個階段，以及目前產品真正具備的能力、限制與下一步。
+本文整理 2026-10-06 合入 `master` 的四個階段（PR-A～PR-D）、之後的擴充（PR #6 起：PHP-Parser AST analyzer、更多 facts 與 interpreters、PR review CLI、Real-repo evaluation），以及目前產品真正具備的能力、限制與下一步。
 
-## 1. 四階段實作
+PR-A～PR-D 各段記錄合入當時的設計與數字，並註明之後的變化；標示「目前」的內容以目前的程式碼為準。
+
+## 1. 實作階段
 
 ### PR-A — Semantic Fact Ingress + Analysis Context Hardening
 
@@ -49,7 +51,7 @@
 
 目的：開始從真實程式碼產生 machine facts，而不是只使用 fixture。
 
-架構：
+PR-B 完成時的架構（之後 analyzer 已改用 nikic/php-parser AST，見下方「PR #6 起」）：
 
 ```
 Node Reviewer
@@ -70,7 +72,7 @@ PR-B 完成時 Adapter 輸出的 generic facts（之後 analyzer 已改用 PHP-P
 - `CALL_REMOVED`
 - `CALL_ADDED`
 
-Domain interpreter 再把 generic facts 解讀成 domain blockers：
+Domain interpreter 再把 generic facts 解讀成 domain blockers。PR-B 完成時的三個 interpreter：
 
 ```
 CALL_ARGUMENT_CHANGED
@@ -93,6 +95,8 @@ callee=$this->authorize / Gate::authorize
 AUTHORIZATION_GUARD_REMOVED
 ```
 
+之後 interpreter 已從 3 個擴充為 18 個（`PHP_LARAVEL_DOMAIN_INTERPRETERS`）：原本三個中，transaction boundary 與 authorization guard 也擴大了範圍（例如 `rollBack` 移除 → `TRANSACTION_ROLLBACK_REMOVED`、authorize 的 ability 字串改值 → `AUTHORIZATION_ABILITY_CHANGED`），另新增 middleware guard、row lock、payment signature verification、運算子、guard clause、運算式反轉、回傳值、參數順序、改用另一個變數（部分改名、合併變數）/ 參數改名、`const` 宣告的常數改值、Laravel validation rules、Laravel model attributes、資料刪除（`DATA_DELETION_ADDED`）、annotation（decorator / attribute 的增減）、指示註解（`DIRECTIVE_COMMENT_CHANGED`）。各 interpreter 的範圍見 [README「已實作」](../README.md#已實作)；完整的 blocker 代碼以 `src/interpreters/`（語言層 `core.js`、框架 preset `presets/php-laravel.js`、業務 preset `presets/payments.js`） 為準；`src/interpreters/php-laravel-domain.js` 的 `PHP_LARAVEL_DOMAIN_INTERPRETERS` 是三者的合集。
+
 這個分層很重要：
 
 > Adapter 描述「發生了什麼」；Interpreter 才描述「這件事對 Review policy 代表什麼」。
@@ -103,19 +107,19 @@ Adapter 不直接輸出 `HUMAN_REVIEW_REQUIRED` 或 `NOT_SELECTED_FOR_HUMAN_REVI
 
 目的：避免只靠「CI 綠」宣稱安全，而是直接量測 reduction safety。
 
-目前 corpus 包含：
+PR-C 完成時 corpus 包含 6 個 case：
 
 Critical：
 
 - Payment idempotency argument change。
 - Transaction boundary removed。
 - Authorization guard removed。
-- wallet condition `< → <=` 的 unsupported mutation。
+- wallet condition `< → <=` 的 unsupported mutation（當時 analyzer 沒有對應的 fact，只能靠 fail-closed fallback；現在由 `BINARY_OPERATOR_CHANGED` → `COMPARISON_OPERATOR_CHANGED` 直接解釋）。
 
 Safe：
 
 - formatting/comment-only。
-- local variable rename。
+- local variable rename（當時不支援，預期仍要求 Human Review；現在由 scope-aware 區域變數改名判為等價，可以 reduction）。
 
 每個 case 都走 production pipeline：
 
@@ -128,7 +132,7 @@ PHP Adapter
 → Reducer
 ```
 
-目前 baseline：
+PR-C 完成時 baseline：
 
 ```
 Critical Recall               100.0%
@@ -140,12 +144,21 @@ Analysis Failure Rate           0.0%
 Full Review Fallback Rate      50.0%
 ```
 
-解讀：
+當時的解讀：
 
-- curated critical mutation 目前沒有 false negative。
-- 仍有 25% critical case 是靠 fail-closed fallback，而不是 analyzer 直接理解。
+- curated critical mutation 沒有 false negative。
+- 25% critical case（wallet `< → <=`）是靠 fail-closed fallback，而不是 analyzer 直接理解。
 - safe case 只有一半能 reduction。
-- 現階段保守性仍高，不能只看 Critical Recall = 100%。
+- 保守性仍高，不能只看 Critical Recall = 100%。
+
+初期的 PHP corpus（`evaluation/mutations/cases.json` 的 MUT-001～MUT-016 與 SAFE-001～SAFE-004，當時共 20 個 case）：
+
+- Critical 16 個（MUT-001～MUT-016）：除了上述 4 個，另有 `\DB::transaction` wrapper 移除、`\DB::beginTransaction` / `\DB::commit` 移除（`TRANSACTION_BOUNDARY_REMOVED`）、`\DB::rollBack` 移除（`TRANSACTION_ROLLBACK_REMOVED`）、transaction closure 內鏈式 `lockForUpdate()` 移除（`ROW_LOCK_REMOVED`）、callback 簽章驗證 guard 移除（`SIGNATURE_VERIFICATION_REMOVED`）、`Route::group` / controller constructor / `$beforeActionList` 中的 middleware 或 authorize 移除（`MIDDLEWARE_GUARD_REMOVED`）、扣款 `-` → `+`（`ARITHMETIC_OPERATOR_CHANGED`）、簽章檢查保留但 throw guard 被移除（`GUARD_CLAUSE_REMOVED`）、method 參數一致改名（`PARAMETER_RENAMED`）、兩個區域變數合併成一個（`VARIABLE_REFERENCE_CHANGED`）。
+- Safe 4 個（SAFE-001～SAFE-004）：formatting/comment-only、區域變數改名、`\DB::transaction` closure 內的註解與換行、`array()` → `[]` / 引號 / 多餘括號 / trailing comma。
+
+之後 corpus 持續擴充（MUT-017 以後、TypeScript case 與帶專案設定的 case）。目前的 case 數與 baseline（`npm run eval:mutations`）以 [README「目前驗證基準」](../README.md#目前驗證基準) 為準。
+
+corpus 仍是少量 curated mutation，Critical Recall = 100% 不代表真實世界沒有 false negative。
 
 ### PR-D — Historical PR Evaluation
 
@@ -185,14 +198,63 @@ Analysis Failure Rate         0.0%
 Full Review Rate              0.0%
 ```
 
-目前 pilot 是 controlled fixture，只證明 evaluation wiring 正常。下一步應加入真正 Historical PR snapshots。
+目前 pilot 仍只有 1 個 controlled fixture case（`evaluation/historical/cases/pilot.json`），只證明 evaluation wiring 正常。下一步應加入真正 Historical PR snapshots。
+
+### PR #6 起 — PHP-Parser AST Analyzer、PR Review CLI、Real-repo Evaluation
+
+PR #6（2026-10-07 合入 `master`）與之後的改動。
+
+AST analyzer（`analyzers/php/bin/analyze.php`、`analyzers/php/src/`）：
+
+- 改用 [nikic/php-parser](https://github.com/nikic/PHP-Parser) 5.9.0（`composer.lock` 鎖定版本）解析 AST，取代 `token_get_all`。執行需要 PATH 上的 `php`（PHP CLI ≥ 8.3，CI 使用 8.4）；依賴以 `npm run analyzer:install`（Composer 2）安裝，缺少時以 `PHP_ANALYZER_DEPENDENCY_MISSING` fail-closed。
+- 被分析的程式碼先以最新 PHP 語法解析，任一側失敗時 before / after 一起改用 PHP 7.4 語法；仍無法解析時回報 `PHP_PARSE_ERROR`。
+- completeness 由 AST 結構比對決定：排版、註解、引號、`array()` / `[]`、多餘括號、trailing comma 不算差異；其餘每個差異都必須由 fact 解釋，否則回報 `COV-PHP-001:UNRECOGNIZED_PHP_CHANGE`，fail-closed。
+- method / function 內一致的區域變數改名以 scope-aware 方式判為等價（例外情況見 README「已實作」）。判為等價前同時檢查 PHP 8 與 PHP 7 的解讀，不一致時回報 `PHP_GRAMMAR_DIVERGENCE`。
+- 新增 10 種 generic facts：`BINARY_OPERATOR_CHANGED`、`GUARD_REMOVED` / `GUARD_ADDED`、`ARRAY_ITEM_REMOVED` / `ARRAY_ITEM_ADDED`、`LITERAL_CHANGED`、`EXPRESSION_NEGATED`、`RETURN_VALUE_CHANGED`、`CALL_ARGUMENTS_REORDERED`、`VARIABLE_CHANGED`。interpreter 從 3 個增加到 15 個（當時；目前 18 個，見上方 PR-B 段落）。
+
+PR review CLI（`bin/review.js`，用法、選項、exit code、原因代碼、文字與 JSON 報表見 [PR Review CLI](review-cli.md)）：
+
+- `node bin/review.js --base <ref> [--head HEAD] [--repo .]`。與 GitHub PR 相同，比較的是 head 相對於 `git merge-base <base> <head>` 的變更：base 分支在 head 分出後的新 commit 不會列入。
+- 每個變更檔案逐一決策。只有支援語言（PHP、TypeScript / JavaScript）檔案的修改與 rename 會送進 analyzer；新增、刪除、其他語言、binary、symlink、submodule 檔案一律 `FULL`。rename 與權限變更即使內容等價也要求 review。
+- 需要 review 的檔案分成兩種。`TARGETED`：檔案中每一處變更都已被具體 fact 解釋（或檔案只是 rename / 權限變更），列出的原因與位置是 review 的起點。`FULL`：有變更無法被解釋、analyzer 失敗，或檔案沒有送進 analyzer。兩者都仍需 review 整個檔案，reduction 是 file-level。
+- PR 層級的決策只有在**所有**檔案都是 `NOT_SELECTED_FOR_HUMAN_REVIEW` 時才是 `NOT_SELECTED_FOR_HUMAN_REVIEW`。
+
+Real-repo evaluation（`evaluation/real-repo/`，說明見 [Real-repo Evaluation](../evaluation/real-repo/README.md)）：
+
+- `npm run eval:real-repo -- evaluate --repo <label>=<path> ...` 在真實 PHP 專案的檔案上自動產生帶標籤的 mutation（`unchanged` / `safe` / `risky`），走完整 pipeline（PHP analyzer → interpreters → reducer），再檢查決策是否符合標籤。另有 `generate` / `run` / `report` / `compare` / `inspect` 子指令；`--baseline-ref` 可與修改前的版本比較。
+- Gate 任一項不為 0 即失敗：`RISKY_REDUCED`（risky mutation 被判為 `NOT_SELECTED_FOR_HUMAN_REVIEW`）、`ANALYZER_ERROR`（analyzer crash、逾時或 pipeline 例外）、`UNCHANGED_NOT_REDUCED`（可解析的未變更檔案沒有被 reduce）、`NO_ROWS_ANALYZED` / `REPO_NOT_ANALYZED`（沒有資料，或某個 repo 沒有資料被實際分析）。
+- 最近一次在本機對兩個私有 PHP 金流專案與一個 Laravel 11 專案執行（seed 42、rate 0.3）：12,283 筆（3,093 unchanged、3,648 safe、5,542 risky），Risky reduced 0、Risky targeted rate 99.3%、Risky specific reason rate 53.4%、Safe reduction rate 100.0%、Unchanged reduction rate 99.9%（未被 reduce 的 3 筆都是空檔）。
+- 目標專案不在本 repo 內，這些數字無法只靠本 repo 重現；對真實目標專案執行的 Real-repo evaluation 不在 `npm run test:all` 與 CI 中，不屬於 release gate（`npm run test:all` 只以 `tests/evaluation/real-repo-*.test.js` 在 repo 內的 `fixtures/php-laravel` 與測試自建的小型 PHP 檔上測試這個工具本身與 gate）。資料是在真實程式碼上自動產生的 mutation，不是真實 PR 的 human concern。
+
+CI（`.github/workflows/review-reduction-safety.yml`，PHP 8.4）在 `npm run test:all` 之前先執行 `composer install --working-dir=analyzers/php`，並對 `analyzers/php/bin`、`analyzers/php/src` 與 `evaluation` 下的 `.php` 檔執行 `php -l`。
+
+### 三層審查（機械 → AI → 人工）：步驟 1–6、8、9
+
+設計見 [三層審查架構設計](superpowers/specs/2026-10-18-three-tier-review-design.md)，實作中的問題與處理見 [實作紀錄](superpowers/notes/2026-10-19-three-tier-implementation-notes.md)。
+
+- Fact schema v2：`callee` / `container` 改為語言中立的結構化欄位；新增 `CALL_ARGUMENT_REMOVED` / `CALL_ARGUMENT_ADDED`。
+- Interpreter 依層拆成語言層（`src/interpreters/core.js`）、框架 preset（`php-laravel`）與業務 preset（`payments`）；CLI 依副檔名選擇語言。
+- 路由：核心流程是機械審查 → AI 審查剩下的 → AI 審查後需要人工的才交給人工。需要 review 的檔案都交給 AI；命中單向門的（`ESCALATED`）AI 不能放行，之後一律人工確認；其他（`AI_TRACK`，包括 `FULL`）由 AI 判斷。`--fail-on-escalation`。
+- 第 2 層 AI 審查（`--ai`）：逐檔交給 Claude（structured outputs、server-side fallback、merge base 的 `codingstandards.md` 放在 cached system prompt），AI 判斷需要人工的項目成為 `kind: AI` 的 finding；AI 失敗一律交給人工；`--ai-apply` 把通過機械審查的小修正寫入 worktree；`--fail-on-human`。
+- Retro（`bin/retro.js`）：彙整 review 報表的 deterministic 指標；`--ai` 時提出規範增刪、`.reviewer.json` 規則與 mutation case 草案，規則以設定驗證器檢查、草案以機械審查確認。
+- 專案設定 `.reviewer.json`（從 merge base 讀取，只能新增攔截），見 [專案設定](project-config.md)。
+- TypeScript / JavaScript adapter：AST 等價判定（第 1 階段），以及結構比對輸出與 PHP 相同的 facts、decorator 與指示註解的 facts、scope hash（第 2、3 階段）；`node` preset（transaction、row lock、授權、middleware、token 驗證、validation、資料刪除），`.reviewer.json` 的規則也適用於 TS。
+- 二次 review：每個 fact 的 scope hash（所屬 method 的 canonical AST hash）、finding 指紋與 policy digest（`files[].findings`）；`bin/review-state.js` 以報表重算確認狀態、處理 `/reviewer ack` 指令，輸出置頂儀表板、Check 與 thread 的目標狀態（見 [二次 review 狀態](review-state.md)）。寫回 GitHub 的 workflow（設計步驟 7 的 GitHub 部分）尚未實作。
+
+目前 mutation evaluation（`npm run eval:mutations`）的 case 組成與各項指標見 [README「目前驗證基準」](../README.md#目前驗證基準)。其中沒有 direct fact 的只剩 optional chain 加括號的 TS case；沒有命中單向門、只靠 AI 審查判斷是否需要人工的 critical case 是 4 個 PHP case，以及 TS 的 `@ts-ignore`、物件簡寫 key、optional chain、zod 規則放寬。
 
 ## 2. 現在的完整 Pipeline
 
 ```
-Change
+PR review CLI（bin/review.js）的入口步驟：
+  git merge-base(base, head) → git diff -M <merge base> <head>
   ↓
-PHP/Laravel Adapter
+逐檔分類
+  ├─ 新增 / 刪除 / 不支援的語言 / binary / symlink / submodule 等 → FULL（不分析）
+  └─ PHP、TypeScript / JavaScript 檔的修改 / rename
+  ↓
+PHP/Laravel Adapter（nikic/php-parser AST）或 TypeScript Adapter（TypeScript compiler API）
+（evaluation harness 與 runStoredAdapterPipeline 不經過上面的 CLI 步驟，直接從 Adapter 開始）
   ├─ changed regions
   ├─ runtime context
   └─ semantic facts
@@ -211,13 +273,16 @@ Eligibility
   ↓
 Review Scope Reducer
   ↓
-HUMAN_REVIEW_REQUIRED
+HUMAN_REVIEW_REQUIRED（TARGETED / FULL）
 或
 NOT_SELECTED_FOR_HUMAN_REVIEW
   ↓
-CAS Authority
-  ↓
-Summary / Status Check
+  ├─ PR review CLI：內容等價（原本 NOT_SELECTED）的 rename / 權限變更改為 TARGETED，
+  │  已需要 review 的 rename / 權限變更檔案只附加 FILE_RENAMED / FILE_MODE_CHANGED
+  │  （TARGETED / FULL 不變）；彙整成 PR 層級決策
+  │  （所有檔案都 NOT_SELECTED 才 NOT_SELECTED）→ 文字 / JSON 報表
+  └─ runStoredAdapterPipeline：CAS Authority → Summary / Status Check
+     （GitHub transport 需注入；目前只有測試呼叫，沒有 CLI 或 workflow 使用）
 ```
 
 ## 3. 目前 Safety Invariants
@@ -232,42 +297,50 @@ Summary / Status Check
 8. 舊 run 不得覆寫新 authoritative result。
 9. Summary 必須綁定 authoritative candidate。
 10. Evaluation 中 critical false negative 必須使 gate fail。
+11. PR 層級只有在所有變更檔案都是 `NOT_SELECTED_FOR_HUMAN_REVIEW` 時才能 reduction；沒有送進 analyzer 的檔案與 rename / 權限變更一律要求 review。
 
 ## 4. 目前適合拿來做什麼
 
 現階段適合：
 
-- PHP/Laravel PR 的 deterministic fact extraction。
+- PHP/Laravel 與 TypeScript / JavaScript PR 的 deterministic fact extraction（PHP-Parser AST、TypeScript compiler API）。
 - 對支援的 semantic change 做 fail-closed Review selection。
 - 建立 file-level Review Scope。
-- 在 CI / GitHub Summary 顯示：
-  - 哪些檔案必須 Human Review。
+- 以 `node bin/review.js` 對一個 PR（head 相對於 merge base 的變更）逐檔列出（見 [PR Review CLI](review-cli.md)）：
+  - 哪些檔案需要 Human Review：`TARGETED` / `FULL`、原因代碼與變更位置。位置只是 review 的起點，整個檔案仍需 review。
   - 哪些檔案沒有被選入 Human Review。
-  - reduction 比例。
-- 用 mutation/historical corpus 持續校準 reduction safety。
+  - 需要 review 的檔案數 / 變更檔案總數，以及 `TARGETED` / `FULL` 的數量。
+  - JSON 報表與 `--fail-on-review` 可以放進 CI；本 repo 的 CI 目前沒有執行這一步。
+- 用 mutation / historical corpus（`npm run test:all` 與 CI 的 gate）與 real-repo evaluation（本機，需要目標專案）持續校準 reduction safety。
 
 目前不應宣稱：
 
-- 能做完整 PHP AST / symbol solving。
+- 能做 symbol solving / 型別推論。analyzer 已用 nikic/php-parser 解析完整 AST 並以結構比對判定 completeness，但 callee 只以原始碼中的名稱文字比對（interpreter 只去掉前導 `\`），不解析 `use` 別名、namespace、變數型別、繼承或動態呼叫。例如 `use Illuminate\Support\Facades\Gate as G;` 之後移除 `G::authorize(...)` 不會被辨識為 `AUTHORIZATION_GUARD_REMOVED`，只會是 `FACT_UNHANDLED`（仍要求 review）。
+- 能分析跨檔案影響。每個檔案獨立分析，沒有 call graph；pipeline 的 Impact 層只驗證外部提供的 impact graph，目前沒有任何 adapter / provider 產生（見 §5 第 8 項）。
 - 能理解所有 Laravel runtime behavior。
-- 能安全處理所有語言。
-- 已有真實世界 false-negative 保證。
-- 能做成熟的 line-level / region-level review reduction。
+- 能安全處理所有語言。只有 PHP 與 TypeScript / JavaScript 檔會被分析，其他語言的檔案一律 `FULL`。
+- 已有真實世界 false-negative 保證。mutation corpus 是 curated case；real-repo evaluation 是在真實程式碼上自動產生的 mutation，不是真實 PR；historical evaluation 仍是 controlled fixture pilot。
+- 能做成熟的 line-level / region-level review reduction。`TARGETED` 列出的位置只是起點，整個檔案仍需 review。
+- 已能在 GitHub PR 上自動發布 Summary / Check。目前只有 provider-neutral sink boundary（需注入 transport），沒有 workflow 執行 review。
 
 ## 5. 接下來優先順序
 
 優先順序應以「提高 reduction，但不傷害 critical recall」為核心：
 
 ```
-1. 真實 Historical PR corpus
-2. 擴大 PHP/Laravel analyzer coverage
-3. 增加 deterministic domain interpreters
-4. multi-file Review Plan / CLI
+1. 真實 Historical PR corpus（目前只有 1 個 controlled fixture pilot）
+2. 擴大 PHP/Laravel analyzer coverage（已改用 nikic/php-parser AST，並新增 10 種 generic facts）
+3. 增加 deterministic domain interpreters（目前 PHP 預設 18 個；real-repo 的 Risky specific reason rate 為 53.4%，
+   其餘 risky 變更只有 FACT_UNHANDLED 等 generic 原因）
+4. multi-file Review Plan / CLI（bin/review.js 已提供 PR 層級的逐檔決策與位置提示；
+   各檔案仍獨立分析，尚無跨檔案的 Review Plan）
 5. GitHub PR workflow
 6. Harness integration
 7. region-level selection
 8. optional impact provider / code-review-graph
-9. 最後才考慮 LLM hypothesis layer
+9. 第 2 層 AI 審查（`--ai`）已實作（見上方「三層審查」），不再是待辦。AI 不取得 reduction authority：
+   機械審查的 `decision`、`--fail-on-review` 與 authority / publication 都不受 AI 影響；AI 只決定
+   `AI_TRACK` 檔案是否還需要人工（`needsHuman`、`--fail-on-human`），`ESCALATED`（單向門）檔案不能被 AI 放行
 ```
 
 核心目標函數：

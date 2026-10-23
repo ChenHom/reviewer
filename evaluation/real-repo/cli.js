@@ -17,6 +17,7 @@ import {
   validateResults,
 } from './metrics.js';
 import { REVIEWER_ROOT, runCorpus } from './run.js';
+import { displayText } from '../../src/facts/structured.js';
 
 const GENERATOR = fileURLToPath(new URL('./generate.php', import.meta.url));
 
@@ -248,7 +249,7 @@ async function inspectRows({ corpus, repos, resultSets, indices }) {
       const result = results.find((candidate) => candidate.index === index);
       if (!result) continue;
       const facts = (result.facts ?? []).map((fact) => (
-        `${fact.kind}(${fact.properties?.callee ?? fact.properties?.container ?? fact.properties?.operatorAfter ?? ''})@${fact.start}`
+        `${fact.kind}(${displayText(fact.properties?.callee ?? fact.properties?.container ?? fact.properties?.operatorAfter ?? '')})@${fact.start}`
       ));
       lines.push(`  ${name}: ${result.outcome} ${result.decision ?? ''}/${result.fallback ?? '-'} complete=${result.complete} `
         + `${result.reasonCode ?? ''} reasons=${JSON.stringify(result.reasons ?? [])} facts=[${facts.join(', ')}]`

@@ -15,6 +15,8 @@ function ratio(numerator, denominator) {
  * Critical Recall 只回答「關鍵 mutation 是否仍要求 Human Review」。
  * criticalDirectFactCoverage 另外回答「其中多少是 analyzer 直接產生 semantic fact」，
  * 避免把純 fail-closed fallback 誤當成 semantic detection 能力。
+ * criticalEscalationRate 回答「三層路由下，其中多少一定會到人工（ESCALATED）」，
+ * 其餘的 critical case 只會交給 AI 審查（AI_TRACK）。
  *
  * @param {object[]} results - mutation case execution results。
  * @returns {object} deterministic evaluation metrics。
@@ -35,6 +37,8 @@ export function calculateMutationMetrics(results) {
   const criticalFallbackOnly = criticalCaught.filter(
     (item) => !Array.isArray(item.factKinds) || item.factKinds.length === 0,
   );
+
+  const criticalEscalated = critical.filter((item) => item.track === 'ESCALATED');
 
   const safeReduced = safe.filter(
     (item) => item.decisionStatus === 'NOT_SELECTED_FOR_HUMAN_REVIEW',
@@ -63,6 +67,8 @@ export function calculateMutationMetrics(results) {
     criticalDirectFactCount: criticalDirectFact.length,
     criticalDirectFactCoverage: ratio(criticalDirectFact.length, critical.length),
     criticalFallbackOnlyCount: criticalFallbackOnly.length,
+    criticalEscalated: criticalEscalated.length,
+    criticalEscalationRate: ratio(criticalEscalated.length, critical.length),
     safeTotal: safe.length,
     safeReduced: safeReduced.length,
     safeHeld: safeHeld.length,
@@ -95,6 +101,10 @@ export function validateMutationEvaluation(results) {
 
     if (result.decisionStatus !== result.expectedCurrentDecision) {
       failures.push(`DECISION_REGRESSION:${result.id}`);
+    }
+
+    if (result.expectedTrack !== undefined && result.track !== result.expectedTrack) {
+      failures.push(`TRACK_REGRESSION:${result.id}`);
     }
 
     if (

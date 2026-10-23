@@ -2,6 +2,8 @@
 
 Status: `IMPLEMENTED`
 
+> 歷史紀錄：本文記錄 PR-A 合入 `master` 時（2026-10-06）的設計，之後不再更新。Fact contract、interpreter boundary 與 analysis context binding 的目前行為見 [README「已實作」](../../README.md#已實作) 與 [Current State](../current-state.md)。
+
 ## Goal
 
 在既有 `AdapterResult → Safety MVP` pipeline 中加入 provider-neutral semantic Fact contract 與 fail-closed interpretation boundary，讓後續 PHP/Laravel Adapter 可以提供可追溯 facts，但 Adapter 本身不能取得 reduction decision 權限。

@@ -1,12 +1,30 @@
 {
-  "name": "review-reduction-safety-mvp",
+  "name": "@chenhom/reviewer",
+  "version": "0.1.0",
+  "description": "Deterministic, fail-closed review decision engine: decides which changed files can skip human review.",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=18.14"
+  },
+  "bin": {
+    "reviewer": "bin/reviewer.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "analyzers/php/bin",
+    "analyzers/php/src",
+    "analyzers/php/composer.json",
+    "analyzers/php/composer.lock",
+    "analyzers/ts/bin",
+    "analyzers/ts/src"
+  ],
   "scripts": {
     "docker:build": "docker build --tag reviewer:local .",
     "review:docker": "npm run docker:build && sh bin/review-docker.sh",
-    "lint": "eslint bin src tests evaluation",
-    "prepare": "simple-git-hooks",
+    "analyzer:install": "composer install --working-dir=analyzers/php --no-interaction",
+    "lint": "eslint bin src tests evaluation analyzers/ts/bin analyzers/ts/src",
     "test": "node --test",
     "test:safety": "node --test",
     "test:e2e": "node --test tests/e2e/*.test.js",
@@ -26,5 +44,9 @@
     "eslint": "^10.8.1",
     "eslint-plugin-jsdoc": "^63.3.3",
     "simple-git-hooks": "^2.13.1"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.131.0",
+    "typescript": "5.9.3"
   }
 }
