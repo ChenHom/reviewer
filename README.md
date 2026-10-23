@@ -76,13 +76,25 @@ reviewer review --base origin/main                # 在要 review 的專案目�
 
 ## Review 一個 PR
 
-需要 Node.js（CI 使用 24；開發用的 lint 需要 Node `^22.13.0 || >=24`）、`git`、PATH 上的 `php`（PHP CLI ≥ 8.3，CI 使用 8.4）與 Composer 2；完整前置需求見 [Review CLI](docs/review-cli.md#前置需求)。這是執行 analyzer 的 PHP 版本，與被分析專案的目標版本無關：被分析的程式碼以最新語法或 PHP 7.4 語法解析，判為等價前只檢查 PHP 7 與 PHP 8 的解讀，PHP 5 的語意不在檢查範圍；最新語法與 PHP 7.4 語法都無法同時解析 before / after 兩個版本時為 `FULL`（`COV-PHP-001:PHP_PARSE_ERROR`），見「已實作」。
+本機只需要 Node/npm、Git 與 Docker；PHP、Composer 與 PHP vendor 都封裝在 image 內。
 
 ```bash
-npm ci                     # TS/JS analyzer 的 typescript、--ai 的 @anthropic-ai/sdk，以及 lint、coverage（c8）的開發依賴
-npm run analyzer:install   # 第一次需要：安裝 PHP analyzer 的依賴（composer install --working-dir=analyzers/php）
+npm run review:docker -- --base origin/master --head HEAD
+```
 
-node bin/review.js --repo /path/to/project --base origin/master --head HEAD   # 安裝成指令時為 reviewer review ...
+Review 其他 repository：
+
+```bash
+REVIEW_TARGET=/path/to/project \
+  npm run review:docker -- --base origin/master --head HEAD
+```
+
+需要 `--out` 時，明確掛載輸出目錄並使用 container path：
+
+```bash
+REVIEW_OUTPUT_DIR=/path/to/output \
+  npm run review:docker -- \
+  --base origin/master --head HEAD --out /output/report.json
 ```
 
 與 GitHub PR 相同，比較的是 head 相對於 `git merge-base <base> <head>` 的變更：base 分支在 head 分出後的新 commit 不會被列入。兩者沒有共同歷史，或 shallow clone 的歷史不夠深、到不了 merge base 時，以 `GIT_NO_MERGE_BASE` 結束；`actions/checkout` 預設的 `fetch-depth: 1` 連 base 都沒有抓，會在解析 ref 時就以 `GIT_FAILED` 結束（兩者的 exit code 都是 2，見 [PR Review CLI](docs/review-cli.md#比較範圍merge-base)）。每個變更檔案逐一決策，列出需要 Human Review 的檔案、原因與行號：
@@ -263,18 +275,11 @@ Historical 數字目前來自明確標示的 controlled fixture pilot，只驗�
 
 ## Release gate
 
-執行 analyzer 需要 PATH 上的 `php`（PHP CLI ≥ 8.3，`analyzers/php/composer.json` 的要求；CI 使用 8.4）與 Composer 2。release gate 另外需要根目錄的 `npm ci`（ESLint、c8 與測試用的 dev 依賴；`npm ci` 時 simple-git-hooks 的 postinstall 會安裝內容為 `npm run lint` 的 pre-commit hook）。analyzer 依賴要另外安裝，第一次執行前先：
-
 ```bash
-npm ci
-npm run analyzer:install   # composer install --working-dir=analyzers/php（TS analyzer 的 typescript 由 npm ci 安裝）
+npm run test:docker
 ```
 
-缺少依賴時 PHP analyzer 會以 `PHP_ANALYZER_DEPENDENCY_MISSING` fail-closed，TS analyzer 則是 `COV-TS-001:TS_ANALYZER_DEPENDENCY_MISSING`（每個送進該 analyzer 的檔案為 `FULL`）。PHP 版本不足時 `composer install` 會因 platform requirement 失敗；已安裝的依賴也會在執行時被 Composer 的 platform check 擋下，此時（以及找不到 `php` 時）`bin/review.js` 不會以錯誤結束（exit code 仍為 0，`--fail-on-review` 時為 1），而是把每個送進 analyzer 的 PHP 檔以 `ANALYZER_ERROR` 列為 `FULL`（見 [PR Review CLI](docs/review-cli.md#前置需求)）。
-
-```bash
-npm run test:all
-```
+此命令建置包含 Node 24、PHP 8.4、Composer 與鎖定 vendor 的 image，再於無網路 container 內執行 PHP syntax lint 與完整 `npm run test:all`。Host 不需要安裝 PHP 或 Composer。
 
 `npm run test:all` 另外需要 PATH 上的 `git` 與 `tar`，且本 repo 必須是有 commit 的 git checkout，不能是解壓縮的原始碼（例如 GitHub 的「Download ZIP」）：review CLI 的測試會建立暫時的 git repository，real-repo evaluation 工具的測試會對本 repo 的 `HEAD` 執行 `git archive` 並以 `tar` 解開（見 [Safety MVP Next Phase](docs/operations/safety-mvp-next-phase.md#release-gate)）。
 

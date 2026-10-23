@@ -1,0 +1,9 @@
+.git
+.worktrees/
+node_modules
+coverage
+.nyc_output
+analyzers/php/vendor
+real-repo-eval-output
+npm-debug.log*
+.DS_Store

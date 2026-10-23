@@ -6,17 +6,32 @@ corpus 不保存完整檔案，但 edits 會包含目標 repo 的原始碼片段
 
 ## 快速開始
 
-需要 PATH 上的 `php`（PHP CLI ≥ 8.3）與 Composer 2（前置需求見 [PR Review CLI](../../docs/review-cli.md#前置需求)）。generator 與 analyzer 都以 `php` 執行：找不到 `php` 時 `evaluate` / `generate` 立即失敗（exit 2）；單獨執行 `run` 時，空檔以外的每筆都是 `ANALYZER_ERROR`（空檔不執行 analyzer），以 gate failure（exit 1）結束。
+Real-repo evaluation 也在 Reviewer image 內執行。Target repositories 唯讀掛載；output directory 是唯一可寫的 host mount：
 
 目標專案不在本 repo 內，對真實目標專案執行的評估不在 `npm run test:all` 與 CI 中；`npm run test:all` 只以 `tests/evaluation/real-repo-*.test.js` 在 repo 內的 `fixtures/php-laravel` 與測試自建的小型 PHP 檔上測試這個工具本身與 gate。最近一次的量測結果見 [README「目前驗證基準」](../../README.md#目前驗證基準)。
 
 ```bash
-npm run analyzer:install   # 第一次需要安裝 PHP analyzer 依賴
+npm run docker:build
+mkdir -p real-repo-eval-output
 
-npm run eval:real-repo -- evaluate \
-  --repo shop=/path/to/shop-api \
-  --repo admin=/path/to/admin-api
+docker run --rm --network none \
+  --user "$(id -u):$(id -g)" \
+  -e GIT_CONFIG_COUNT=2 \
+  -e GIT_CONFIG_KEY_0=safe.directory \
+  -e GIT_CONFIG_VALUE_0=/repos/shop \
+  -e GIT_CONFIG_KEY_1=safe.directory \
+  -e GIT_CONFIG_VALUE_1=/repos/admin \
+  -v /path/to/shop-api:/repos/shop:ro \
+  -v /path/to/admin-api:/repos/admin:ro \
+  -v "$PWD/real-repo-eval-output:/output:rw" \
+  reviewer:local \
+  node evaluation/real-repo/cli.js evaluate \
+  --repo shop=/repos/shop \
+  --repo admin=/repos/admin \
+  --out /output
 ```
+
+上例不使用 `--baseline-ref`，因此 runtime 可保持無網路。需要替不同 lockfile 建立 baseline vendor 時，另行建立包含該 lockfile 的 image，不在 runtime 開放網路安裝依賴。
 
 輸出（預設在 `real-repo-eval-output/`）：
 
@@ -30,10 +45,11 @@ npm run eval:real-repo -- evaluate \
 修改 analyzer 或 interpreter 後，建議與修改前的版本比較：
 
 ```bash
-npm run eval:real-repo -- evaluate --repo shop=/path/to/shop-api --baseline-ref <base ref>   # 例如 origin/master、HEAD~1
+# 在上方的 docker run 命令末尾加入：
+--baseline-ref <base ref>   # 例如 origin/master、HEAD~1
 ```
 
-`--baseline-ref` 以 `git archive` 取出 reviewer repo 該 ref 的 snapshot（不動目前的 working tree），再以 `tar` 解開，執行前先準備好，ref 不存在時立即失敗。因此另外需要 PATH 上的 `git` 與 `tar`，且執行這個工具的 reviewer 必須是 git checkout，不能是解壓縮的原始碼（例如 GitHub 的「Download ZIP」）；不符合時以 snapshot 失敗結束（exit 2）。snapshot 的 `composer.lock` 與目前相同、且目前已安裝 `analyzers/php/vendor/` 時直接複製 `vendor/`；否則執行 `composer install`，此時需要 `composer` 與網路。早於 AST analyzer 的版本（snapshot 沒有 `analyzers/php/composer.json` 的 token-based analyzer，例如 PR #6 合併前的 `master`；AST analyzer 從 PR #6 的 `bbc93a8` 開始）不需要安裝依賴。snapshot 在正常結束、發生錯誤或收到 Ctrl-C / SIGTERM 時都會被刪除；被 SIGKILL 強制結束時可能留在 `$TMPDIR/reviewer-baseline-*`，需手動刪除。
+`--baseline-ref` 以 `git archive` 取出 reviewer repo 該 ref 的 snapshot，再以 `tar` 解開（不動目前的 working tree），執行前先準備好，ref 不存在時立即失敗。snapshot 的 `composer.lock` 與目前相同時直接複製 image 內的 `vendor/`；不同時需另行建立包含該 lockfile 的 image，runtime 不開放網路安裝依賴。snapshot 在正常結束、發生錯誤或收到 Ctrl-C / SIGTERM 時都會被刪除；被 SIGKILL 強制結束時可能留在 `$TMPDIR/reviewer-baseline-*`，需手動刪除。
 
 ## 標籤與 gate
 
@@ -120,6 +136,8 @@ Gate（任一項不為 0 時 gate 失敗）：
 摘要中的 Risky targeted rate 是 risky mutation 以 `TARGETED`（而非 `FULL`）送 Human Review 的比例，衡量的是變更被具體 fact 解釋的程度，不是 review 工作量的減少。
 
 ## 個別指令
+
+以下命令在 Reviewer image 內執行；使用上方 `docker run` 的 image、repo mounts 與 output mount。
 
 ```bash
 CLI="node evaluation/real-repo/cli.js"

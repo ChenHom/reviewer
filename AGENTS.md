@@ -14,6 +14,7 @@ Reviewer 是 deterministic、fail-closed 的 Review Decision Engine（Node ESM�
 
 - Node.js：CI 用 24；開發（lint）需要 `^22.13.0 || >=24`（`eslint-plugin-jsdoc` 的 engines，比 ESLint 本身的 `^20.19.0` 更嚴）。CLI 執行期的需求見 [docs/review-cli.md](docs/review-cli.md#前置需求)。
 - PHP CLI ≥ 8.3（`analyzers/php/composer.json`；CI 用 8.4）、Composer 2、`git`；release gate 另需 `tar`，且 repo 必須是有 commit 的 git checkout。
+- Docker 工作流程：Host 只需 Node/npm、Git 與 Docker；`npm run review:docker -- ...` 執行唯讀、無網路 review，`npm run test:docker` 執行完整 release gate。PHP、Composer 與 vendor 只安裝在 image 內。以下直接安裝方式適用於未使用 Docker 的環境。
 - 先 `npm ci`（含 TS analyzer 的 `typescript`），再 `npm run analyzer:install`（`composer install --working-dir=analyzers/php`，PHP analyzer）。`npm ci` 時 simple-git-hooks 自己的 postinstall 會安裝 pre-commit hook（內容是 `npm run lint`）。
 - `ANTHROPIC_API_KEY` 只有 `--ai`（`bin/review.js`、`bin/retro.js`）需要；測試用假的 client，不需要它。`bin/review-state.js` 需要 `REVIEWER_STATE_KEY`（狀態的 HMAC key；本機預覽可用 `--unsigned`），測試以固定的 key 執行。
 
@@ -26,7 +27,7 @@ Reviewer 是 deterministic、fail-closed 的 Review Decision Engine（Node ESM�
 - `npm run test:all` 是 release gate：lint → test:safety → test:e2e → test:coverage → eval:mutations → eval:historical。
 - `npm run eval:real-repo -- ...` 需要外部 PHP 專案，**不在** `test:all` 與 CI 內（[說明](evaluation/real-repo/README.md)）。
 - 不要加 `prepare` script：npm 全域從 git 安裝（`npm i -g github:…`）有 `prepare` 的套件時，會留下指向已刪除暫存 clone 的 symlink，安裝結果是壞的（`tests/cli/reviewer.test.js` 檢查）。
-- CI（[workflow](.github/workflows/review-reduction-safety.yml)）在 `test:all` 之外另跑 `composer install` 與 `php -l`（`find analyzers/php/bin analyzers/php/src evaluation -name '*.php' -print0 | xargs -0 -n1 php -l`）；改 PHP 檔時本機要自己跑 `php -l`。
+- CI（[workflow](.github/workflows/review-reduction-safety.yml)）建置 Docker image，再於無網路 container 執行 `sh bin/test-docker.sh`：先跑 `php -l`，再跑 `test:all`；本機使用 `npm run test:docker` 執行相同 gate。
 - `master` 有 branch protection：只能經由 PR 修改，必須通過 CI 的 `safety` check（限 GitHub Actions 回報），不能 force push 或刪除，admin 也一樣；不要求 approve。code owner 見 [`.github/CODEOWNERS`](.github/CODEOWNERS)。
 - 沒有 `php` 時 PHP analyzer 不會執行（檔案會是 `FULL` + `ANALYZER_ERROR`），無法驗證 PHP 相關結果，不要宣稱 gate 已通過。
 

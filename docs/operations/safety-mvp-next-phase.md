@@ -31,33 +31,20 @@ Adapter、evidence、impact、invariant 與 GitHub sink 都不能直接改寫 re
 
 ## Release gate
 
-本地與 CI 都必須先安裝 PHP analyzer 的 Composer 依賴，再執行 `test:all`。本地：
+本機與 CI 使用同一個 Docker image。Host 只需 Node/npm、Git 與 Docker：
 
 ```bash
-npm ci
-npm run analyzer:install   # composer install --working-dir=analyzers/php（TS analyzer 的 typescript 由 npm ci 安裝）
-npm run test:all
+npm run docker:build
+npm run test:docker
 ```
 
-- 需要 PATH 上的 `php`（PHP CLI ≥ 8.3，`analyzers/php/composer.json` 的要求）、Composer 2，以及 `git` 與 `tar`。review CLI 的測試會建立暫時的 git repository；real-repo evaluation 工具的測試（`tests/evaluation/real-repo-cli.test.js`，屬於 `test:safety`）會對本 repo 的 `HEAD` 執行 `git archive` 並以 `tar` 解開，所以本 repo 必須是有 commit 的 git checkout，不能是解壓縮的原始碼（例如 GitHub 的「Download ZIP」）。analyzer 依賴為 `nikic/php-parser` 5.9.0，版本鎖定在 `analyzers/php/composer.lock`；`analyzers/php/vendor/` 不進版控。
-- TypeScript / JavaScript analyzer 的依賴為 `typescript` 5.9.3（根目錄 `package.json` 的依賴，鎖定在 `package-lock.json`，由 `npm ci` 安裝）；缺少時以 `TS_ANALYZER_DEPENDENCY_MISSING` fail-closed。TS analyzer 測試與 `eval:mutations` 的 TS case 使用真實 analyzer。
-- 缺少 `analyzers/php/vendor/autoload.php` 時 analyzer 以 `PHP_ANALYZER_DEPENDENCY_MISSING` fail-closed。PHP adapter 測試、`eval:mutations` 與 `eval:historical` 都使用真實 analyzer，因此沒有安裝依賴時 release gate 無法通過。
-
-`test:all` 依序執行 `lint`（ESLint，只檢查 JS）、`test:safety`、`test:e2e`、`test:coverage`、`eval:mutations`、`eval:historical`。`test:safety` 使用遞迴 `node --test`，`test:e2e` 明確執行 `tests/e2e/*.test.js`（Node.js 24.3 不接受目錄作為 test input），`test:coverage` 的最低門檻為 lines/functions/statements 90%、branches 85%。`test:all` 執行時不依賴網路、LLM、真實 GitHub token 或 production credential；只有 `npm ci` 與 `npm run analyzer:install` 安裝依賴時需要網路。
-
-CI（`.github/workflows/review-reduction-safety.yml`，Node.js 24、PHP 8.4、Composer 2）依序執行 `npm ci`、`composer install --working-dir=analyzers/php --no-interaction --no-progress --prefer-dist`、對 `analyzers/php/bin`、`analyzers/php/src` 與 `evaluation` 下每個 `.php` 檔執行 `php -l`，最後執行 `npm run test:all`。`php -l` 沒有對應的 npm script，本地可用同一行指令檢查：
-
-```bash
-find analyzers/php/bin analyzers/php/src evaluation -name '*.php' -print0 | xargs -0 -n1 php -l
-```
+`test:docker` 在無網路 container 內先執行 PHP syntax lint，再執行 `test:all`。其中 `test:safety` 使用遞迴 `node --test`，`test:e2e` 明確執行 `tests/e2e/*.test.js`（Node.js 24.3 不接受目錄作為 test input），`test:coverage` 的最低門檻為 lines/functions/statements 90%、branches 85%。測試不依賴網路、LLM、真實 GitHub token 或 production credential。
 
 ### Real-repo evaluation（不屬於 release gate）
 
 `npm run eval:real-repo` 在外部真實 PHP 專案的檔案上自動產生帶標籤的 mutation，走完整 pipeline（PHP analyzer → interpreters → reducer）並檢查決策。它需要不在本 repo 內的目標專案，所以不在 `test:all` 與 CI 中：release gate 通過不代表真實專案上的 reduction safety 已重新驗證。修改 PHP analyzer 或 interpreter 時，建議另外在本機對目標專案執行，並與修改前的版本比較：
 
-```bash
-npm run eval:real-repo -- evaluate --repo <label>=/path/to/project --baseline-ref <base ref>
-```
+Docker 執行與 `--baseline-ref` 的準備方式見 [Real-repo Evaluation「快速開始」](../../evaluation/real-repo/README.md#快速開始)。
 
 - gate 的任一項（`RISKY_REDUCED`、`ANALYZER_ERROR`、`UNCHANGED_NOT_REDUCED`、`NO_ROWS_ANALYZED`、`REPO_NOT_ANALYZED`）不為 0 即失敗，exit code 1；參數錯誤、analyzer 依賴未安裝、generator / snapshot / composer 失敗等執行錯誤為 exit code 2。`evaluate` 只對 `candidate.jsonl` 判定 gate，baseline 需另外以 `report --results baseline.jsonl` 檢查。
 - `--baseline-ref` 的 snapshot 若有 `analyzers/php/composer.json`，且 `composer.lock` 與目前不同或目前沒有安裝 `analyzers/php/vendor/`，會執行 `composer install`（需要 `composer` 與網路）；否則直接複製目前的 `vendor/`。PR #6 之前的版本（沒有 `analyzers/php/composer.json`）不需要安裝依賴。

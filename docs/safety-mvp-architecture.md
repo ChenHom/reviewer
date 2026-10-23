@@ -268,16 +268,13 @@ flowchart TD
 
 ## 8. Evaluation
 
-Release gate：
+Host 與 CI 的 release gate：
 
 ```bash
-npm run analyzer:install   # 第一次需要安裝 PHP analyzer 依賴
-npm run test:all
+npm run test:docker
 ```
 
-`test:all` 依序執行 lint（ESLint，只檢查 JS）、safety tests、E2E、coverage、mutation evaluation、historical evaluation。需要 PATH 上的 `php`（PHP CLI ≥ 8.3）、Composer 2，以及 `git` 與 `tar`（review CLI 與 real-repo evaluation 的測試會建立暫時的 git repository、對本 repo 的 `HEAD` 執行 `git archive`，所以本 repo 必須是有 commit 的 git checkout，見 [Safety MVP Next Phase](operations/safety-mvp-next-phase.md#release-gate)）；沒有安裝依賴時 analyzer 以 `PHP_ANALYZER_DEPENDENCY_MISSING` fail-closed，release gate 無法通過。
-
-CI（`.github/workflows/review-reduction-safety.yml`，Node.js 24、PHP 8.4）在 `npm ci` 之後先執行 `composer install --working-dir=analyzers/php`，再對 `analyzers/php/bin`、`analyzers/php/src` 與 `evaluation` 下的 `.php` 檔執行 `php -l`，最後執行 `npm run test:all`。
+Image 內由 `sh bin/test-docker.sh` 先執行 PHP syntax lint，再執行既有 `npm run test:all`。PHP、Composer 與 vendor 不安裝到 host。
 
 Mutation baseline（`npm run eval:mutations`）：case 數與各項指標以 [README「目前驗證基準」](../README.md#目前驗證基準) 為準。
 

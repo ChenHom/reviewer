@@ -15,27 +15,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: Set up PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.4'
-          coverage: none
-          tools: composer:v2
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install PHP analyzer dependencies
-        run: composer install --working-dir=analyzers/php --no-interaction --no-progress --prefer-dist
-
-      - name: Lint PHP analyzer
-        run: find analyzers/php/bin analyzers/php/src evaluation -name '*.php' -print0 | xargs -0 -n1 php -l
+      - name: Build Reviewer image
+        run: docker build --tag reviewer:ci .
 
       - name: Run full release gate
-        run: npm run test:all
+        run: docker run --rm --network none reviewer:ci sh bin/test-docker.sh
