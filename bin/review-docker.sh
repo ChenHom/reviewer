@@ -64,13 +64,17 @@ run_review() {
 }
 
 if [ -n "${REVIEW_OUTPUT_DIR:-}" ]; then
-  if ! output=$(CDPATH= cd -P -- "$REVIEW_OUTPUT_DIR" >/dev/null 2>&1 && pwd -P); then
+  # 以哨兵 . 結尾，避免 $(...) 吃掉路徑本身結尾的換行；再去掉哨兵與 pwd 自己的換行
+  if ! output=$(CDPATH= cd -P -- "$REVIEW_OUTPUT_DIR" >/dev/null 2>&1 && pwd -P && echo .); then
     echo "error: REVIEW_OUTPUT_DIR does not exist: $REVIEW_OUTPUT_DIR" >&2
     exit 2
   fi
+  newline='
+'
+  output=${output%.}
+  output=${output%"$newline"}
   case "$REVIEW_OUTPUT_DIR$output" in
-    *'
-'*) echo "error: REVIEW_OUTPUT_DIR must not contain a newline" >&2; exit 2 ;;
+    *"$newline"*) echo "error: REVIEW_OUTPUT_DIR must not contain a newline" >&2; exit 2 ;;
   esac
   # 壓掉重複的 /，讓 / 與 // 也成為 metadata 的上層目錄而被拒絕
   output_prefix=$(printf '%s/' "$output" | tr -s /)

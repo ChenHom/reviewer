@@ -1,7 +1,7 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
@@ -72,13 +72,34 @@ test('Docker 機械審查保持離線唯讀，不傳入 AI 憑證', async (t) =>
 });
 
 test('Docker AI 審查明確連網、只傳憑證名稱，預設仍唯讀', async (t) => {
-  const result = await invoke(t, ['ai', '--base', 'HEAD'], { ANTHROPIC_API_KEY: 'test-secret' });
+  const result = await invoke(t, ['ai', '--base', 'HEAD'], {
+    ANTHROPIC_API_KEY: 'test-secret',
+    ANTHROPIC_AUTH_TOKEN: 'test-token',
+  });
   assert.equal(result.code, 0, result.stderr);
   assert.equal(result.docker[result.docker.indexOf('--network') + 1], 'bridge');
   assert.ok(result.docker.includes(`${repo}:/target:ro`));
   assert.ok(result.docker.includes('ANTHROPIC_API_KEY'));
-  assert.ok(!result.docker.some((arg) => arg.includes('test-secret')));
+  assert.ok(result.docker.includes('ANTHROPIC_AUTH_TOKEN'));
+  assert.ok(!result.docker.some((arg) => /test-secret|test-token/.test(arg)));
   assert.deepEqual(result.docker.slice(-8), ['reviewer:test', 'node', 'bin/review.js', '--repo', '/target', '--ai', '--base', 'HEAD']);
+});
+
+test('Docker AI 輸出到一般目錄但不套用修正時，目標仍唯讀、只傳憑證名稱', async (t) => {
+  const output = join(work, 'ai-output');
+  await mkdir(output);
+  const result = await invoke(t, ['ai', '--base', 'HEAD', '--out', '/output/report.json'], {
+    ANTHROPIC_API_KEY: 'test-secret',
+    ANTHROPIC_AUTH_TOKEN: 'test-token',
+    REVIEW_OUTPUT_DIR: output,
+  });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.docker[result.docker.indexOf('--network') + 1], 'bridge');
+  assert.ok(result.docker.includes(`${repo}:/target:ro`));
+  assert.ok(result.docker.includes(`${output}:/output:rw`));
+  assert.ok(result.docker.includes('ANTHROPIC_API_KEY'));
+  assert.ok(result.docker.includes('ANTHROPIC_AUTH_TOKEN'));
+  assert.ok(!result.docker.some((arg) => /test-secret|test-token/.test(arg)));
 });
 
 test('離線輸出到一般目錄時仍不連網、不傳入憑證', async (t) => {
@@ -170,7 +191,9 @@ test('Docker 入口拒絕無效目標與不存在的輸出目錄', async (t) => 
 });
 
 test('輸出掛載不得以其他路徑重新開放 Git metadata 寫入', async (t) => {
-  for (const output of [repo, join(repo, '.git'), join(repo, '.git', 'hooks'), work, linked, '/', '//']) {
+  const gitlink = join(work, 'gitlink');
+  await symlink(join(repo, '.git'), gitlink);
+  for (const output of [repo, join(repo, '.git'), join(repo, '.git', 'hooks'), gitlink, work, linked, '/', '//']) {
     const result = await invoke(t, ['offline', '--base', 'HEAD'], { REVIEW_TARGET: linked, REVIEW_OUTPUT_DIR: output });
     assert.equal(result.code, 2, output);
     assert.match(result.stderr, /overlaps Git metadata/);
@@ -181,14 +204,22 @@ test('輸出掛載不得以其他路徑重新開放 Git metadata 寫入', async 
 test('輸出目錄解析不受 CDPATH 與 cd - 影響，並拒絕含換行的路徑', async (t) => {
   const newline = join(work, 'line\nbreak');
   await mkdir(newline);
+  // side/out 指向結尾是換行的實體目錄 x\n；同層的 x 是指向 .git 的 symlink，去掉換行就會落到它
+  const side = join(work, 'side');
+  await mkdir(join(side, 'x\n'), { recursive: true });
+  await symlink(join(repo, '.git'), join(side, 'x'));
+  await symlink('x\n', join(side, 'out'));
   const cases = [
-    ['.git', { CDPATH: repo }],
+    ['.git', { CDPATH: repo }, /does not exist/],
     ['-', { OLDPWD: join(repo, '.git') }],
-    [newline, {}],
+    [newline, {}, /newline/],
+    [join(side, 'out'), {}, /newline/],
+    ['-', { OLDPWD: join(side, 'x\n') }],
   ];
-  for (const [output, extra] of cases) {
+  for (const [output, extra, stderr] of cases) {
     const result = await invoke(t, ['offline', '--base', 'HEAD'], { REVIEW_OUTPUT_DIR: output, ...extra });
     assert.equal(result.code, 2, JSON.stringify(output));
+    if (stderr) assert.match(result.stderr, stderr);
     assert.equal(result.docker, undefined);
   }
 });
