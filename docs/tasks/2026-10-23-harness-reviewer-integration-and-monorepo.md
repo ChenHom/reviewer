@@ -81,6 +81,59 @@ HR-00 現況收尾與 baseline
 - 第二階段以 HR-07～HR-10 的本機部分為交付：主 repo 以 submodule 組合兩個模組的本機流程。沒有 HR-06 證據時，不能宣稱 AI 流程也完成。
 - 主 repo push、舊本地 clone 退役、舊 repo 封存與 live state 路徑調整，均不由本文件的 checkbox 自動授權。
 
+### 中程目標 M1：最窄的可用交接路徑
+
+狀態：`IN_PROGRESS`（2026-10-27 起）。
+
+目標：在第一階段完成前，先讓一個簡單案例從 Attempt 一路跑到審查結果，提早暴露最大的幾個未知數：`resultTree` 是否可行、Harness 能否在 bwrap 外啟動 Docker、Reviewer 報表能否可靠驗證。M1 是 HR-01～HR-05 的一個子集，不取代它們的完整驗收。
+
+包含：
+
+- 一個 fixture repo，使用 Reviewer 支援的語言。
+- 以 Harness 的 fake runtime 產生 Attempt。
+- 人 commit 後，`harness review` 執行 HR-01 定案的檢查，並在乾淨副本上重跑 required checks。
+- 以離線、唯讀的 Docker 執行 Reviewer。
+- 最小的報表驗證與 envelope。
+- 以 artifact 保存結果，並由 `show` 顯示。
+
+不包含（留給 HR-01～HR-05 的完整驗收）：
+
+- 完整的反例矩陣。
+- 並行、重啟與 ownership 衝突。
+- timeout 與取消的細節。
+- AI 審查。
+- submodule 結構下的執行。
+- 文件的全面同步。
+
+完成條件（都要能用指令驗證）：
+
+1. 一支腳本在 fixture 上從零跑完：Attempt `SUCCESS` → 人 commit → `harness review` 回 exit 5（有人工待辦），或在沒有變更時回 0 → `show` 顯示報表的 artifact hash 與待辦清單。
+2. 四個關鍵反例各自回正確的錯誤代碼：`CANDIDATE_TREE_MISMATCH`、`PRE_EXISTING_DIRTY`、`CANDIDATE_NOT_SHA`，以及報表損壞或 runner 失敗。
+3. Harness 的 `npm run check` 與 Reviewer 的 `npm run test:docker` 全部通過。
+4. 獨立審查沒有中等以上的 finding。
+
+開始前的決定（2026-10-27，使用者逐項確認）：
+
+| 項目 | 決定 |
+|---|---|
+| B4 Reviewer 從哪裡執行、identity 怎麼記錄 | 用 Reviewer `master` 上指定的 commit 在本地 build image，並加上 revision label。Harness 以全域設定指定 image；envelope 記錄 image ID 與 Reviewer commit。 |
+| B5 trusted runner 放在 Harness 的哪裡 | 新增一個專用檔案，作為第三個可以 import `node:child_process` 的 lint 例外。它只能執行 `docker`，argv 由程式固定組裝，不經過 shell。 |
+| B6 報表版本 | 在交接邊界包一層：Harness 先驗證 Reviewer 的原始 JSON，再產生自己的 envelope（`schemaVersion` 1），不改 Reviewer 的公開 JSON。 |
+| C7「機械審查未選入」的檔案 | 照 Reviewer 的決策：只有 Reviewer 選入人工的檔案列為待辦。未選入的檔案在 envelope 與輸出中一律標為「機械審查未選入，fact layer 尚未接入（DEV-01）」，不得寫成已驗證安全（HR-00 紀錄第九節的限制 1）。 |
+| D12 Harness 的 branch protection | 已設定（2026-10-27）：Harness `master` 必須經 PR，必須通過 GitHub Actions 回報的 `check`，對 admin 也生效，禁止 force push 與刪除，不要求 approve。`audit` job 不列為必要，避免因與修改無關的新漏洞公告卡住合併。這是刻意的變更，HR-10 核對原 repo 保護條件時以此為準。 |
+
+步驟（每步都比照 HR-00：先寫會失敗的測試、跑完整 gate、做獨立審查，沒有中等以上 finding 才算完成）：
+
+1. 驗證 `resultTree` 的做法是否可行（HR-01 第一項）；不可行就停下，重新決定 A2。
+2. Attempt 結束時記錄 `resultTree`（HR-01）。
+3. `harness review` 的前提檢查與乾淨副本驗證（HR-01）。
+4. 最小 envelope 與報表驗證（HR-02 子集）。
+5. trusted runner：離線、唯讀、有 deadline（HR-03 子集）。
+6. 保存結果與 `show` 顯示（HR-04 子集）。
+7. 端到端腳本與四個反例（HR-05 子集）。
+
+進度紀錄：另建 M1 紀錄，格式比照 [HR-00 紀錄](2026-10-27-hr-00-baseline.md)。
+
 ## 五、開發任務
 
 ### HR-00 — 現況收尾與可重現 baseline
@@ -167,7 +220,7 @@ harness review <workId> --attempt <attemptId> --head <40 位 commit SHA> [--json
 | 3 | 審查執行失敗或報表不可用（runner 失敗、timeout、報表無效、stale） |
 | 1 | 用法錯誤，或找不到 work／attempt |
 
-0～4 沿用 Harness 現有語意：2 是 `BLOCKED`，3 是「執行了但結果不是成功」，4 保留給 doctor。若 C 組決定第一版把「機械審查未選入」也列為需要人工確認（HR-00 紀錄第九節的 DEV-01），exit 0 實際上只會出現在 `NO_CHANGES`。
+0～4 沿用 Harness 現有語意：2 是 `BLOCKED`，3 是「執行了但結果不是成功」，4 保留給 doctor。C7 已決定照 Reviewer 的決策（見「中程目標 M1」），所以 Reviewer 沒有選入任何人工 review 的檔案時，也會回 exit 0；這時未選入的檔案仍標明 DEV-01 的限制。
 
 錯誤代碼沿用 `UPPER_SNAKE: detail` 格式：
 
