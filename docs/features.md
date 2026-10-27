@@ -30,6 +30,10 @@ git diff（head 相對於 base 與 head 的 merge base）
 
 ## 快速開始
 
+Docker 本機流程使用 `npm run review:docker -- ...`；AI 審查另用 `npm run review:docker:ai -- ...`，加 `--ai-apply` 才允許修改目標 worktree。修正由外層 agent 測試、commit，再對新 head 重審。PHP 與 Composer 不需安裝到 Host，完整操作見 [Docker 本機審查](review-cli.md#docker-本機審查)。
+
+直接安裝環境或安裝成指令時：
+
 ```bash
 npm ci && npm run analyzer:install   # 需要 Node.js、PHP CLI ≥ 8.3、Composer 2、git
 node bin/review.js --repo /path/to/project --base origin/master --head HEAD

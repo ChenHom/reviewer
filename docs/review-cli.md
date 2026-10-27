@@ -47,6 +47,53 @@ PHP 相關的前置需求不滿足時，CLI **不會**以錯誤結束，而是�
 
 這時 exit code 為 0；加上 `--fail-on-review` 時為 1，與「真的需要 review」無法區分。CI 中請另外檢查，見「在 CI 中使用」。
 
+## Docker 本機審查
+
+在 Reviewer checkout 執行下列命令；Host 只需 Node/npm、Git 與 Docker，PHP、Composer 與 analyzer 依賴都在 image 內。每個入口會先建置 image，首次建置需要網路。
+
+| 入口 | Runtime 網路 | 目標 worktree | Git metadata | 憑證 |
+|---|---|---|---|---|
+| `npm run review:docker -- ...` | 關閉 | 唯讀 | 唯讀 | 不傳入 |
+| `npm run review:docker:ai -- ...` | Docker bridge | 唯讀 | 唯讀 | 傳入已匯出的 `ANTHROPIC_API_KEY`／`ANTHROPIC_AUTH_TOKEN` |
+| `npm run review:docker:ai -- ... --ai-apply` | Docker bridge | 可寫 | 唯讀 | 同上 |
+
+容器本身保持唯讀，以目前使用者的 UID/GID 執行，`/tmp` 是可寫的 tmpfs。AI 入口不是網路目的地白名單；它允許對外連線並將待審查內容送到 Anthropic API。憑證以 Docker `-e` 的變數名稱傳入，不把值放進命令列；沒有憑證時 exit 2，不啟動容器。離線入口拒絕 AI 旗標，請改用 AI 入口。
+
+```bash
+# 在 Reviewer 目錄執行；目標必須已有 base 與 head 的 git 歷史。
+REVIEW_TARGET=/path/to/project \
+  npm run review:docker -- --base origin/master --head HEAD
+
+# 先在目前 shell 安全設定並 export ANTHROPIC_API_KEY 或 ANTHROPIC_AUTH_TOKEN。
+REVIEW_TARGET=/path/to/project \
+  npm run review:docker:ai -- --base origin/master --head HEAD --fail-on-human
+```
+
+AI 入口自動加上 `--ai`；其餘 CLI 選項與 exit code 相同。不會傳入 Host 的其他 Anthropic 設定（例如自訂 API endpoint）。`REVIEW_TARGET` 預設目前目錄，`REVIEWER_DOCKER_IMAGE` 可指定 runtime image（npm 入口仍先建置 `reviewer:local`）。普通 repository 與 linked worktree 均可使用。
+
+要保存報表供人工確認與 retro 使用，先建立輸出目錄，再以 container path 指定 `--out`。輸出目錄不得是 Git metadata 的子目錄或上層目錄（包含 repository 根目錄），避免另一個可寫掛載繞過唯讀限制：
+
+```bash
+mkdir -p "$HOME/reviewer-reports"
+REVIEW_TARGET=/path/to/project REVIEW_OUTPUT_DIR="$HOME/reviewer-reports" \
+  npm run review:docker:ai -- --base origin/master --head HEAD \
+  --out /output/review.json --fail-on-human
+```
+
+報表包含來源程式與 AI 疑慮，請保存在目標專案以外的適當位置；`--json` 改變 CLI 的輸出，但 npm 與建置仍會印出自己的日誌，不宜直接把整個 npm 命令的 stdout 當成 JSON。
+
+Snap 安裝的 Docker 可能使用不同的 `/tmp`，Host 的 `/tmp` bind mount 不一定指向相同資料；目標與輸出請選用 Docker 能存取的實際目錄，例如 home 下的目錄。
+
+### 套用修正與重新驗證
+
+1. 實作 agent 先完成變更、執行目標專案的檢查並 commit。選用獨立且乾淨的 worktree，checkout 到待審查的 head。
+2. 在 Reviewer 目錄執行 `REVIEW_TARGET=/path/to/clean-worktree npm run review:docker:ai -- --base origin/master --head HEAD --ai-apply --fail-on-human`。僅此模式會把 `/target` 掛載為可寫；容器無法 commit，Git metadata 仍唯讀。
+3. 若有修正，外層 agent 檢查 diff，依目標專案約定重新執行測試、lint 與其他必要檢查。Reviewer 不會代跑目標專案的測試。
+4. 檢查通過後，由外層 agent 在 Host 對目標 worktree commit，再執行不含 `--ai-apply` 的 AI review。新的 head 必須重新從機械審查開始，不能沿用舊報表；若仍需修正，回到前一步，不自動無限重試。
+5. 單向門、AI 疑慮與失敗仍交給人工。`--fail-on-human` 的 exit 1 也可能代表修正已套用但尚未 commit，應查看報表的 `human.pendingFixes`；exit 2 是執行錯誤。
+
+本流程不自動 push、開 PR 或合併，也不發布 GitHub 留言／Check。首次使用真實 API 時，先選一個小型、非敏感的測試專案，限制 `--ai-max-files 1 --ai-concurrency 1`；確認報表的 `ai.reviewed`、`ai.failed`、實際模型與 `ai.usage`，不要只以 exit 0 判定 API 成功。現有自動測試使用 fake client，沒有憑證時無法驗證真實 API 的模型與請求相容性。
+
 ## 安裝成指令
 
 `npm i -g github:ChenHom/reviewer`（或在專案中 `npm i -D github:ChenHom/reviewer`，以 `npx --no reviewer ...` 執行）之後，以 `reviewer <子指令>` 執行，選項與 exit code 都與對應的 bin 相同（安裝方式與 PHP analyzer 依賴的處理見 [README](../README.md#安裝成-reviewer-指令在其他專案使用)）：

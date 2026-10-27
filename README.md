@@ -97,6 +97,8 @@ REVIEW_OUTPUT_DIR=/path/to/output \
   --base origin/master --head HEAD --out /output/report.json
 ```
 
+AI 審查另用 `npm run review:docker:ai -- --base origin/master --head HEAD`：明確啟用網路並傳入已匯出的 Anthropic 憑證，目標預設仍唯讀。加上 `--ai-apply` 才允許修改目標 worktree，修正不會自動 commit。完整操作與修正後的驗證流程見 [Docker 本機審查](docs/review-cli.md#docker-本機審查)。
+
 與 GitHub PR 相同，比較的是 head 相對於 `git merge-base <base> <head>` 的變更：base 分支在 head 分出後的新 commit 不會被列入。兩者沒有共同歷史，或 shallow clone 的歷史不夠深、到不了 merge base 時，以 `GIT_NO_MERGE_BASE` 結束；`actions/checkout` 預設的 `fetch-depth: 1` 連 base 都沒有抓，會在解析 ref 時就以 `GIT_FAILED` 結束（兩者的 exit code 都是 2，見 [PR Review CLI](docs/review-cli.md#比較範圍merge-base)）。每個變更檔案逐一決策，列出需要 Human Review 的檔案、原因與行號：
 
 ```

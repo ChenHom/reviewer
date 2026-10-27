@@ -3,6 +3,32 @@ set -eu
 
 image=${REVIEWER_DOCKER_IMAGE:-reviewer:local}
 requested_target=${REVIEW_TARGET:-$PWD}
+network=none
+target_access=ro
+
+if [ "${1:-}" = ai ]; then
+  shift
+  if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
+    echo "error: set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN for review:docker:ai" >&2
+    exit 2
+  fi
+  network=bridge
+  set -- --ai "$@"
+fi
+
+for option do
+  case "$option" in
+    --ai|--ai-*|--ai=*)
+      if [ "$network" = none ]; then
+        echo "error: use npm run review:docker:ai for AI review" >&2
+        exit 2
+      fi
+      ;;
+  esac
+  if [ "$option" = --ai-apply ]; then
+    target_access=rw
+  fi
+done
 
 if ! target=$(git -C "$requested_target" rev-parse --show-toplevel 2>/dev/null); then
   echo "error: REVIEW_TARGET is not a Git repository: $requested_target" >&2
@@ -13,8 +39,11 @@ git_common_dir=$(git -C "$target" rev-parse --path-format=absolute --git-common-
 container_git_dir=/git${git_dir#"$git_common_dir"}
 
 run_review() {
+  if [ "$network" = bridge ]; then
+    set -- -e ANTHROPIC_API_KEY -e ANTHROPIC_AUTH_TOKEN "$@"
+  fi
   docker run --rm \
-    --network none \
+    --network "$network" \
     --read-only \
     --user "$(id -u):$(id -g)" \
     --tmpfs /tmp:rw,nosuid,size=256m \
@@ -23,7 +52,8 @@ run_review() {
     -e GIT_CONFIG_VALUE_0=/target \
     -e GIT_DIR="$container_git_dir" \
     -e GIT_WORK_TREE=/target \
-    -v "$target:/target:ro" \
+    -v "$target:/target:$target_access" \
+    -v "$target/.git:/target/.git:ro" \
     -v "$git_common_dir:/git:ro" \
     "$@"
 }
@@ -33,6 +63,14 @@ if [ -n "${REVIEW_OUTPUT_DIR:-}" ]; then
     echo "error: REVIEW_OUTPUT_DIR does not exist: $REVIEW_OUTPUT_DIR" >&2
     exit 2
   fi
+  for metadata in "$target/.git" "$git_common_dir"; do
+    case "$output/" in
+      "$metadata/"*) echo "error: REVIEW_OUTPUT_DIR overlaps Git metadata" >&2; exit 2 ;;
+    esac
+    case "$metadata/" in
+      "$output/"*) echo "error: REVIEW_OUTPUT_DIR overlaps Git metadata" >&2; exit 2 ;;
+    esac
+  done
   run_review -v "$output:/output:rw" \
     "$image" node bin/review.js --repo /target "$@"
 else
