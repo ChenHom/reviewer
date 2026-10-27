@@ -339,6 +339,8 @@ JSON 報表的完整格式見 [PR Review CLI](../review-cli.md)「JSON 報表」
 
 ## 6. Harness 需要補的入口
 
+> 本節已由 [Harness／Reviewer 審查交接計畫](../tasks/2026-10-23-harness-reviewer-integration-and-monorepo.md) HR-01 的定案取代（2026-10-27）。三處不再成立：不取「latest successful Attempt」，改為明確指定 `--attempt` 與完整的 candidate SHA；Harness 不 commit，由人 commit，再以 Attempt 記錄的 `resultTree` 比對；不以 exit code 判斷結果。HR-01 定稿 CLI 時會改寫本節。
+
 Reviewer 已有 `bin/review.js`，Harness 不必等 `reviewer plan` 就可以增加：
 
 ```bash
