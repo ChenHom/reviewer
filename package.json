@@ -22,7 +22,7 @@
   ],
   "scripts": {
     "docker:build": "docker build --tag reviewer:local .",
-    "review:docker": "npm run docker:build && sh bin/review-docker.sh",
+    "review:docker": "npm run docker:build && sh bin/review-docker.sh offline",
     "review:docker:ai": "npm run docker:build && sh bin/review-docker.sh ai",
     "analyzer:install": "composer install --working-dir=analyzers/php --no-interaction",
     "lint": "eslint bin src tests evaluation analyzers/ts/bin analyzers/ts/src",

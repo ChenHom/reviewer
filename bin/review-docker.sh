@@ -5,9 +5,14 @@ image=${REVIEWER_DOCKER_IMAGE:-reviewer:local}
 requested_target=${REVIEW_TARGET:-$PWD}
 network=none
 target_access=ro
+mode=${1:-}
 
-if [ "${1:-}" = ai ]; then
-  shift
+case "$mode" in
+  offline|ai) shift ;;
+  *) echo "error: use npm run review:docker or npm run review:docker:ai" >&2; exit 2 ;;
+esac
+
+if [ "$mode" = ai ]; then
   if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
     echo "error: set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN for review:docker:ai" >&2
     exit 2
@@ -63,12 +68,14 @@ if [ -n "${REVIEW_OUTPUT_DIR:-}" ]; then
     echo "error: REVIEW_OUTPUT_DIR does not exist: $REVIEW_OUTPUT_DIR" >&2
     exit 2
   fi
+  # 壓掉重複的 /，讓 / 與 // 也成為 metadata 的上層目錄而被拒絕
+  output_prefix=$(printf '%s/' "$output" | tr -s /)
   for metadata in "$target/.git" "$git_common_dir"; do
-    case "$output/" in
+    case "$output_prefix" in
       "$metadata/"*) echo "error: REVIEW_OUTPUT_DIR overlaps Git metadata" >&2; exit 2 ;;
     esac
     case "$metadata/" in
-      "$output/"*) echo "error: REVIEW_OUTPUT_DIR overlaps Git metadata" >&2; exit 2 ;;
+      "$output_prefix"*) echo "error: REVIEW_OUTPUT_DIR overlaps Git metadata" >&2; exit 2 ;;
     esac
   done
   run_review -v "$output:/output:rw" \
