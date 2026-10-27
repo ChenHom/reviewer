@@ -188,7 +188,19 @@ HR-00 現況收尾與 baseline
 
 已決（2026-10-27，使用者確認）：新專案名稱 `agent-workbench`，本機根路徑 `/home/hom/services/agent-workbench`；以 **git submodule** 組合，不匯入歷史：`modules/harness` → `git@github.com:ChenHom/agent-work-harness.git`，`modules/reviewer` → `git@github.com:ChenHom/reviewer.git`。兩個原 repo 繼續是各自的來源、歷史、CI 與 branch protection 所在；原本地 clone（`/home/hom/code/harness`、`/home/hom/code/reviewer`）不搬移。
 
-已建立（2026-10-27）：本機主 repo 初始 commit `74b6f46`，gitlink 指向 harness `a156e9a8`、reviewer `ca65a41f`（兩者 `master`）。未建立遠端、未 push。
+已建立（2026-10-27）：本機主 repo 初始 commit `74b6f46`，gitlink 指向 harness `a156e9a8`、reviewer `ca65a41f`（兩者 `master`）。
+
+遠端（2026-10-27，依使用者指示）：
+
+- 建立 private repo `ChenHom/agent-workbench`，預設分支 `master`，並把本機主 repo 的 `origin` 設為 `git@github.com:ChenHom/agent-workbench.git`。兩個 submodule 的原 repo 仍是 public。
+- `26f326e`（`Use relative submodule URLs and move harness to a85089f`）做了兩件事：
+  - `.gitmodules` 改成 `../agent-work-harness.git`、`../reviewer.git`。先設好 `origin` 才執行 `git submodule sync`，同步後解析出的 URL 仍是原本兩個 SSH 遠端。
+  - harness gitlink 從 `a156e9a8` 以 fast-forward 更新到 `a85089f`。
+- gitlink 的依據：
+  - harness `a85089f`：在 `origin/master`，有 HR-00 的完整 gate 證據（416 pass，GitHub Actions `check` success）。
+  - reviewer `ca65a41`：維持不動，它就是 `origin/master`，受 `master` branch protection 的 `safety` check 保護；本次沒有另外對它跑 gate。Reviewer 的 HR-00 baseline `6d9e6a6` 尚未 push，所以不能指向它。
+- push 前確認兩個 gitlink 的 commit 都在各自的 `origin/master`，再 `git push -u origin master`；遠端 `master` 為 `26f326e`。
+- 驗證：從 GitHub 執行 `git clone --recurse-submodules` 全新 clone，主 repo HEAD 為 `26f326e`；submodule 為 harness `a85089f`、reviewer `ca65a41`，兩者的 `origin` 都解析為原本的 SSH 遠端。只驗證了 SSH clone；HTTPS clone 未測。
 
 submodule 對本計畫的影響（2026-10-27 實測，HR-07～HR-10 已據此改寫）：
 
@@ -199,7 +211,7 @@ submodule 對本計畫的影響（2026-10-27 實測，HR-07～HR-10 已據此改
 - 跨兩個模組的變更須在兩個 repo 各自提交，再更新主 repo gitlink；沒有原子提交。
 - 安裝沿用各模組原本方式（例如 `npm i -g github:ChenHom/reviewer` 不受影響）；不需要決定歷史匯入方式。
 
-仍待決：主 repo 遠端（是否建立、可見性）、主 repo 是否需要根層指令或 CI、日常開發是否改到 submodule checkout（原本地 clone 是否退役）。
+仍待決：主 repo 是否需要根層指令、CI 或 branch protection；日常開發是否改到 submodule checkout（原本地 clone 是否退役）；reviewer gitlink 何時更新到 `feat/docker-ai-review` 合併後的 `master`。
 
 - [ ] 定義 gitlink 更新規則：只指向已 push 到原 repo 遠端、且通過該模組完整 gate 的 commit；每次更新記錄新舊 SHA 與對應的模組 gate 證據。
 - [ ] 定義跨模組變更的順序：各模組先在原 repo 提交並通過 gate，再以一個主 repo commit 一起更新兩個 gitlink；任一模組未通過時不更新主 repo。
@@ -207,16 +219,16 @@ submodule 對本計畫的影響（2026-10-27 實測，HR-07～HR-10 已據此改
 - [ ] 確認 required checks 在 submodule checkout 與既有隔離下真的能執行。需要 Docker 或 Temporal 測試環境的 gate，不得透過開放 repository scripts 的 socket／Host 權限來勉強通過。
 - [ ] 政策維持在各模組的 `.reviewer.json`／`codingstandards.md`，保留 merge-base 與只能增加攔截的語意；主 repo 不放會被誤認為能覆蓋模組的政策檔。以 fixture 確認對主 repo 範圍（只有 gitlink 變更）的審查不會被呈現為模組審查通過。
 - [ ] 決定主 repo 根層內容的第一版：至少 `.gitmodules` 與說明 clone／初始化／gitlink 更新流程的 README；根層指令或 CI 只在確有需要時加入。
-- [ ] 主 repo 推上 GitHub 前，把 `.gitmodules` 改為相對 URL（例如 `../reviewer.git`），讓 SSH 與 HTTPS clone 都能取得 submodule。
+- [x] 主 repo 推上 GitHub 前，把 `.gitmodules` 改為相對 URL（例如 `../reviewer.git`），讓 SSH 與 HTTPS clone 都能取得 submodule。完成（2026-10-27）：`26f326e`；已以 SSH 全新 clone 驗證，HTTPS 未測。
 
-驗收：gitlink 與跨模組規則、模組 `.harness/config.json` 與政策來源經 fixture 驗證，不會因 submodule 結構減少驗收。未決選項逐一記錄；主 repo 遠端未定前，不 push 主 repo。
+驗收：gitlink 與跨模組規則、模組 `.harness/config.json` 與政策來源經 fixture 驗證，不會因 submodule 結構減少驗收。未決選項逐一記錄；之後每次 push 主 repo 前，都要確認每個 gitlink 指向的 commit 已在原 repo 遠端。
 
 ### HR-08 — 主 repo 與 gitlink 綁定，保留原 clone
 
 狀態：`PLANNED`（主 repo 與兩個 submodule 已建立，其餘未做）。依賴：HR-07。工作位置：`/home/hom/services/agent-workbench`。
 
 - [x] 建立本機主 repo，加入 `modules/harness`、`modules/reviewer` 兩個 submodule。證據（2026-10-27）：初始 commit `74b6f46`；`git submodule status` 為 harness `a156e9a8`、reviewer `ca65a41f`。
-- [ ] 依 HR-07 規則把 gitlink 更新到要驗收的模組 commit。原本地 clone 尚未 push 的 commit（例如 2026-10-27 時 Harness 本地 `master` 的 `a85089f`）須先在原 repo push，不從本地 clone 直接接入。
+- [ ] 依 HR-07 規則把 gitlink 更新到要驗收的模組 commit。原本地 clone 尚未 push 的 commit（例如 2026-10-27 時 Harness 本地 `master` 的 `a85089f`）須先在原 repo push，不從本地 clone 直接接入。進度（2026-10-27）：harness 已在 `26f326e` 更新到已 push 的 `a85089f`；reviewer 仍是 `ca65a41`，要等 Docker AI 修改合併後再更新。
 - [ ] 主 repo 只提交 `.gitmodules`、gitlink 與根層說明；模組內容一律回原 repo 提交。不在主 repo 放 live state、憑證、node_modules 或 PHP vendor。
 - [ ] Reviewer Docker build context 保持 `modules/reviewer`，不把 Harness／Temporal 依賴混入 image。
 - [ ] 驗證 submodule checkout 內的 Git root、candidate SHA、merge base、歷史 baseline ref 與 artifact identity，與原本地 clone 對同一 SHA 的結果一致。
