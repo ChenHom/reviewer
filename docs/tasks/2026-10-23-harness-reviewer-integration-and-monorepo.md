@@ -83,7 +83,7 @@ HR-00 現況收尾與 baseline
 
 ### 中程目標 M1：最窄的可用交接路徑
 
-狀態：`IN_PROGRESS`（2026-10-27 起）。
+狀態：四項完成條件都有可執行的證據（2026-10-28）。Harness 的修改在 [ChenHom/agent-work-harness#1](https://github.com/ChenHom/agent-work-harness/pull/1)，尚未合併。證據見 [M1 紀錄](2026-10-28-m1-record.md)。
 
 目標：在第一階段完成前，先讓一個簡單案例從 Attempt 一路跑到審查結果，提早暴露最大的幾個未知數：`resultTree` 是否可行、Harness 能否在 bwrap 外啟動 Docker、Reviewer 報表能否可靠驗證。M1 是 HR-01～HR-05 的一個子集，不取代它們的完整驗收。
 
@@ -132,7 +132,7 @@ HR-00 現況收尾與 baseline
 6. 保存結果與 `show` 顯示（HR-04 子集）。
 7. 端到端腳本與四個反例（HR-05 子集）。
 
-進度紀錄：另建 M1 紀錄，格式比照 [HR-00 紀錄](2026-10-27-hr-00-baseline.md)。
+進度紀錄：[M1 紀錄](2026-10-28-m1-record.md)，格式比照 [HR-00 紀錄](2026-10-27-hr-00-baseline.md)。
 
 ## 五、開發任務
 
