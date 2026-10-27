@@ -6,7 +6,7 @@
 
 目標：先在兩個 repo 間完成可信的審查交接，再以主 repo `agent-workbench` 用 git submodule 組合兩個獨立模組。
 
-相關文件：[現有整合契約](../integrations/agent-work-harness.md)、[Review CLI](../review-cli.md)、[二次 review 狀態](../review-state.md)、[Docker 本機審查](../review-cli.md#docker-本機審查)、[既有任務與已知偏差](2026-08-12-review-reduction-next-phase.md)。
+相關文件：[現有整合契約](../integrations/agent-work-harness.md)（§6 已由本計畫 HR-01 取代）、[Review CLI](../review-cli.md)、[二次 review 狀態](../review-state.md)、[Docker 本機審查](../review-cli.md#docker-本機審查)、[既有任務與已知偏差](2026-08-12-review-reduction-next-phase.md)。
 
 ## 一、範圍與責任
 
@@ -106,16 +106,104 @@ HR-00 現況收尾與 baseline
 
 狀態：`PLANNED`。依賴：HR-00。主要位置：Harness `src/orchestrator.ts`、`src/evidence/git.ts`、`src/evidence/verification.ts` 與新的審查協調程式。
 
-建議入口為 `harness review <workId> --head <candidate-sha>`；完整 argv、exit code 與錯誤代碼在此 task 定稿並同步文件。第一版不自動 commit，也不自動挑選「最新一筆看起來成功」的歷史結果。
+第一版不自動 commit，也不自動挑選「最新一筆看起來成功」的歷史結果。
 
-- [ ] 決定可接受的 Attempt、Work／Repository Contract 版本與 candidate 來源；不同 milestone／branch 不得混用。
+#### 定案（2026-10-27，使用者確認）
+
+依據：Harness `a85089f` 的現況，經 Explore 調查、主對話抽查原始碼。
+
+- Attempt 直接在使用者的工作樹修改，結束後以未提交狀態留下；Harness 從不 commit。
+- Attempt 記錄的 diff 是 `git diff --no-ext-diff --no-textconv <baseRevision>`（`src/evidence/git.ts`），有三個缺口：
+  - 新增的 untracked 檔只記路徑，沒有內容；
+  - binary 沒有 `--binary`；
+  - 既有修改也混在其中。
+
+  所以這份 diff 不能用來證明 candidate。
+- Attempt 已有 `baseRevision`、`contractVersion`（Work Contract 版本號）、`contractSnapshotHash`（Repository Contract 快照的 sha256）與 `preExistingDirty`（`src/types.ts`）。
+- verification 在原工作樹上執行，沒有「在指定 SHA 的乾淨副本執行」的能力。
+
+**A1 以本計畫為準。**[現有整合契約](../integrations/agent-work-harness.md) §6 有三個前提已不成立：
+
+- 取「latest successful Attempt」：結果未 commit 時，Harness 會回 `SUCCESS`，Reviewer 卻回 `NO_CHANGES`。
+- 由 Harness 先 commit：Harness 沒有 commit 功能。
+- 以 exit code 判斷結果：`bin/review-docker.sh` 的 docker／build 錯誤與 CLI 共用 exit code（HR-00 紀錄 F6）。
+
+§6 開頭已標註「已由本計畫取代」；HR-01 定稿 CLI 時改寫 §6。
+
+**A2 candidate 由人 commit，Harness 以 `resultTree` 證明它屬於該 Attempt。**
+
+- 第一版由人 commit。Harness 不碰使用者的 index、refs 或工作樹。
+- Attempt 結束時新增記錄 `resultTree`：
+  - 用暫存 index 與暫存 object 目錄（`GIT_INDEX_FILE`、`GIT_OBJECT_DIRECTORY`，以原 repo 為 alternates），對工作樹執行 `add -A` 與 `write-tree`。
+  - 這樣得到的 tree 包含 untracked 檔的內容、binary、mode 與 symlink，而且不寫入使用者 repo。
+  - 這個做法在 bwrap 內是否可行，以及產生的 tree 是否與人 `git add -A && git commit` 得到的相同（特別是 `.gitignore` 的處理），**尚未驗證**；列為本 task 的第一項。
+- `harness review` 依序檢查，任一不符就以 `BLOCKED` 結束，不執行審查：
+  1. Attempt 屬於該 workId、outcome 為 `SUCCESS`，且有 `resultTree`。
+  2. `candidate^{tree}` 等於 `resultTree`。人在 commit 前改過任何內容就會不符，必須重跑 Attempt（規則 6：修正是新變更）。
+  3. `merge-base(baseRevision, candidate)` 等於 `baseRevision`，也就是 candidate 從 base 長出來。
+  4. Work 目前的 Work Contract 版本等於 Attempt 的 `contractVersion`，否則為 `CONTRACT_STALE`。
+- 之後在 candidate 的乾淨副本上，以 Attempt 凍結的 contract 重跑 required checks 與 path policy。乾淨副本的建立方式（例如 `git clone --shared` 到暫存目錄）由本 task 實作；對使用 submodule 或 LFS 的 repo 是否可行，尚未驗證。
+- 不採用「Harness 以 `git commit-tree` 產生不掛分支的 candidate」：它等於由 Harness 產生 commit，與第一版不自動 commit 的原則衝突。
+
+**A2 既有修改：第一版不支援。**Attempt 開始前就有修改（`preExistingDirty` 非空）時，一律以 `BLOCKED PRE_EXISTING_DIRTY` 結束。原因是 `resultTree` 會混入使用者自己的修改，人 commit 時無論帶不帶都對不上。若要支援，得從 base tree 只加入本次變更的路徑，但「原本就有修改、agent 又改了」的檔案仍分不開。
+
+**A3 CLI 契約。**
+
+```
+harness review <workId> --attempt <attemptId> --head <40 位 commit SHA> [--json]
+```
+
+- 必須明確給 `--attempt`，不自動挑最新成功的 Attempt。
+- `--head` 只接受完整的 40 位 SHA，不接受 branch、`HEAD` 或縮寫（規則 4）。
+- 屬於會寫入狀態的指令，要取得 `execution.lock`；查詢結果的唯讀功能放進既有的 `show`（HR-04）。
+- 以 `node:util` 的 `parseArgs` strict 模式解析，不認得的旗標直接拒絕。
+- 預設輸出給人看的摘要；`--json` 輸出 HR-02 定義的 envelope。
+
+| exit code | 意義 |
+|---|---|
+| 0 | 報表有效，且沒有人工待辦（例如 `NO_CHANGES`） |
+| 5（新增） | 報表有效，但需要人工 review；不算失敗，也不算完成 |
+| 2 | `BLOCKED <CODE>: detail`：前提不成立，沒有執行審查 |
+| 3 | 審查執行失敗或報表不可用（runner 失敗、timeout、報表無效、stale） |
+| 1 | 用法錯誤，或找不到 work／attempt |
+
+0～4 沿用 Harness 現有語意：2 是 `BLOCKED`，3 是「執行了但結果不是成功」，4 保留給 doctor。若 C 組決定第一版把「機械審查未選入」也列為需要人工確認（HR-00 紀錄第九節的 DEV-01），exit 0 實際上只會出現在 `NO_CHANGES`。
+
+錯誤代碼沿用 `UPPER_SNAKE: detail` 格式：
+
+| 類別 | 代碼 |
+|---|---|
+| candidate | `CANDIDATE_NOT_SHA`、`CANDIDATE_NOT_FOUND`、`CANDIDATE_TREE_MISMATCH`、`CANDIDATE_NOT_DESCENDANT` |
+| attempt | `ATTEMPT_NOT_FOUND`、`ATTEMPT_WORK_MISMATCH`、`ATTEMPT_NOT_SUCCESS`、`ATTEMPT_RESULT_UNRECORDED`（沒有記錄 `resultTree` 的舊 Attempt） |
+| 前提 | `PRE_EXISTING_DIRTY`、`CONTRACT_STALE`、`WORKSPACE_NOT_GIT_ROOT` |
+| 執行 | `VERIFICATION_FAILED`、`REVIEW_RUNNER_FAILED`、`REVIEW_TIMEOUT`、`REVIEW_REPORT_INVALID`、`REVIEW_STALE` |
+| 既有 | `OWNER_ACTIVE` |
+
+#### 工作項目
+
+- [ ] 先驗證 `resultTree` 的做法：在 Harness 的 bwrap 內，以暫存 index 加暫存 object 目錄執行 `write-tree` 能否成功；產生的 tree 是否等於人 `git add -A && git commit` 的 tree（含 untracked、binary、mode、symlink、`.gitignore`）。不可行時停下，重新決定 A2。
+- [ ] Attempt 結束時記錄 `resultTree`；舊 Attempt 沒有這個欄位，`harness review` 回 `ATTEMPT_RESULT_UNRECORDED`。
+- [ ] 決定可接受的 Attempt、Work／Repository Contract 版本與 candidate 來源；不同 milestone／branch 不得混用。→ 已定案，見 A2、A3；尚未實作。
 - [ ] 要求 repository workspace 是 Git root，並一次解析／凍結 base、candidate SHA、merge base 與 repository identity。
-- [ ] 定義 candidate 與該 Attempt 的關聯驗證；僅「是 base 的後代」不足以證明它就是本次結果。
+- [ ] 定義 candidate 與該 Attempt 的關聯驗證；僅「是 base 的後代」不足以證明它就是本次結果。→ 已定案，見 A2 的四項檢查；尚未實作。
 - [ ] 在指定 candidate 的乾淨工作副本上，以原本 frozen contract 重跑必要驗證與 path policy；不沿用 dirty worktree 的舊成功 evidence。
 - [ ] 驗證前後檢查 candidate／contract／workspace 漂移；不符合時保留明確失敗或 stale，不輸出可用審查結果。
-- [ ] 定義既有 pre-existing dirty changes 與未追蹤檔案的處理：第一版不自動打包它們；需要納入者必須先成為明確 candidate。
+- [ ] 定義既有 pre-existing dirty changes 與未追蹤檔案的處理：第一版不自動打包它們；需要納入者必須先成為明確 candidate。→ 已定案：既有修改一律 `PRE_EXISTING_DIRTY`；agent 新增的 untracked 檔由 `resultTree` 涵蓋；尚未實作。
+- [ ] 依 A3 實作 `harness review` 的 argv、exit code 與錯誤代碼，並改寫整合契約 §6。
 
-驗收測試：未 commit 的有效修改不能被當成已完成審查；無關 commit、錯 repo、錯 Attempt、非預期 merge base、untracked／mode／symlink 變更、驗證期間修改與 contract 版本變更均有反例。合法 candidate 則能得到與它綁定的新 evidence。
+驗收測試：
+
+- 未 commit 的有效修改不能被當成已完成審查。
+- 以下反例都要有，且各自得到對應的錯誤代碼：
+  - 無關 commit、錯 repo、錯 Attempt、非預期 merge base；
+  - untracked／mode／symlink／binary 變更；
+  - 人在 commit 前另外修改（`CANDIDATE_TREE_MISMATCH`）；
+  - 既有修改（`PRE_EXISTING_DIRTY`）；
+  - 沒有 `resultTree` 的舊 Attempt；
+  - `--head` 不是完整 SHA；
+  - 驗證期間修改；
+  - contract 版本變更（`CONTRACT_STALE`）。
+- 合法 candidate 能得到與它綁定的新 evidence。
 
 ### HR-02 — 有版本的報表驗證與交接 envelope
 
