@@ -25,5 +25,6 @@ RUN npm ci --ignore-scripts
 COPY --from=composer /app/analyzers/php/vendor analyzers/php/vendor
 
 COPY . .
+RUN chmod -R a+rX /app
 
 CMD ["node", "bin/review.js", "--help"]

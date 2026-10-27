@@ -226,7 +226,7 @@ Real-repo evaluation（`evaluation/real-repo/`，說明見 [Real-repo Evaluation
 - 最近一次在本機對兩個私有 PHP 金流專案與一個 Laravel 11 專案執行（seed 42、rate 0.3）：12,283 筆（3,093 unchanged、3,648 safe、5,542 risky），Risky reduced 0、Risky targeted rate 99.3%、Risky specific reason rate 53.4%、Safe reduction rate 100.0%、Unchanged reduction rate 99.9%（未被 reduce 的 3 筆都是空檔）。
 - 目標專案不在本 repo 內，這些數字無法只靠本 repo 重現；對真實目標專案執行的 Real-repo evaluation 不在 `npm run test:all` 與 CI 中，不屬於 release gate（`npm run test:all` 只以 `tests/evaluation/real-repo-*.test.js` 在 repo 內的 `fixtures/php-laravel` 與測試自建的小型 PHP 檔上測試這個工具本身與 gate）。資料是在真實程式碼上自動產生的 mutation，不是真實 PR 的 human concern。
 
-CI（`.github/workflows/review-reduction-safety.yml`，PHP 8.4）在 `npm run test:all` 之前先執行 `composer install --working-dir=analyzers/php`，並對 `analyzers/php/bin`、`analyzers/php/src` 與 `evaluation` 下的 `.php` 檔執行 `php -l`。
+CI（`.github/workflows/review-reduction-safety.yml`）建置含 Node、PHP 與 Composer 依賴的 Docker image，再於無網路 container 執行 `sh bin/test-docker.sh`：先執行 PHP syntax lint，再執行 `npm run test:all`。本機使用 `npm run test:docker` 執行同一 gate；本機機械／AI 審查與修正重驗流程見 [Docker 本機審查](review-cli.md#docker-本機審查)。
 
 ### 三層審查（機械 → AI → 人工）：步驟 1–6、8、9
 

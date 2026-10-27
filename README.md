@@ -97,6 +97,8 @@ REVIEW_OUTPUT_DIR=/path/to/output \
   --base origin/master --head HEAD --out /output/report.json
 ```
 
+AI 審查另用 `npm run review:docker:ai -- --base origin/master --head HEAD`：明確啟用網路並傳入已匯出的 Anthropic 憑證，目標預設仍唯讀。加上 `--ai-apply` 才允許修改目標 worktree，修正不會自動 commit。完整操作與修正後的驗證流程見 [Docker 本機審查](docs/review-cli.md#docker-本機審查)。
+
 與 GitHub PR 相同，比較的是 head 相對於 `git merge-base <base> <head>` 的變更：base 分支在 head 分出後的新 commit 不會被列入。兩者沒有共同歷史，或 shallow clone 的歷史不夠深、到不了 merge base 時，以 `GIT_NO_MERGE_BASE` 結束；`actions/checkout` 預設的 `fetch-depth: 1` 連 base 都沒有抓，會在解析 ref 時就以 `GIT_FAILED` 結束（兩者的 exit code 都是 2，見 [PR Review CLI](docs/review-cli.md#比較範圍merge-base)）。每個變更檔案逐一決策，列出需要 Human Review 的檔案、原因與行號：
 
 ```
@@ -254,6 +256,7 @@ Historical 數字目前來自明確標示的 controlled fixture pilot，只驗�
 - [Safety MVP 測試策略](docs/testing/safety-mvp-test-strategy.md)
 - [Safety MVP 操作與失敗處理](docs/operations/safety-mvp-next-phase.md)
 - [與 Agent Work Harness 的合作方式](docs/integrations/agent-work-harness.md)
+- [Harness／Reviewer 審查交接與雙模組遷移開發任務](docs/tasks/2026-10-23-harness-reviewer-integration-and-monorepo.md)（計畫，尚未實作）
 - [Real-repo Evaluation：在真實 PHP 專案上產生 mutation 並驗證 gate](evaluation/real-repo/README.md)
 
 ### 歷史設計、計畫與任務紀錄

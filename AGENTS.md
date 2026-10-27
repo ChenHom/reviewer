@@ -15,6 +15,7 @@ Reviewer 是 deterministic、fail-closed 的 Review Decision Engine（Node ESM�
 - Node.js：CI 用 24；開發（lint）需要 `^22.13.0 || >=24`（`eslint-plugin-jsdoc` 的 engines，比 ESLint 本身的 `^20.19.0` 更嚴）。CLI 執行期的需求見 [docs/review-cli.md](docs/review-cli.md#前置需求)。
 - PHP CLI ≥ 8.3（`analyzers/php/composer.json`；CI 用 8.4）、Composer 2、`git`；release gate 另需 `tar`，且 repo 必須是有 commit 的 git checkout。
 - Docker 工作流程：Host 只需 Node/npm、Git 與 Docker；`npm run review:docker -- ...` 執行唯讀、無網路 review，`npm run test:docker` 執行完整 release gate。PHP、Composer 與 vendor 只安裝在 image 內。以下直接安裝方式適用於未使用 Docker 的環境。
+- Docker AI 審查用 `npm run review:docker:ai -- ...`：允許連網並傳入已匯出的 Anthropic 憑證，預設目標唯讀，只有 `--ai-apply` 允許寫入目標；Git metadata 一律唯讀。外層 agent 負責測試、commit 與對新 head 重審，見 [操作流程](docs/review-cli.md#docker-本機審查)。AI reviewer 的詳細審查規範見 [codingstandards.md](codingstandards.md)。
 - 先 `npm ci`（含 TS analyzer 的 `typescript`），再 `npm run analyzer:install`（`composer install --working-dir=analyzers/php`，PHP analyzer）。`npm ci` 時 simple-git-hooks 自己的 postinstall 會安裝 pre-commit hook（內容是 `npm run lint`）。
 - `ANTHROPIC_API_KEY` 只有 `--ai`（`bin/review.js`、`bin/retro.js`）需要；測試用假的 client，不需要它。`bin/review-state.js` 需要 `REVIEWER_STATE_KEY`（狀態的 HMAC key；本機預覽可用 `--unsigned`），測試以固定的 key 執行。
 
