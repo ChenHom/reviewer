@@ -85,19 +85,19 @@ HR-00 現況收尾與 baseline
 
 ### HR-00 — 現況收尾與可重現 baseline
 
-狀態：四項皆已勾選（2026-10-27）。驗收有一項經使用者授權的偏離：Harness `a85089f` 已 push。見 [HR-00 紀錄](2026-10-27-hr-00-baseline.md)第十節。依賴：無。工作位置：Reviewer 與 Harness 各自的獨立功能分支。
+狀態：四項皆已勾選（2026-10-27）。驗收有經使用者授權的偏離：Harness `a85089f` 已 push；Reviewer 的修改其後經 PR #15 合入 `master`（`e04cfd0`）。見 [HR-00 紀錄](2026-10-27-hr-00-baseline.md)第十節。依賴：無。工作位置：Reviewer 與 Harness 各自的獨立功能分支。
 
 - [x] 盤點兩邊 HEAD、分支、未提交修改、lockfile、安裝入口與資料保存位置，記錄本次起點。紀錄：[HR-00 起點紀錄](2026-10-27-hr-00-baseline.md)（2026-10-27）。
 - [x] 將目前 Docker AI 入口修改獨立 review、驗證與提交；原有 next-phase 任務紀錄修改另外保留，不混入 feature commit。機械面完成（2026-10-27）：
   - 本地 commit `4ce8e99`、`63a196d`、`0e5a64a`、`6d9e6a6`，各自在隔離副本通過 Docker gate。
   - 四輪獨立審查找到的中等 finding 都已修好並經複審確認，最後一輪中等以上 finding 為 0。
-  - 未 push、未開 PR；低風險項目列為後續。
+  - 其後經 [PR #15](https://github.com/ChenHom/reviewer/pull/15) 以 merge commit `e04cfd0` 合入 `master`；低風險項目列為後續。
 
   見 [HR-00 紀錄](2026-10-27-hr-00-baseline.md)第八節。
 - [x] 檢查既有已知偏差哪些會影響接入安全；列出限制與所屬修正任務，不把「gate 全過」當成偏差已關閉。完成（2026-10-27）：在 `review` CLI 路徑上的只有 DEV-01；DEV-02～DEV-06 目前不可達；Harness D-08、D-23、D-35 影響憑證位置與 candidate 範圍。8 條接入限制見 [HR-00 紀錄](2026-10-27-hr-00-baseline.md)第九節。
 - [x] 在隔離副本重新執行 Harness `npm run check` 與 Reviewer `npm run test:docker`，保存 gate 結果與版本。不要在 Host 安裝 PHP／Composer／vendor。完成（2026-10-27）：
   - Harness baseline `a85089f`：416 pass。
-  - Reviewer baseline `6d9e6a6`：Docker gate 453 pass；只存在本地分支，未 push。
+  - Reviewer baseline `6d9e6a6`：Docker gate 453 pass；已隨 PR #15 合入 `master`（`e04cfd0`）。
   - PHP 依賴只裝在 image 內。重建方式與限制見 [HR-00 紀錄](2026-10-27-hr-00-baseline.md)第十節。
 
 驗收：可從具體版本重建 baseline；現有使用者修改完整保留；沒有混入正式搬移、push 或實際 API 請求。
@@ -198,9 +198,9 @@ HR-00 現況收尾與 baseline
   - harness gitlink 從 `a156e9a8` 以 fast-forward 更新到 `a85089f`。
 - gitlink 的依據：
   - harness `a85089f`：在 `origin/master`，有 HR-00 的完整 gate 證據（416 pass，GitHub Actions `check` success）。
-  - reviewer `ca65a41`：維持不動，它就是 `origin/master`，受 `master` branch protection 的 `safety` check 保護；本次沒有另外對它跑 gate。Reviewer 的 HR-00 baseline `6d9e6a6` 尚未 push，所以不能指向它。
-- push 前確認兩個 gitlink 的 commit 都在各自的 `origin/master`，再 `git push -u origin master`；遠端 `master` 為 `26f326e`。
-- 驗證：從 GitHub 執行 `git clone --recurse-submodules` 全新 clone，主 repo HEAD 為 `26f326e`；submodule 為 harness `a85089f`、reviewer `ca65a41`，兩者的 `origin` 都解析為原本的 SSH 遠端。只驗證了 SSH clone；HTTPS clone 未測。
+  - reviewer：`26f326e` 時維持 `ca65a41`（當時的 `origin/master`），因為 HR-00 baseline `6d9e6a6` 尚未 push。PR #15 合併後，`50abe4f`（`Move reviewer to e04cfd0`）以 fast-forward 更新到 `e04cfd0`。依據：`e04cfd0` 的檔案樹與 `d4380b3` 相同，`d4380b3` 的 push 與 pull_request 兩次 `safety` 都是 success，`e04cfd0` 自己在 `master` 上的 CI（run `40503028488`）也是 success。
+- push 前確認兩個 gitlink 的 commit 都在各自的 `origin/master`，再 `git push -u origin master`；第一次 push 後遠端 `master` 為 `26f326e`。第二次 push（`50abe4f`）前做了同樣的確認，之後遠端 `master` 為 `50abe4f`。
+- 驗證：`50abe4f` 也以全新 clone 確認，submodule 為 harness `a85089f`、reviewer `e04cfd0`。第一次的驗證如下：從 GitHub 執行 `git clone --recurse-submodules` 全新 clone，主 repo HEAD 為 `26f326e`；submodule 為 harness `a85089f`、reviewer `ca65a41`，兩者的 `origin` 都解析為原本的 SSH 遠端。只驗證了 SSH clone；HTTPS clone 未測。
 
 submodule 對本計畫的影響（2026-10-27 實測，HR-07～HR-10 已據此改寫）：
 
@@ -211,7 +211,7 @@ submodule 對本計畫的影響（2026-10-27 實測，HR-07～HR-10 已據此改
 - 跨兩個模組的變更須在兩個 repo 各自提交，再更新主 repo gitlink；沒有原子提交。
 - 安裝沿用各模組原本方式（例如 `npm i -g github:ChenHom/reviewer` 不受影響）；不需要決定歷史匯入方式。
 
-仍待決：主 repo 是否需要根層指令、CI 或 branch protection；日常開發是否改到 submodule checkout（原本地 clone 是否退役）；reviewer gitlink 何時更新到 `feat/docker-ai-review` 合併後的 `master`。
+仍待決：主 repo 是否需要根層指令、CI 或 branch protection；日常開發是否改到 submodule checkout（原本地 clone 是否退役）。
 
 - [ ] 定義 gitlink 更新規則：只指向已 push 到原 repo 遠端、且通過該模組完整 gate 的 commit；每次更新記錄新舊 SHA 與對應的模組 gate 證據。
 - [ ] 定義跨模組變更的順序：各模組先在原 repo 提交並通過 gate，再以一個主 repo commit 一起更新兩個 gitlink；任一模組未通過時不更新主 repo。
@@ -228,7 +228,10 @@ submodule 對本計畫的影響（2026-10-27 實測，HR-07～HR-10 已據此改
 狀態：`PLANNED`（主 repo 與兩個 submodule 已建立，其餘未做）。依賴：HR-07。工作位置：`/home/hom/services/agent-workbench`。
 
 - [x] 建立本機主 repo，加入 `modules/harness`、`modules/reviewer` 兩個 submodule。證據（2026-10-27）：初始 commit `74b6f46`；`git submodule status` 為 harness `a156e9a8`、reviewer `ca65a41f`。
-- [ ] 依 HR-07 規則把 gitlink 更新到要驗收的模組 commit。原本地 clone 尚未 push 的 commit（例如 2026-10-27 時 Harness 本地 `master` 的 `a85089f`）須先在原 repo push，不從本地 clone 直接接入。進度（2026-10-27）：harness 已在 `26f326e` 更新到已 push 的 `a85089f`；reviewer 仍是 `ca65a41`，要等 Docker AI 修改合併後再更新。
+- [x] 依 HR-07 規則把 gitlink 更新到要驗收的模組 commit。原本地 clone 尚未 push 的 commit（例如 2026-10-27 時 Harness 本地 `master` 的 `a85089f`）須先在原 repo push，不從本地 clone 直接接入。完成（2026-10-27）：
+  - harness `a85089f`（`26f326e`）、reviewer `e04cfd0`（`50abe4f`），兩者都在原 repo 的 `origin/master`，各自的 GitHub Actions CI 都是 success；gate 依據見 HR-07。
+  - 以全新 clone 驗證過。
+  - 模組之後再前進時，要依同樣規則重新更新。
 - [ ] 主 repo 只提交 `.gitmodules`、gitlink 與根層說明；模組內容一律回原 repo 提交。不在主 repo 放 live state、憑證、node_modules 或 PHP vendor。
 - [ ] Reviewer Docker build context 保持 `modules/reviewer`，不把 Harness／Temporal 依賴混入 image。
 - [ ] 驗證 submodule checkout 內的 Git root、candidate SHA、merge base、歷史 baseline ref 與 artifact identity，與原本地 clone 對同一 SHA 的結果一致。
