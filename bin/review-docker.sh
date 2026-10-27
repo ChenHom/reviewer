@@ -64,10 +64,14 @@ run_review() {
 }
 
 if [ -n "${REVIEW_OUTPUT_DIR:-}" ]; then
-  if ! output=$(cd "$REVIEW_OUTPUT_DIR" 2>/dev/null && pwd -P); then
+  if ! output=$(CDPATH= cd -P -- "$REVIEW_OUTPUT_DIR" >/dev/null 2>&1 && pwd -P); then
     echo "error: REVIEW_OUTPUT_DIR does not exist: $REVIEW_OUTPUT_DIR" >&2
     exit 2
   fi
+  case "$REVIEW_OUTPUT_DIR$output" in
+    *'
+'*) echo "error: REVIEW_OUTPUT_DIR must not contain a newline" >&2; exit 2 ;;
+  esac
   # 壓掉重複的 /，讓 / 與 // 也成為 metadata 的上層目錄而被拒絕
   output_prefix=$(printf '%s/' "$output" | tr -s /)
   for metadata in "$target/.git" "$git_common_dir"; do
