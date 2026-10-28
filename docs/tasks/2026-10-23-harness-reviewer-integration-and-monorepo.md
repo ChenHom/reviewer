@@ -83,7 +83,7 @@ HR-00 現況收尾與 baseline
 
 ### 中程目標 M1：最窄的可用交接路徑
 
-狀態：四項完成條件都有可執行的證據（2026-10-28）。Harness 的修改在 [ChenHom/agent-work-harness#1](https://github.com/ChenHom/agent-work-harness/pull/1)，尚未合併。證據見 [M1 紀錄](2026-10-28-m1-record.md)。
+狀態：完成（2026-10-28）。四項完成條件都有可執行的證據，見 [M1 紀錄](2026-10-28-m1-record.md)。Harness 的修改經 [ChenHom/agent-work-harness#1](https://github.com/ChenHom/agent-work-harness/pull/1) 以 merge commit `16939ef` 合入 `master`，`master` 上的 `check` 通過。M1 完成的 HR-01～HR-05 項目已在各 task 勾選並註明。
 
 目標：在第一階段完成前，先讓一個簡單案例從 Attempt 一路跑到審查結果，提早暴露最大的幾個未知數：`resultTree` 是否可行、Harness 能否在 bwrap 外啟動 Docker、Reviewer 報表能否可靠驗證。M1 是 HR-01～HR-05 的一個子集，不取代它們的完整驗收。
 
@@ -157,7 +157,7 @@ HR-00 現況收尾與 baseline
 
 ### HR-01 — candidate 與驗證版本交接
 
-狀態：`PLANNED`。依賴：HR-00。主要位置：Harness `src/orchestrator.ts`、`src/evidence/git.ts`、`src/evidence/verification.ts` 與新的審查協調程式。
+狀態：`IN_PROGRESS`（2026-10-28）：M1 完成 9 項中的 8 項，剩改寫整合契約 §6；下方的驗收測試尚未逐項核對。依賴：HR-00。主要位置：Harness `src/orchestrator.ts`、`src/evidence/git.ts`、`src/evidence/verification.ts` 與新的審查協調程式。
 
 第一版不自動 commit，也不自動挑選「最新一筆看起來成功」的歷史結果。
 
@@ -229,20 +229,20 @@ harness review <workId> --attempt <attemptId> --head <40 位 commit SHA> [--json
 | candidate | `CANDIDATE_NOT_SHA`、`CANDIDATE_NOT_FOUND`、`CANDIDATE_TREE_MISMATCH`、`CANDIDATE_NOT_DESCENDANT` |
 | attempt | `ATTEMPT_NOT_FOUND`、`ATTEMPT_WORK_MISMATCH`、`ATTEMPT_NOT_SUCCESS`、`ATTEMPT_RESULT_UNRECORDED`（沒有記錄 `resultTree` 的舊 Attempt） |
 | 前提 | `PRE_EXISTING_DIRTY`、`CONTRACT_STALE`、`WORKSPACE_NOT_GIT_ROOT` |
-| 執行 | `VERIFICATION_FAILED`、`REVIEW_RUNNER_FAILED`、`REVIEW_TIMEOUT`、`REVIEW_REPORT_INVALID`、`REVIEW_STALE` |
+| 執行 | `VERIFICATION_FAILED`、`REVIEW_RUNNER_FAILED`、`REVIEW_TIMEOUT`、`REVIEW_REPORT_INVALID`、`REVIEW_STALE`、`REVIEW_INTERNAL_ERROR`（M1 新增：非預期的內部錯誤，exit 3） |
 | 既有 | `OWNER_ACTIVE` |
 
 #### 工作項目
 
-- [ ] 先驗證 `resultTree` 的做法：在 Harness 的 bwrap 內，以暫存 index 加暫存 object 目錄執行 `write-tree` 能否成功；產生的 tree 是否等於人 `git add -A && git commit` 的 tree（含 untracked、binary、mode、symlink、`.gitignore`）。不可行時停下，重新決定 A2。
-- [ ] Attempt 結束時記錄 `resultTree`；舊 Attempt 沒有這個欄位，`harness review` 回 `ATTEMPT_RESULT_UNRECORDED`。
-- [ ] 決定可接受的 Attempt、Work／Repository Contract 版本與 candidate 來源；不同 milestone／branch 不得混用。→ 已定案，見 A2、A3；尚未實作。
-- [ ] 要求 repository workspace 是 Git root，並一次解析／凍結 base、candidate SHA、merge base 與 repository identity。
-- [ ] 定義 candidate 與該 Attempt 的關聯驗證；僅「是 base 的後代」不足以證明它就是本次結果。→ 已定案，見 A2 的四項檢查；尚未實作。
-- [ ] 在指定 candidate 的乾淨工作副本上，以原本 frozen contract 重跑必要驗證與 path policy；不沿用 dirty worktree 的舊成功 evidence。
-- [ ] 驗證前後檢查 candidate／contract／workspace 漂移；不符合時保留明確失敗或 stale，不輸出可用審查結果。
-- [ ] 定義既有 pre-existing dirty changes 與未追蹤檔案的處理：第一版不自動打包它們；需要納入者必須先成為明確 candidate。→ 已定案：既有修改一律 `PRE_EXISTING_DIRTY`；agent 新增的 untracked 檔由 `resultTree` 涵蓋；尚未實作。
-- [ ] 依 A3 實作 `harness review` 的 argv、exit code 與錯誤代碼，並改寫整合契約 §6。
+- [x] 先驗證 `resultTree` 的做法：在 Harness 的 bwrap 內，以暫存 index 加暫存 object 目錄執行 `write-tree` 能否成功；產生的 tree 是否等於人 `git add -A && git commit` 的 tree（含 untracked、binary、mode、symlink、`.gitignore`）。不可行時停下，重新決定 A2。完成（M1 步驟 1）：13/13 通過，見 [M1 紀錄](2026-10-28-m1-record.md)第二節。
+- [x] Attempt 結束時記錄 `resultTree`；舊 Attempt 沒有這個欄位，`harness review` 回 `ATTEMPT_RESULT_UNRECORDED`。完成（M1）。
+- [x] 決定可接受的 Attempt、Work／Repository Contract 版本與 candidate 來源；不同 milestone／branch 不得混用。→ 已定案，見 A2、A3；M1 已實作。
+- [x] 要求 repository workspace 是 Git root，並一次解析／凍結 base、candidate SHA、merge base 與 repository identity。完成（M1）：不是 Git root 時回 `WORKSPACE_NOT_GIT_ROOT`；envelope 記錄 workspace、base、candidate、merge base 與 Repository Contract 快照的 hash。
+- [x] 定義 candidate 與該 Attempt 的關聯驗證；僅「是 base 的後代」不足以證明它就是本次結果。→ 已定案，見 A2 的四項檢查；M1 已實作，並在兩份 clone 內重做 lineage 檢查。
+- [x] 在指定 candidate 的乾淨工作副本上，以原本 frozen contract 重跑必要驗證與 path policy；不沿用 dirty worktree 的舊成功 evidence。完成（M1）。限制：乾淨副本沒有被 ignore 的依賴（例如 `node_modules`），需要依賴的 check 會得到 `VERIFICATION_FAILED`。
+- [x] 驗證前後檢查 candidate／contract／workspace 漂移；不符合時保留明確失敗或 stale，不輸出可用審查結果。完成（M1）：審查期間 Attempt、outcome、`resultTree`、Work Contract 版本或 execution ownership 有任何變化，都回 `REVIEW_STALE`，不保存結果。
+- [x] 定義既有 pre-existing dirty changes 與未追蹤檔案的處理：第一版不自動打包它們；需要納入者必須先成為明確 candidate。→ 已定案：既有修改一律 `PRE_EXISTING_DIRTY`；agent 新增的 untracked 檔由 `resultTree` 涵蓋；M1 已實作。
+- [ ] 依 A3 實作 `harness review` 的 argv、exit code 與錯誤代碼，並改寫整合契約 §6。M1 已實作 argv、exit code 與錯誤代碼；整合契約 §6 尚未改寫。
 
 驗收測試：
 
@@ -260,48 +260,48 @@ harness review <workId> --attempt <attemptId> --head <40 位 commit SHA> [--json
 
 ### HR-02 — 有版本的報表驗證與交接 envelope
 
-狀態：`PLANNED`。依賴：HR-01。主要位置：Harness 新增審查報表 contract；Reviewer 現有 JSON 報表為輸入。
+狀態：`IN_PROGRESS`（2026-10-28）：M1 完成 5 項中的 3 項。依賴：HR-01。主要位置：Harness 新增審查報表 contract；Reviewer 現有 JSON 報表為輸入。
 
-- [ ] 定義交接 envelope 的 `schemaVersion`、work／attempt identity、frozen contract hash、base／head／merge base、Reviewer 版本與 immutable image identity、raw report hash。
-- [ ] 明確區分「有可用報表」與「沒有人工待辦」；狀態不得只剩一個模糊的 pass boolean。
-- [ ] 對 Reviewer JSON 做必要結構與一致性檢查，包含已知 decision／track、檔案總數、重複 path、範圍 identity、analyzer failure 與 pending fixes。缺少必要欄位不可使用預設安全值補齊。
-- [ ] 定義 report contract 相容版本與 runner 版本的關聯；不能把目前沒有 schemaVersion 的任意 JSON 一律當成相容。優先在邊界封裝，若確需改公共 JSON，須同步所有 consumer 與文件。
-- [ ] 顯示用 repository basename 不作權威 identity；政策與規範摘要的來源須可核對，不能信任任意外部輸入。
+- [x] 定義交接 envelope 的 `schemaVersion`、work／attempt identity、frozen contract hash、base／head／merge base、Reviewer 版本與 immutable image identity、raw report hash。完成（M1）：`schemaVersion` 1；Reviewer 以 image ID 與 revision label 識別；原始報表以 sha256 與 artifact ID 綁定。
+- [x] 明確區分「有可用報表」與「沒有人工待辦」；狀態不得只剩一個模糊的 pass boolean。完成（M1）：status 為 `NO_CHANGES`、`NO_HUMAN_REVIEW` 或 `HUMAN_REVIEW_REQUIRED`；報表不可用時不產生 envelope，exit 3。
+- [x] 對 Reviewer JSON 做必要結構與一致性檢查，包含已知 decision／track、檔案總數、重複 path、範圍 identity、analyzer failure 與 pending fixes。缺少必要欄位不可使用預設安全值補齊。完成（M1）：另比對報表的路徑集合與 `git diff` 的結果。analyzer 失敗在 Reviewer 報表中是 `FULL` 加 `ANALYZER_ERROR`，依 decision 列為人工待辦，驗證器沒有另外檢查。
+- [ ] 定義 report contract 相容版本與 runner 版本的關聯；不能把目前沒有 schemaVersion 的任意 JSON 一律當成相容。優先在邊界封裝，若確需改公共 JSON，須同步所有 consumer 與文件。M1 只做到邊界封裝與嚴格驗證，沒有定義哪些 Reviewer revision 的報表格式相容。
+- [ ] 顯示用 repository basename 不作權威 identity；政策與規範摘要的來源須可核對，不能信任任意外部輸入。M1 的 envelope 以 workspace 的絕對路徑識別，不用 basename；政策與規範來源的核對未做。
 
 驗收測試：成功報表、NO_CHANGES、需要人工、未知 enum、欄位缺失、空物件、數量矛盾、錯 SHA／contract、不同目錄同 basename、analyzer error 與 malformed JSON 都有明確預期；驗證器拒絕結果不得被上層改成通過。
 
 ### HR-03 — 受信任且有邊界的 Reviewer runner
 
-狀態：`PLANNED`。依賴：HR-01、HR-02。主要位置：Harness 既有執行邊界與 Reviewer Docker 入口。
+狀態：`IN_PROGRESS`（2026-10-28）：M1 完成 6 項中的 4 項。依賴：HR-01、HR-02。主要位置：Harness 既有執行邊界與 Reviewer Docker 入口。
 
-- [ ] 固定允許的 Reviewer 執行方式、image identity、參數組裝與報表位置；使用 argv／shell=false，不接受模型提供的 shell 字串。
-- [ ] 機械審查在無網路、非 root、唯讀 root filesystem／candidate／Git metadata 的容器中執行，只有指定輸出與 tmpfs 可寫。
-- [ ] 由受信任流程啟動 Docker，不把 Docker socket、API key 或額外 Host bind 放進一般 verification／agent 沙箱。
-- [ ] 遵守 Harness 對 `child_process` 的架構限制；若新增 trusted execution 能力，範圍必須可由 lint 與測試限定，不直接解禁整個模組。
-- [ ] 定義 deadline、取消、子行程回收、輸出上限、非零 exit、容器失敗、報表缺失／過大與 late result 的處理。
-- [ ] 在接納結果前重新核對 candidate 與 contract；晚到的舊 run 不得覆蓋新結果。
+- [x] 固定允許的 Reviewer 執行方式、image identity、參數組裝與報表位置；使用 argv／shell=false，不接受模型提供的 shell 字串。完成（M1，D-42）：`src/review/docker-runner.ts`，先 inspect image，再以 image ID 執行。
+- [x] 機械審查在無網路、非 root、唯讀 root filesystem／candidate／Git metadata 的容器中執行，只有指定輸出與 tmpfs 可寫。完成（M1）：`--network none`、`--read-only`、`--cap-drop ALL`、非 root 的 `--user`；candidate 以唯讀 bind mount 掛入，只有輸出目錄與 `/tmp` tmpfs 可寫。沒有加 `no-new-privileges`（D-42）。以 root 執行時的拒絕未實測。
+- [x] 由受信任流程啟動 Docker，不把 Docker socket、API key 或額外 Host bind 放進一般 verification／agent 沙箱。完成（M1）：Docker 由 bwrap 外的 Harness 程序啟動。
+- [x] 遵守 Harness 對 `child_process` 的架構限制；若新增 trusted execution 能力，範圍必須可由 lint 與測試限定，不直接解禁整個模組。完成（M1）：lint 只允許三個檔案 import `node:child_process`。
+- [ ] 定義 deadline、取消、子行程回收、輸出上限、非零 exit、容器失敗、報表缺失／過大與 late result 的處理。M1 已處理 deadline（timeout 後 `rm -f` container）、報表大小上限、非零 exit 與報表缺失；取消與晚到結果未處理，真實 Docker 下的 timeout 未驗證。
+- [ ] 在接納結果前重新核對 candidate 與 contract；晚到的舊 run 不得覆蓋新結果。M1 在保存前重新核對 Attempt、contract 與 execution ownership；晚到的舊 run 未測。
 
 驗收測試：fake runner 控制 timeout／取消／晚到／錯誤 receipt；另以真實 Docker 驗證普通 repo 與 linked worktree、權限、輸出 ownership、`.git` 與重疊輸出掛載保護。所有錯誤都不能成為可用審查證據。
 
 ### HR-04 — Harness CLI、artifact 與 trace 整合
 
-狀態：`PLANNED`。依賴：HR-03。主要位置：Harness `src/cli.ts`、`src/trace/store.ts`、`src/cli-format.ts` 與審查協調程式。
+狀態：`IN_PROGRESS`（2026-10-28）：M1 完成 6 項中的 5 項；重啟、並行與 ownership 衝突的驗收未做。依賴：HR-03。主要位置：Harness `src/cli.ts`、`src/trace/store.ts`、`src/cli-format.ts` 與審查協調程式。
 
-- [ ] 實作 HR-01 定稿的 review 指令；會保存結果的操作取得 execution ownership，純查詢保持 read-only。
-- [ ] 使用現有 content-addressed artifact store 保存 raw report 與 envelope；trace 事件引用 artifact，不先建立第二套 store 或共用資料庫。
-- [ ] 每次使用保存報表時驗證 hash／存在性與 identity；刪除、損壞或過期 artifact 不得沿用成功畫面。
-- [ ] 並列呈現工作驗證結果、審查執行結果、人工待辦與未提交修正；HUMAN_REVIEW_REQUIRED 不自動增加 coding retry。
-- [ ] 不改寫原 Attempt outcome、Work Contract 或 retry budget；若需要狀態變更，另有明確 authority 與事件。
-- [ ] CLI argv、exit code、錯誤代碼、查詢方式與目前限制同步至 Harness 使用文件與 Reviewer 整合文件。
+- [x] 實作 HR-01 定稿的 review 指令；會保存結果的操作取得 execution ownership，純查詢保持 read-only。完成（M1）：`review` 取得 execution ownership；查詢放在 `show`。
+- [x] 使用現有 content-addressed artifact store 保存 raw report 與 envelope；trace 事件引用 artifact，不先建立第二套 store 或共用資料庫。完成（M1）：`review.completed` 事件引用兩個 artifact 的 ID 與 sha256。
+- [x] 每次使用保存報表時驗證 hash／存在性與 identity；刪除、損壞或過期 artifact 不得沿用成功畫面。完成（M1）：`show` 核對兩個 artifact 的存在、hash 與互相綁定，不符時顯示 `REVIEW_ARTIFACT_INVALID`；Work Contract 版本已變時標為 stale。
+- [x] 並列呈現工作驗證結果、審查執行結果、人工待辦與未提交修正；HUMAN_REVIEW_REQUIRED 不自動增加 coding retry。完成（M1）：`show` 並列乾淨副本的 verification、審查狀態、人工待辦與未選入的檔案；離線報表的 `pendingFixes` 必須為 0；審查不觸發 retry。
+- [x] 不改寫原 Attempt outcome、Work Contract 或 retry budget；若需要狀態變更，另有明確 authority 與事件。完成（M1）：審查只新增 `review.completed`／`review.failed` 事件。
+- [ ] CLI argv、exit code、錯誤代碼、查詢方式與目前限制同步至 Harness 使用文件與 Reviewer 整合文件。M1 已更新 Harness `docs/usage.md` 的「審查交接」；Reviewer 整合文件未同步。
 
 驗收：一次合法呼叫能留下可核對的 artifact／trace；重複執行、重啟、並行執行、ownership 衝突、損壞報表與 stale 都不會造成錯誤通過或改寫舊 Attempt outcome。若確需 DB schema 變更，依 Harness migration 規則另補驗證。
 
 ### HR-05 — 兩 repo 間的機械交接 acceptance
 
-狀態：`PLANNED`。依賴：HR-04。
+狀態：`IN_PROGRESS`（2026-10-28）：M1 完成 6 項中的 1 項。依賴：HR-04。
 
-- [ ] 建立獨立 fixture repo，以 fake runtime 產出修改，但使用真實 Git、path policy、verification 與 Docker Reviewer 走完整交接；不呼叫真實 Codex 或 AI。
-- [ ] 覆蓋合法 commit、dirty result、未追蹤檔、單向門、一般人工項目、無變更、analyzer failure、runner timeout 與 malformed report。
+- [x] 建立獨立 fixture repo，以 fake runtime 產出修改，但使用真實 Git、path policy、verification 與 Docker Reviewer 走完整交接；不呼叫真實 Codex 或 AI。完成（M1）：Harness `scripts/review-e2e.sh`，8/8 PASS。
+- [ ] 覆蓋合法 commit、dirty result、未追蹤檔、單向門、一般人工項目、無變更、analyzer failure、runner timeout 與 malformed report。M1 的端到端腳本涵蓋合法 commit、無變更、tree 不符、既有修改與 runner 失敗；malformed report 只有單元測試，其餘未做。
 - [ ] 在驗證前後、Review 執行中、保存前切換 candidate／contract，確認舊結果不會變成新 head 的有效證據。
 - [ ] 覆蓋既有使用者 dirty changes、不屬於當次 Work 的修改、錯 repo 與相同 basename。
 - [ ] 確認一般 verification 與 agent 看不到 AI 憑證／Docker socket；確認人工待辦不觸發自動 coding retry。
@@ -341,6 +341,9 @@ harness review <workId> --attempt <attemptId> --head <40 位 commit SHA> [--json
   - harness `a85089f`：在 `origin/master`，有 HR-00 的完整 gate 證據（416 pass，GitHub Actions `check` success）。
   - reviewer：`26f326e` 時維持 `ca65a41`（當時的 `origin/master`），因為 HR-00 baseline `6d9e6a6` 尚未 push。PR #15 合併後，`50abe4f`（`Move reviewer to e04cfd0`）以 fast-forward 更新到 `e04cfd0`。依據：`e04cfd0` 的檔案樹與 `d4380b3` 相同，`d4380b3` 的 push 與 pull_request 兩次 `safety` 都是 success，`e04cfd0` 自己在 `master` 上的 CI（run `40503028488`）也是 success。
 - push 前確認兩個 gitlink 的 commit 都在各自的 `origin/master`，再 `git push -u origin master`；第一次 push 後遠端 `master` 為 `26f326e`。第二次 push（`50abe4f`）前做了同樣的確認，之後遠端 `master` 為 `50abe4f`。
+- M1 合併後（2026-10-28），兩個 gitlink 都以 fast-forward 更新：
+  - `8b6c6e3`（`Move harness to 16939ef`）：harness 從 `a85089f` 到 `16939ef`，即 [ChenHom/agent-work-harness#1](https://github.com/ChenHom/agent-work-harness/pull/1) 的 merge commit。`16939ef` 在 `master` 上的 `check` 是 success；它的檔案樹與 PR head `1b415fe` 相同，`1b415fe` 本機 `npm run check` 518 pass。
+  - `8b1571c`（`Move reviewer to 2f6934a`）：reviewer 從 `e04cfd0` 到 `2f6934a`，即 [ChenHom/reviewer#18](https://github.com/ChenHom/reviewer/pull/18) 的 merge commit，只有文件變更；`2f6934a` 在 `master` 上的 `safety`（run `40600913175`）是 success。push 前確認 `2f6934a` 在 `origin/master`，push 後遠端 `master` 為 `8b1571c`。
 - 驗證：`50abe4f` 也以全新 clone 確認，submodule 為 harness `a85089f`、reviewer `e04cfd0`。第一次的驗證如下：從 GitHub 執行 `git clone --recurse-submodules` 全新 clone，主 repo HEAD 為 `26f326e`；submodule 為 harness `a85089f`、reviewer `ca65a41`，兩者的 `origin` 都解析為原本的 SSH 遠端。只驗證了 SSH clone；HTTPS clone 未測。
 
 submodule 對本計畫的影響（2026-10-27 實測，HR-07～HR-10 已據此改寫）：
