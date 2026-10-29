@@ -134,6 +134,63 @@ HR-00 現況收尾與 baseline
 
 進度紀錄：[M1 紀錄](2026-10-28-m1-record.md)，格式比照 [HR-00 紀錄](2026-10-27-hr-00-baseline.md)。
 
+### 中程目標 M2：乾淨副本的依賴
+
+狀態：`PLANNED`。決定已於 2026-10-28 由使用者確認，尚未開始實作。
+
+目標：讓 required check 需要依賴（例如 `node_modules`）的一般專案也能使用 `harness review`。M1 的乾淨副本只有 commit 進去的內容，這類 check 一律得到 `VERIFICATION_FAILED`（M1 紀錄第五節的限制）。M2 和 M1 一樣只走最窄的路徑，屬於 HR-01「在乾淨副本上重跑必要驗證」一項的延伸。
+
+現況（Harness `16939ef`，2026-10-28 調查）：
+
+- 一般 check 在 bwrap 內以 `--unshare-all` 執行，沒有網路（D-26）；HOME 是所有 Work 共用、可寫的 `verification-home`。
+- Repository Contract 的 check 只有 `id`、`kind`、`argv`、`required`、`timeoutMs`，沒有安裝或依賴的概念；不認得的欄位會被丟掉，不會報錯。
+- Attempt 期間 agent 可以寫整個 workspace。path policy 用不含 ignored 的 `git status`，`resultTree` 用 `git add -A`，所以 agent 修改 `node_modules` 不會出現在任何證據裡。這是不採用「唯讀掛入 Host 依賴」的原因。
+
+包含：
+
+- Repository Contract 新增安裝設定：安裝指令的 argv 與依賴檔案清單。只有 `harness review` 的乾淨副本使用它；Attempt 的一般 verification 照舊在使用者工作樹上執行。
+- `harness review` 在乾淨副本中先執行安裝，再照舊斷網執行 required checks。交給 Reviewer 的副本照舊另外 clone，不含安裝產物。
+- `harness init` 對 npm 專案（有 `package-lock.json`）產生安裝設定的候選；其他生態系由人自行宣告。
+- 端到端腳本與反例。
+
+不包含：
+
+- 依賴快取（安裝到快取再唯讀掛入）。等速度確實成為問題再加。
+- candidate 修改依賴檔案時的安裝（第一版 BLOCKED，見決定 E2）。
+- 私有 registry 與它需要的憑證。
+- M1 未做的其他項目：完整反例矩陣、並行與重啟、取消與晚到結果、Reviewer 整合文件同步。它們留在 HR-01～HR-05 的完整驗收。
+
+決定（2026-10-28，使用者逐項確認）：
+
+| 項目 | 決定 |
+|---|---|
+| E1 依賴怎麼進入乾淨副本 | 在乾淨副本內執行 contract 宣告的安裝指令（例如 `npm ci`）。依賴由 commit 進去的 lockfile 決定。不採用唯讀掛入 Host 的依賴：agent 在 Attempt 期間對依賴的修改沒有任何證據看得到。也不採用快取：唯讀的 `node_modules` 會讓寫 `node_modules/.cache` 的工具失敗。 |
+| E2 candidate 修改依賴檔案 | 第一版以 `BLOCKED DEPENDENCIES_CHANGED` 結束。這樣安裝的永遠是 base 已有的 lockfile，agent 新加的套件不會在可以連網的沙箱裡執行。代價是新增依賴的 Work 暫時無法審查。 |
+| E3 M2 範圍 | 只做依賴支援。 |
+| E4 連網的授權 | 由 Global Policy 的開關授予，預設關閉，比照 D-10「repo 不能自己擴大權限」。關閉時安裝步驟照樣執行，但沒有網路；需要下載的安裝會失敗。只有安裝這一步會連網，required checks 照舊斷網。 |
+| E5 哪些檔案算依賴檔案 | 由 contract 的安裝設定列出（例如 `package.json`、`package-lock.json`）；`harness init` 產生候選，由人確認。 |
+| E6 安裝步驟的 HOME | 每次 review 專用的暫存目錄，和乾淨副本一起刪除，不使用共用的 `verification-home`。代價是每次都是冷 cache。 |
+
+完成條件（都要能用指令驗證）：
+
+1. 一支腳本在 fixture 上從零跑完：fixture 的 required check 需要安裝後才有的依賴（以 `file:` 依賴實作，不需要網路）。沒有安裝設定時，`harness review` 回 exit 3 `VERIFICATION_FAILED`；加上安裝設定後回 exit 5 或 0，`show` 顯示安裝結果。
+2. 反例各自回正確的錯誤代碼：candidate 修改依賴檔案時 exit 2 `BLOCKED DEPENDENCIES_CHANGED`；安裝失敗時 exit 3 `INSTALL_FAILED`；安裝改動了已追蹤的檔案時，也是 exit 3 `INSTALL_FAILED`。
+3. 連網：對依賴公開 registry 套件的 fixture，Global Policy 開啟時安裝成功、check 通過；關閉時回 `INSTALL_FAILED`。這一項需要網路，以本機指令執行並保存輸出，不放進 CI。
+4. Harness 的 `npm run check` 全部通過。M2 不修改 Reviewer。
+5. 獨立審查沒有中等以上的 finding。
+
+步驟（比照 M1：先寫會失敗的測試、跑完整 gate、做獨立審查）：
+
+1. 驗證可行性：在 Harness 的 bwrap 內只對安裝步驟開放網路（例如 `--share-net`），確認 DNS、TLS 與 `npm ci` 都能成功；不開放時確認會失敗。不可行就停下，重新決定 E1。
+2. contract 的安裝設定：schema、驗證（argv[0] 不得為絕對路徑，比照 D-11；依賴檔案為非空的相對路徑）、`harness init` 的 npm 候選。
+3. Global Policy 的連網開關，以及只供安裝步驟使用的隔離選項；範圍以 lint 與測試限定。
+4. `harness review`：
+   - clone 前比對 base..candidate 的變更路徑（不偵測 rename，rename 的兩端都算）與依賴檔案清單，有交集時回 `DEPENDENCIES_CHANGED`。
+   - 以專用 HOME 在 verify clone 內執行安裝；安裝後已追蹤的檔案必須沒有變化。
+   - envelope 記錄安裝的 argv、exit code、耗時，以及是否連網。
+5. `show` 顯示安裝結果。
+6. 端到端腳本與反例；同步 Harness `docs/usage.md`，新增一條決策（修訂 D-26：安裝步驟可依 Global Policy 連網），並把新的錯誤代碼加進 HR-01 的錯誤代碼表。
+
 ## 五、開發任務
 
 ### HR-00 — 現況收尾與可重現 baseline
@@ -239,7 +296,7 @@ harness review <workId> --attempt <attemptId> --head <40 位 commit SHA> [--json
 - [x] 決定可接受的 Attempt、Work／Repository Contract 版本與 candidate 來源；不同 milestone／branch 不得混用。→ 已定案，見 A2、A3；M1 已實作。
 - [x] 要求 repository workspace 是 Git root，並一次解析／凍結 base、candidate SHA、merge base 與 repository identity。完成（M1）：不是 Git root 時回 `WORKSPACE_NOT_GIT_ROOT`；envelope 記錄 workspace、base、candidate、merge base 與 Repository Contract 快照的 hash。
 - [x] 定義 candidate 與該 Attempt 的關聯驗證；僅「是 base 的後代」不足以證明它就是本次結果。→ 已定案，見 A2 的四項檢查；M1 已實作，並在兩份 clone 內重做 lineage 檢查。
-- [x] 在指定 candidate 的乾淨工作副本上，以原本 frozen contract 重跑必要驗證與 path policy；不沿用 dirty worktree 的舊成功 evidence。完成（M1）。限制：乾淨副本沒有被 ignore 的依賴（例如 `node_modules`），需要依賴的 check 會得到 `VERIFICATION_FAILED`。
+- [x] 在指定 candidate 的乾淨工作副本上，以原本 frozen contract 重跑必要驗證與 path policy；不沿用 dirty worktree 的舊成功 evidence。完成（M1）。限制：乾淨副本沒有被 ignore 的依賴（例如 `node_modules`），需要依賴的 check 會得到 `VERIFICATION_FAILED`；解法見「中程目標 M2」。
 - [x] 驗證前後檢查 candidate／contract／workspace 漂移；不符合時保留明確失敗或 stale，不輸出可用審查結果。完成（M1）：審查期間 Attempt、outcome、`resultTree`、Work Contract 版本或 execution ownership 有任何變化，都回 `REVIEW_STALE`，不保存結果。
 - [x] 定義既有 pre-existing dirty changes 與未追蹤檔案的處理：第一版不自動打包它們；需要納入者必須先成為明確 candidate。→ 已定案：既有修改一律 `PRE_EXISTING_DIRTY`；agent 新增的 untracked 檔由 `resultTree` 涵蓋；M1 已實作。
 - [ ] 依 A3 實作 `harness review` 的 argv、exit code 與錯誤代碼，並改寫整合契約 §6。M1 已實作 argv、exit code 與錯誤代碼；整合契約 §6 尚未改寫。
